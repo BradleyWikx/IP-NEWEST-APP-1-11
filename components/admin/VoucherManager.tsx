@@ -143,11 +143,11 @@ export const VoucherManager = () => {
             keyExtractor={o => o.id}
             onRowClick={(o) => setSelectedOrder(o)}
             columns={[
-              { header: 'Datum', accessor: o => <span className="font-mono text-slate-400">{new Date(o.createdAt).toLocaleDateString()}</span> },
-              { header: 'Klant', accessor: o => <span className="font-bold text-white">{o.customerName}</span> },
-              { header: 'Bedrag', accessor: o => <span className="text-emerald-500 font-mono">€{o.amount.toFixed(2)}</span> },
-              { header: 'Methode', accessor: o => <span className="text-xs uppercase">{o.deliveryMethod}</span> },
-              { header: 'Status', accessor: o => <Badge status={o.status === 'PAID' ? 'CONFIRMED' : o.status === 'REQUESTED' ? 'REQUEST' : 'ARCHIVED'}>{o.status}</Badge> }
+              { header: 'Datum', accessor: (o: VoucherOrder) => <span className="font-mono text-slate-400">{new Date(o.createdAt).toLocaleDateString()}</span> },
+              { header: 'Klant', accessor: (o: VoucherOrder) => <span className="font-bold text-white">{o.customerName || o.buyer.lastName}</span> },
+              { header: 'Bedrag', accessor: (o: VoucherOrder) => <span className="text-emerald-500 font-mono">€{o.amount.toFixed(2)}</span> },
+              { header: 'Methode', accessor: (o: VoucherOrder) => <span className="text-xs uppercase">{o.deliveryMethod}</span> },
+              { header: 'Status', accessor: (o: VoucherOrder) => <Badge status={o.status === 'PAID' ? 'CONFIRMED' : o.status === 'REQUESTED' ? 'REQUEST' : 'ARCHIVED'}>{o.status}</Badge> }
             ]}
           />
           <ResponsiveDrawer isOpen={!!selectedOrder} onClose={() => setSelectedOrder(null)} title={`Bestelling ${selectedOrder?.id}`}>
@@ -180,10 +180,10 @@ export const VoucherManager = () => {
           data={vouchers}
           keyExtractor={v => v.code}
           columns={[
-            { header: 'Code', accessor: v => <span className="font-mono font-bold text-amber-500">{v.code}</span> },
-            { header: 'Saldo', accessor: v => <span className="font-mono">€{v.currentBalance.toFixed(2)} / €{v.originalBalance}</span> },
-            { header: 'Eigenaar', accessor: v => <span>{v.issuedTo}</span> },
-            { header: 'Status', accessor: v => <Badge status={v.isActive ? 'CONFIRMED' : 'CANCELLED'}>{v.isActive ? 'Actief' : 'Gebruikt'}</Badge> }
+            { header: 'Code', accessor: (v: Voucher) => <span className="font-mono font-bold text-amber-500">{v.code}</span> },
+            { header: 'Saldo', accessor: (v: Voucher) => <span className="font-mono">€{v.currentBalance.toFixed(2)} / €{v.originalBalance}</span> },
+            { header: 'Eigenaar', accessor: (v: Voucher) => <span>{v.issuedTo}</span> },
+            { header: 'Status', accessor: (v: Voucher) => <Badge status={v.isActive ? 'CONFIRMED' : 'CANCELLED'}>{v.isActive ? 'Actief' : 'Gebruikt'}</Badge> }
           ]}
         />
       )}

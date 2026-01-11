@@ -125,19 +125,19 @@ export const TaskManager = () => {
           data={filteredTasks}
           keyExtractor={t => t.id}
           columns={[
-            { header: 'Type', accessor: t => (
+            { header: 'Type', accessor: (t: Task) => (
               <div className="flex items-center space-x-2">
                 {getTypeIcon(t.type)}
                 <span className="font-bold text-slate-300">{getTypeLabel(t.type)}</span>
               </div>
             )},
-            { header: 'Taak', accessor: t => (
+            { header: 'Taak', accessor: (t: Task) => (
               <div>
                 <p className="text-white font-bold text-sm">{t.title}</p>
                 <p className="text-xs text-slate-500 truncate max-w-xs">{t.notes}</p>
               </div>
             )},
-            { header: 'Deadline', accessor: t => {
+            { header: 'Deadline', accessor: (t: Task) => {
                const due = new Date(t.dueAt);
                const isOverdue = t.status === 'OPEN' && due < new Date();
                return (
@@ -146,8 +146,8 @@ export const TaskManager = () => {
                  </span>
                );
             }},
-            { header: 'Status', accessor: t => <Badge status={t.status === 'OPEN' ? 'REQUEST' : 'CONFIRMED'}>{t.status}</Badge> },
-            { header: 'Acties', accessor: t => (
+            { header: 'Status', accessor: (t: Task) => <Badge status={t.status === 'OPEN' ? 'REQUEST' : 'CONFIRMED'}>{t.status}</Badge> },
+            { header: 'Acties', accessor: (t: Task) => (
               <div className="flex items-center space-x-2 justify-end">
                 <Button variant="ghost" onClick={() => navigateToEntity(t)} className="h-8 px-2 text-xs text-slate-400 hover:text-white" title="Ga naar item">
                   <ArrowUpRight size={14} />

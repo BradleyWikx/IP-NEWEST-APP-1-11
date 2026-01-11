@@ -125,18 +125,18 @@ export const PromoManager = () => {
         data={promos}
         keyExtractor={p => p.id}
         columns={[
-          { header: 'Code', accessor: p => <span className="font-mono font-bold text-amber-500 text-lg">{p.code}</span> },
-          { header: 'Label', accessor: p => <span className="font-bold text-white">{p.label}</span> },
-          { header: 'Type', accessor: p => <span className="text-xs uppercase bg-slate-900 border border-slate-700 px-2 py-1 rounded text-slate-400">{getKindLabel(p.kind)}</span> },
-          { header: 'Waarde', accessor: p => {
+          { header: 'Code', accessor: (p: PromoCodeRule) => <span className="font-mono font-bold text-amber-500 text-lg">{p.code}</span> },
+          { header: 'Label', accessor: (p: PromoCodeRule) => <span className="font-bold text-white">{p.label}</span> },
+          { header: 'Type', accessor: (p: PromoCodeRule) => <span className="text-xs uppercase bg-slate-900 border border-slate-700 px-2 py-1 rounded text-slate-400">{getKindLabel(p.kind)}</span> },
+          { header: 'Waarde', accessor: (p: PromoCodeRule) => {
              if (p.percentage) return <span className="text-emerald-500 font-bold">{p.percentage}%</span>;
              if (p.fixedAmountPerPerson) return <span className="text-emerald-500 font-bold">€{p.fixedAmountPerPerson} p.p.</span>;
              if (p.fixedAmountTotal) return <span className="text-emerald-500 font-bold">€{p.fixedAmountTotal}</span>;
              if (p.kind === DiscountKind.INVITED_COMP) return <span className="text-purple-500 font-bold">Gratis</span>;
              return '-';
           }},
-          { header: 'Status', accessor: p => <Badge status={p.enabled ? 'CONFIRMED' : 'CANCELLED'}>{p.enabled ? 'Actief' : 'Inactief'}</Badge> },
-          { header: 'Acties', accessor: p => (
+          { header: 'Status', accessor: (p: PromoCodeRule) => <Badge status={p.enabled ? 'CONFIRMED' : 'CANCELLED'}>{p.enabled ? 'Actief' : 'Inactief'}</Badge> },
+          { header: 'Acties', accessor: (p: PromoCodeRule) => (
             <div className="flex space-x-2 justify-end">
               <Button variant="ghost" onClick={() => handleEdit(p)} className="h-8 w-8 p-0 text-slate-400 hover:text-white"><Edit3 size={16}/></Button>
               <Button variant="ghost" onClick={() => handleDelete(p.id)} className="h-8 w-8 p-0 text-slate-400 hover:text-red-500"><Trash2 size={16}/></Button>

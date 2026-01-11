@@ -91,12 +91,12 @@ export const WaitlistManager = () => {
         data={waitlist}
         keyExtractor={(w) => w.id}
         columns={[
-          { header: 'Datum Show', accessor: (w) => <span className="font-mono text-white">{new Date(w.date).toLocaleDateString()}</span> },
-          { header: 'Naam', accessor: (w) => <span className="font-bold">{w.contactName}</span> },
-          { header: 'Grootte', accessor: (w) => <span>{w.partySize}p</span> },
-          { header: 'Aangevraagd', accessor: (w) => <span className="text-xs text-slate-400">{new Date(w.requestDate).toLocaleDateString()}</span> },
-          { header: 'Status', accessor: (w) => <Badge status={w.status === 'PENDING' ? 'WAITLIST' : 'ARCHIVED'}>{w.status}</Badge> },
-          { header: 'Actie', accessor: (w) => (
+          { header: 'Datum Show', accessor: (w: WaitlistEntry) => <span className="font-mono text-white">{new Date(w.date).toLocaleDateString()}</span> },
+          { header: 'Naam', accessor: (w: WaitlistEntry) => <span className="font-bold">{w.contactName}</span> },
+          { header: 'Grootte', accessor: (w: WaitlistEntry) => <span>{w.partySize}p</span> },
+          { header: 'Aangevraagd', accessor: (w: WaitlistEntry) => <span className="text-xs text-slate-400">{new Date(w.requestDate).toLocaleDateString()}</span> },
+          { header: 'Status', accessor: (w: WaitlistEntry) => <Badge status={w.status === 'PENDING' ? 'WAITLIST' : 'ARCHIVED'}>{w.status}</Badge> },
+          { header: 'Actie', accessor: (w: WaitlistEntry) => (
              w.status === 'PENDING' && (
                <Button onClick={() => setConvertItem(w)} variant="secondary" className="h-8 text-xs px-2">
                  Omzetten

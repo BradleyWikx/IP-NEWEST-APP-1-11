@@ -21,7 +21,8 @@ import {
   Printer,
   CheckSquare,
   DollarSign,
-  Tag
+  Tag,
+  UploadCloud
 } from 'lucide-react';
 import { AdminRole } from '../../types';
 
@@ -77,6 +78,7 @@ const MENU_STRUCTURE: NavGroup[] = [
     title: 'Systeem & Rapportage',
     items: [
       { label: 'Rapporten', icon: ClipboardList, path: '/admin/reports', roles: ['ADMIN'] },
+      { label: 'Data Import', icon: UploadCloud, path: '/admin/import', roles: ['ADMIN'] },
       { label: 'Audit Log', icon: ShieldAlert, path: '/admin/audit', roles: ['ADMIN'] },
       { label: 'Embed Center', icon: Code, path: '/admin/embed', roles: ['ADMIN'] },
       { label: 'Instellingen', icon: Settings, path: '/admin/settings', roles: ['ADMIN'] },

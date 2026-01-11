@@ -5,7 +5,8 @@ import {
   AddonSelection, 
   MerchandiseSelection,
   Reservation,
-  ReservationFinancials
+  ReservationFinancials,
+  AdminPriceOverride
 } from '../types';
 import { 
   MOCK_ADDONS, 
@@ -22,7 +23,7 @@ export interface LineItem {
   quantity: number;
   unitPrice: number;
   total: number;
-  category: 'TICKET' | 'ADDON' | 'MERCH' | 'FEE' | 'DISCOUNT';
+  category: 'TICKET' | 'ADDON' | 'MERCH' | 'FEE' | 'DISCOUNT' | 'ADJUSTMENT';
 }
 
 export interface PricingBreakdown {
@@ -98,6 +99,7 @@ export const calculateBookingTotals = (
     voucherCode?: string;
     date?: string;   // Added for engine validation
     showId?: string; // Added for engine validation
+    adminOverride?: AdminPriceOverride; // New field for admin overrides
   },
   effectivePricing: EffectivePricing
 ): PricingBreakdown => {
@@ -106,15 +108,25 @@ export const calculateBookingTotals = (
   let addonsTotal = 0;
   let merchTotal = 0;
 
+  const { adminOverride } = wizardState;
+
   // 1. Tickets / Package
-  const unitPrice = wizardState.packageType === 'premium' 
+  // Determine unit price: Override has priority
+  let unitPrice = wizardState.packageType === 'premium' 
     ? effectivePricing.premium 
     : effectivePricing.standard;
+  
+  let label = `${wizardState.packageType === 'premium' ? 'Premium' : 'Standard'} Arrangement`;
+
+  if (adminOverride?.unitPrice !== undefined) {
+    unitPrice = adminOverride.unitPrice;
+    label += ' (Prijsaanpassing)';
+  }
   
   const ticketTotal = unitPrice * wizardState.totalGuests;
   items.push({
     id: 'ticket',
-    label: `${wizardState.packageType === 'premium' ? 'Premium' : 'Standard'} Arrangement`,
+    label,
     quantity: wizardState.totalGuests,
     unitPrice: unitPrice,
     total: ticketTotal,
@@ -178,11 +190,41 @@ export const calculateBookingTotals = (
 
   let subtotal = arrangementTotal + addonsTotal + merchTotal;
 
-  // 4. Promo Code (Using Discount Engine)
+  // 4. Discounts
   let discountAmount = 0;
   let promoError = undefined;
 
-  if (wizardState.promo) {
+  // Priority: Admin Discount overrides Promo Code
+  if (adminOverride?.discount) {
+    const { type, amount, label } = adminOverride.discount;
+    let calculatedDiscount = 0;
+
+    switch (type) {
+      case 'FIXED':
+        calculatedDiscount = amount;
+        break;
+      case 'PER_PERSON':
+        calculatedDiscount = amount * wizardState.totalGuests;
+        break;
+      case 'PERCENT':
+        calculatedDiscount = subtotal * (amount / 100);
+        break;
+    }
+
+    // Safety cap
+    discountAmount = Math.min(calculatedDiscount, subtotal);
+    
+    items.push({
+      id: 'admin-discount',
+      label: label || 'Handmatige Korting',
+      quantity: 1,
+      unitPrice: -discountAmount,
+      total: -discountAmount,
+      category: 'ADJUSTMENT'
+    });
+
+  } else if (wizardState.promo) {
+    // Normal Promo Engine
     const context: PricingContext = {
       partySize: wizardState.totalGuests,
       packageType: wizardState.packageType as 'standard' | 'premium',
@@ -215,7 +257,7 @@ export const calculateBookingTotals = (
     }
   }
 
-  // Ensure discount doesn't exceed subtotal (Engine does this too, but safety first)
+  // Ensure discount doesn't exceed subtotal
   discountAmount = Math.min(discountAmount, subtotal);
   const priceAfterDiscount = subtotal - discountAmount;
 
@@ -224,10 +266,6 @@ export const calculateBookingTotals = (
   let voucherLost = 0;
   
   if (wizardState.voucherCode) {
-    // Check stacking rule if a promo is present?
-    // The engine's `rule.allowWithVoucher` could be checked here if we passed the rule object back.
-    // For now, assuming if promo allowed it, it's fine.
-    
     const allVouchers = getVouchers();
     const voucher = allVouchers.find(v => v.code === wizardState.voucherCode);
     
@@ -277,22 +315,16 @@ export const recalculateReservationFinancials = (reservation: Reservation): Rese
 
   const pricingProfile = getEffectivePricing(event, show);
   
-  // Extract promo from financials if stored, or parse from voucherCode if it mimics a promo
-  // Simplified assumption: reservation.financials.voucherCode might store the promo code if used
-  // Or we might need a dedicated field in future schema.
-  // For now, let's assume we re-calculate based on what's available.
-  
   const totals = calculateBookingTotals({
     totalGuests: reservation.partySize,
     packageType: reservation.packageType,
     addons: reservation.addons,
     merchandise: reservation.merchandise,
-    // If a reservation has a promo applied, it should ideally be stored in reservation.promoCode
-    // Falling back to check if voucherCode looks like a known PROMO rule
-    promo: reservation.financials.voucherCode, 
-    voucherCode: undefined, // Re-applying voucher logic on top of paid amount is tricky in re-calc without full history
+    promo: reservation.financials.voucherCode?.startsWith('PROMO') ? reservation.financials.voucherCode : undefined, // simplified assumptions
+    voucherCode: reservation.voucherCode,
     date: reservation.date,
-    showId: reservation.showId
+    showId: reservation.showId,
+    adminOverride: reservation.adminPriceOverride // Pass Admin Override
   }, pricingProfile);
 
   // Check if fully paid based on previously paid amount
@@ -310,3 +342,4 @@ export const recalculateReservationFinancials = (reservation: Reservation): Rese
     // paymentDueAt remains unchanged
   };
 };
+    

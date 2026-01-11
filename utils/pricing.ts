@@ -1,3 +1,4 @@
+
 import { 
   EventDate, 
   ShowDefinition, 
@@ -341,3 +342,4 @@ export const recalculateReservationFinancials = (reservation: Reservation): Rese
     // paymentDueAt remains unchanged
   };
 };
+    

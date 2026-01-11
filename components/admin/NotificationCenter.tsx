@@ -49,7 +49,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onClose 
   };
 
   // Group by date
-  const grouped = useMemo(() => {
+  const grouped = useMemo<Record<string, AdminNotification[]>>(() => {
     const groups: Record<string, AdminNotification[]> = {};
     notifications.forEach(n => {
       const date = new Date(n.createdAt);
@@ -110,7 +110,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({ onClose 
                 {date}
               </div>
               <div className="space-y-1 mt-1">
-                {items.map(n => (
+                {(items as AdminNotification[]).map(n => (
                   <div 
                     key={n.id}
                     onClick={() => handleClick(n)}

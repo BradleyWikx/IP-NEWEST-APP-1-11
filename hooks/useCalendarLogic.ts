@@ -1,6 +1,6 @@
 
 import { useState, useMemo, useEffect } from 'react';
-import { calendarRepo, getShowDefinitions } from '../utils/storage';
+import { calendarRepo, getShowDefinitions, bookingRepo } from '../utils/storage';
 import { ShowDefinition, Availability, CalendarEvent, ShowEvent } from '../types';
 import { useIsMobile, useMediaQuery } from './useMediaQuery';
 
@@ -43,10 +43,41 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
 
   useEffect(() => {
     refreshData();
+    // Listen for reservation updates to recalculate capacity immediately
+    window.addEventListener('storage-update', refreshData);
+    return () => window.removeEventListener('storage-update', refreshData);
   }, []);
 
   const refreshData = () => {
-    setAllEvents(calendarRepo.getAll());
+    const rawEvents = calendarRepo.getAll();
+    const allReservations = bookingRepo.getAll();
+    
+    // Dynamically calculate booked count based on active reservations
+    const enrichedEvents = rawEvents.map(event => {
+      if (event.type === 'SHOW') {
+        const bookingsForDate = allReservations.filter(r => 
+          r.date === event.date && 
+          r.status !== 'CANCELLED' && 
+          r.status !== 'ARCHIVED' &&
+          r.status !== 'INVITED' // Invited usually doesn't count towards paid capacity, or change logic if needed
+        );
+        
+        // Sum party sizes
+        const realBookedCount = bookingsForDate.reduce((sum, r) => sum + r.partySize, 0);
+        
+        // Also count INVITED if they take up seats (Business rule decision: usually yes)
+        const invitedBookings = allReservations.filter(r => r.date === event.date && r.status === 'INVITED');
+        const invitedCount = invitedBookings.reduce((sum, r) => sum + r.partySize, 0);
+
+        return { 
+          ...event, 
+          bookedCount: realBookedCount + invitedCount 
+        };
+      }
+      return event;
+    });
+
+    setAllEvents(enrichedEvents);
     setShows(getShowDefinitions());
   };
 

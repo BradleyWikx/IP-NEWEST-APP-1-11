@@ -1,8 +1,11 @@
+
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Ticket, Search, Filter, CheckCircle2, XCircle,
   Clock, AlertCircle, MoreHorizontal, Mail, Phone,
-  Calendar, User, DollarSign, ChevronRight, X, Edit3
+  Calendar, User, DollarSign, ChevronRight, X, Edit3,
+  Utensils, PartyPopper, Star, Tag, Wine, ShoppingBag, Music
 } from 'lucide-react';
 import { Button, Card, Badge, ResponsiveDrawer, Input } from '../UI';
 import { Reservation, BookingStatus, AdminPriceOverride } from '../../types';
@@ -15,10 +18,78 @@ import { getPaymentStatus, getPaymentColor } from '../../utils/paymentHelpers';
 import { PriceOverridePanel } from './PriceOverridePanel';
 import { recalculateReservationFinancials } from '../../utils/pricing';
 
+// --- Tag Logic ---
+
+interface ReservationTag {
+  label: string;
+  icon?: any;
+  color: string; // Tailwind color class
+  isAuto: boolean;
+}
+
+const getReservationTags = (res: Reservation): ReservationTag[] => {
+  const tags: ReservationTag[] = [];
+
+  // 1. Automatic Tags based on Booking Data
+  
+  // Premium Package
+  if (res.packageType === 'premium') {
+    tags.push({ label: 'PREMIUM', icon: Star, color: 'bg-amber-500 text-black border-amber-600', isAuto: true });
+  }
+
+  // Dietary
+  if (res.notes?.dietary) {
+    tags.push({ label: 'DIEET', icon: Utensils, color: 'bg-red-900/20 text-red-500 border-red-900/50', isAuto: true });
+  }
+
+  // Celebration
+  if (res.notes?.isCelebrating) {
+    tags.push({ label: 'VIERING', icon: PartyPopper, color: 'bg-blue-900/20 text-blue-500 border-blue-900/50', isAuto: true });
+  }
+
+  // Merchandise
+  if (res.merchandise && res.merchandise.length > 0) {
+    tags.push({ label: 'MERCH', icon: ShoppingBag, color: 'bg-purple-900/20 text-purple-500 border-purple-900/50', isAuto: true });
+  }
+
+  // Addons (Pre/After)
+  const hasPre = res.addons?.some(a => a.id.includes('pre-drink'));
+  const hasAfter = res.addons?.some(a => a.id.includes('after-drink'));
+
+  if (hasPre && hasAfter) {
+    tags.push({ label: 'FULL PARTY', icon: Wine, color: 'bg-emerald-900/20 text-emerald-500 border-emerald-900/50', isAuto: true });
+  } else if (hasPre) {
+    tags.push({ label: 'PRE-PARTY', icon: Wine, color: 'bg-emerald-900/20 text-emerald-500 border-emerald-900/50', isAuto: true });
+  } else if (hasAfter) {
+    tags.push({ label: 'AFTERPARTY', icon: Music, color: 'bg-indigo-900/20 text-indigo-500 border-indigo-900/50', isAuto: true });
+  }
+
+  // 2. Manual Tags (From reservation.tags array)
+  if (res.tags && res.tags.length > 0) {
+    res.tags.forEach(t => {
+      // Special visual treatment for specific manual tags
+      let color = 'bg-slate-800 text-slate-300 border-slate-700';
+      if (t.toLowerCase().includes('mooie plaats')) color = 'bg-pink-900/20 text-pink-400 border-pink-900/50';
+      if (t.toLowerCase().includes('vip')) color = 'bg-amber-900/20 text-amber-400 border-amber-900/50';
+      
+      tags.push({ label: t, color, isAuto: false });
+    });
+  }
+
+  return tags;
+};
+
+// --- Component ---
+
 export const ReservationManager = () => {
+  const [searchParams] = useSearchParams();
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  
+  // Filters
   const [filterStatus, setFilterStatus] = useState<string>('ALL');
+  const [filterDate, setFilterDate] = useState<string>(''); // New Date Filter
   const [searchTerm, setSearchTerm] = useState('');
+  
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
   
   // Payment Modal State
@@ -31,8 +102,13 @@ export const ReservationManager = () => {
   useEffect(() => {
     refreshData();
     window.addEventListener('storage-update', refreshData);
+    
+    // Check URL Params for Date Filter
+    const dateParam = searchParams.get('date');
+    if (dateParam) setFilterDate(dateParam);
+
     return () => window.removeEventListener('storage-update', refreshData);
-  }, []);
+  }, [searchParams]);
 
   const refreshData = () => {
     setReservations(bookingRepo.getAll().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
@@ -90,6 +166,33 @@ export const ReservationManager = () => {
     if (selectedReservation && selectedReservation.id === id) {
        const fresh = bookingRepo.getById(id);
        if (fresh) setSelectedReservation(fresh);
+    }
+  };
+
+  const toggleManualTag = (tag: string) => {
+    if (!selectedReservation) return;
+    
+    const currentTags = selectedReservation.tags || [];
+    let newTags;
+    if (currentTags.includes(tag)) {
+      newTags = currentTags.filter(t => t !== tag);
+    } else {
+      newTags = [...currentTags, tag];
+    }
+
+    bookingRepo.update(selectedReservation.id, r => ({ ...r, tags: newTags }));
+    setSelectedReservation({ ...selectedReservation, tags: newTags });
+    refreshData();
+  };
+
+  const addCustomTag = (tag: string) => {
+    if (!tag || !selectedReservation) return;
+    const currentTags = selectedReservation.tags || [];
+    if (!currentTags.includes(tag)) {
+        const newTags = [...currentTags, tag];
+        bookingRepo.update(selectedReservation.id, r => ({ ...r, tags: newTags }));
+        setSelectedReservation({ ...selectedReservation, tags: newTags });
+        refreshData();
     }
   };
 
@@ -158,7 +261,11 @@ export const ReservationManager = () => {
       r.customer.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       r.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
       r.customer.email.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesStatus && matchesSearch;
+    
+    // Date Logic: Only filter if date is set
+    const matchesDate = !filterDate || r.date === filterDate;
+
+    return matchesStatus && matchesSearch && matchesDate;
   });
 
   return (
@@ -182,8 +289,26 @@ export const ReservationManager = () => {
         </div>
 
         <div className="flex items-center space-x-2 w-full md:w-auto overflow-x-auto">
+          {/* Date Filter */}
+          <div className="relative">
+             <input 
+               type="date" 
+               className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-amber-500 h-9"
+               value={filterDate}
+               onChange={(e) => setFilterDate(e.target.value)}
+             />
+             {filterDate && (
+               <button 
+                 onClick={() => setFilterDate('')}
+                 className="absolute right-8 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+               >
+                 <X size={12} />
+               </button>
+             )}
+          </div>
+
           <select
-            className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-amber-500"
+            className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-amber-500 h-9"
             value={filterStatus}
             onChange={e => setFilterStatus(e.target.value)}
           >
@@ -200,18 +325,32 @@ export const ReservationManager = () => {
       <div className="flex-grow">
         <ResponsiveTable
           data={filteredReservations}
-          keyExtractor={r => r.id}
+          keyExtractor={(r: Reservation) => r.id}
           onRowClick={(r) => { setSelectedReservation(r); setIsEditingPrice(false); }}
           columns={[
-            { header: 'Datum', accessor: r => <span className="font-mono text-slate-400 text-xs">{new Date(r.date).toLocaleDateString()}</span> },
-            { header: 'Klant', accessor: r => (
+            { header: 'Datum', accessor: (r: Reservation) => <span className="font-mono text-slate-400 text-xs">{new Date(r.date).toLocaleDateString()}</span> },
+            { header: 'Klant', accessor: (r: Reservation) => (
               <div>
                 <span className="font-bold text-white block">{r.customer.lastName}, {r.customer.firstName}</span>
                 <span className="text-xs text-slate-500">{r.id}</span>
               </div>
             )},
-            { header: 'Gezelschap', accessor: r => <span className="text-slate-300">{r.partySize}p</span> },
-            { header: 'Bedrag', accessor: r => {
+            { header: 'Gezelschap', accessor: (r: Reservation) => <span className="text-slate-300">{r.partySize}p</span> },
+            { header: 'Tags & Info', accessor: (r: Reservation) => {
+               const tags = getReservationTags(r);
+               return (
+                 <div className="flex flex-wrap gap-1">
+                   {tags.map((t, idx) => (
+                     <span key={idx} className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase flex items-center ${t.color}`}>
+                       {t.icon && <t.icon size={10} className="mr-1" />}
+                       {t.label}
+                     </span>
+                   ))}
+                   {tags.length === 0 && <span className="text-slate-600 text-[10px]">-</span>}
+                 </div>
+               );
+            }},
+            { header: 'Bedrag', accessor: (r: Reservation) => {
                const status = getPaymentStatus(r);
                const color = getPaymentColor(status);
                return (
@@ -221,8 +360,8 @@ export const ReservationManager = () => {
                  </div>
                )
             }},
-            { header: 'Status', accessor: r => <Badge status={r.status}>{r.status}</Badge> },
-            { header: 'Actie', accessor: r => (
+            { header: 'Status', accessor: (r: Reservation) => <Badge status={r.status}>{r.status}</Badge> },
+            { header: 'Actie', accessor: (r: Reservation) => (
                 <div className="flex space-x-1" onClick={e => e.stopPropagation()}>
                    {r.status === BookingStatus.REQUEST && (
                      <>
@@ -247,18 +386,67 @@ export const ReservationManager = () => {
       >
         {selectedReservation && (
           <div className="space-y-8 pb-12">
+             {/* Labels / Tags Section */}
+             <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl">
+               <h4 className="text-xs font-bold text-amber-500 uppercase tracking-widest mb-3 flex items-center">
+                 <Tag size={14} className="mr-2"/> Labels & Kenmerken
+               </h4>
+               <div className="flex flex-wrap gap-2">
+                 {/* Auto Tags (ReadOnly) */}
+                 {getReservationTags(selectedReservation).filter(t => t.isAuto).map(t => (
+                   <span key={t.label} className={`text-[10px] font-bold px-2 py-1 rounded border uppercase flex items-center opacity-70 ${t.color}`}>
+                     {t.icon && <t.icon size={12} className="mr-1" />} {t.label}
+                   </span>
+                 ))}
+                 
+                 {/* Manual Toggles */}
+                 {['Mooie Plaatsen', 'VIP', 'Mobiel Beperkt', 'Pers', 'Vrienden/Familie'].map(tag => {
+                   const isActive = selectedReservation.tags?.includes(tag);
+                   return (
+                     <button
+                       key={tag}
+                       onClick={() => toggleManualTag(tag)}
+                       className={`text-[10px] font-bold px-2 py-1 rounded border uppercase flex items-center transition-all ${
+                         isActive 
+                           ? 'bg-pink-600 text-white border-pink-500 shadow-lg' 
+                           : 'bg-slate-950 text-slate-500 border-slate-800 hover:border-slate-600'
+                       }`}
+                     >
+                       {isActive && <CheckCircle2 size={12} className="mr-1" />}
+                       {tag}
+                     </button>
+                   );
+                 })}
+                 
+                 {/* Custom Tag Input */}
+                 <div className="flex items-center">
+                   <input 
+                     placeholder="+ Label" 
+                     className="bg-transparent border-b border-slate-700 text-xs text-white w-20 focus:outline-none focus:border-amber-500 pb-0.5"
+                     onKeyDown={(e) => {
+                       if (e.key === 'Enter') {
+                         addCustomTag(e.currentTarget.value);
+                         e.currentTarget.value = '';
+                       }
+                     }}
+                   />
+                 </div>
+               </div>
+             </div>
+
              <div className="grid grid-cols-2 gap-4">
                <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl">
                  <p className="text-xs font-bold text-slate-500 uppercase">Klant</p>
-                 <p className="font-bold text-white text-lg">{selectedReservation.customer.firstName} {selectedReservation.customer.lastName}</p>
+                 <p className="font-bold text-white text-lg">{selectedReservation.customer.salutation} {selectedReservation.customer.firstName} {selectedReservation.customer.lastName}</p>
                  <p className="text-sm text-slate-400">{selectedReservation.customer.email}</p>
                  <p className="text-sm text-slate-400">{selectedReservation.customer.phone}</p>
+                 {selectedReservation.customer.companyName && <p className="text-xs text-amber-500 font-bold mt-1">{selectedReservation.customer.companyName}</p>}
                </div>
                <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl">
                  <p className="text-xs font-bold text-slate-500 uppercase">Boeking</p>
                  <p className="font-mono text-white">{selectedReservation.id}</p>
                  <p className="text-sm text-slate-400">Datum: {new Date(selectedReservation.date).toLocaleDateString()}</p>
-                 <p className="text-sm text-slate-400">Aantal: {selectedReservation.partySize} personen</p>
+                 <p className="text-sm text-slate-400">Arrangement: <span className="text-white capitalize">{selectedReservation.packageType}</span></p>
                </div>
              </div>
 
@@ -345,15 +533,15 @@ export const ReservationManager = () => {
 
                <div className="grid grid-cols-1 gap-4">
                  {selectedReservation.notes.dietary && (
-                   <div className="p-3 bg-amber-900/10 border border-amber-900/30 rounded-lg">
-                     <p className="text-xs font-bold text-amber-500 uppercase mb-1">Dieetwensen</p>
-                     <p className="text-sm text-amber-100">{selectedReservation.notes.dietary}</p>
+                   <div className="p-3 bg-red-900/10 border border-red-900/30 rounded-lg">
+                     <p className="text-xs font-bold text-red-500 uppercase mb-1 flex items-center"><Utensils size={12} className="mr-1"/> Dieetwensen</p>
+                     <p className="text-sm text-red-100">{selectedReservation.notes.dietary}</p>
                    </div>
                  )}
                  {selectedReservation.notes.isCelebrating && (
-                   <div className="p-3 bg-purple-900/10 border border-purple-900/30 rounded-lg">
-                     <p className="text-xs font-bold text-purple-500 uppercase mb-1">Viering</p>
-                     <p className="text-sm text-purple-100">{selectedReservation.notes.celebrationText}</p>
+                   <div className="p-3 bg-blue-900/10 border border-blue-900/30 rounded-lg">
+                     <p className="text-xs font-bold text-blue-500 uppercase mb-1 flex items-center"><PartyPopper size={12} className="mr-1"/> Viering</p>
+                     <p className="text-sm text-blue-100">{selectedReservation.notes.celebrationText}</p>
                    </div>
                  )}
                  <div className="p-3 bg-slate-900 border border-slate-800 rounded-lg">

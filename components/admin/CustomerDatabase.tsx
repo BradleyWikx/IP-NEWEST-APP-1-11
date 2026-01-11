@@ -4,11 +4,12 @@ import { useSearchParams } from 'react-router-dom';
 import { 
   Users, Search, Mail, Phone, Calendar, 
   ChevronRight, Star, AlertCircle, ShoppingBag, 
-  ArrowUpRight, Ticket, X
+  ArrowUpRight, Ticket, X, Edit3, Save, MapPin
 } from 'lucide-react';
 import { Button, Input, Card, Badge } from '../UI';
 import { Customer, Reservation, BookingStatus } from '../../types';
-import { loadData, STORAGE_KEYS } from '../../utils/storage';
+import { loadData, saveData, STORAGE_KEYS, customerRepo, bookingRepo } from '../../utils/storage';
+import { logAuditAction } from '../../utils/auditLogger';
 
 interface CustomerProfile extends Customer {
   totalBookings: number;
@@ -23,14 +24,18 @@ export const CustomerDatabase = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerProfile | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
+  
+  // Edit Mode State
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState<Customer | null>(null);
 
   useEffect(() => {
     refreshData();
   }, []);
 
   const refreshData = () => {
-    const rawCustomers = loadData<Customer[]>(STORAGE_KEYS.CUSTOMERS, []);
-    const reservations = loadData<Reservation[]>(STORAGE_KEYS.RESERVATIONS, []);
+    const rawCustomers = customerRepo.getAll();
+    const reservations = bookingRepo.getAll();
 
     // 1. Build Map of Customers (dedup by ID or Email)
     const profileMap = new Map<string, CustomerProfile>();
@@ -49,9 +54,7 @@ export const CustomerDatabase = () => {
 
     // 2. Aggregate Reservations
     reservations.forEach((r) => {
-      // Cast reservation to any to handle hybrid data structures (seed vs wizard)
       const res = r as any; 
-      
       let profile = res.customerId ? profileMap.get(res.customerId) : undefined;
       
       // If customer exists but only in reservation (not in seed list), create entry
@@ -66,6 +69,7 @@ export const CustomerDatabase = () => {
         } else {
           profile = {
             id: res.customerId || `CUST-GEN-${res.id}`,
+            salutation: res.customer.salutation || 'Dhr.',
             firstName: res.customer.firstName,
             lastName: res.customer.lastName,
             email: res.customer.email,
@@ -74,6 +78,10 @@ export const CustomerDatabase = () => {
             isBusiness: res.customer.isBusiness,
             address: res.customer.address,
             city: res.customer.city,
+            street: res.customer.street,
+            houseNumber: res.customer.houseNumber,
+            zip: res.customer.zip,
+            notes: res.customer.notes,
             totalBookings: 0,
             totalSpend: 0,
             lastBookingDate: null,
@@ -85,7 +93,6 @@ export const CustomerDatabase = () => {
       }
 
       if (profile) {
-        // Add Reservation to Profile
         profile.history.push(res);
         if (res.status !== BookingStatus.CANCELLED) {
           profile.totalBookings += 1;
@@ -97,7 +104,6 @@ export const CustomerDatabase = () => {
           profile.lastBookingDate = res.date;
         }
 
-        // Add Tags derived from this reservation
         if (res.notes?.dietary && !profile.tags.includes('DIETARY')) profile.tags.push('DIETARY');
         if ((res.voucherCode || res.financials?.voucherCode) && !profile.tags.includes('VOUCHER')) profile.tags.push('VOUCHER');
       }
@@ -107,7 +113,6 @@ export const CustomerDatabase = () => {
     const profiles = Array.from(profileMap.values()).map(p => {
       if (p.totalSpend > 500) p.tags.push('HIGH_VALUE');
       if (p.totalBookings > 3) p.tags.push('VIP');
-      // Sort history descending
       p.history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       return p;
     });
@@ -122,6 +127,29 @@ export const CustomerDatabase = () => {
       if (match) setSelectedCustomer(match);
       setSearchParams({});
     }
+  };
+
+  const handleSaveCustomer = () => {
+    if (!editForm || !selectedCustomer) return;
+
+    // Save to Repo
+    customerRepo.update(editForm.id, () => editForm);
+    
+    // Also update any future reservations linking to this customer ID? 
+    // Ideally yes, but for now we just update the CRM record. 
+    // Usually reservation snapshots contact info at booking time.
+    
+    logAuditAction('UPDATE_CUSTOMER', 'CUSTOMER', editForm.id, {
+      description: 'Customer details updated',
+      after: editForm
+    });
+
+    setIsEditing(false);
+    refreshData(); // Re-aggregates
+    
+    // Update selected view immediately
+    const updatedProfile = { ...selectedCustomer, ...editForm };
+    setSelectedCustomer(updatedProfile);
   };
 
   const filteredCustomers = customers.filter(c => 
@@ -171,7 +199,7 @@ export const CustomerDatabase = () => {
             <tbody className="divide-y divide-slate-800">
               {filteredCustomers.length === 0 ? <tr><td colSpan={7} className="p-8 text-center text-slate-500">Geen klanten gevonden.</td></tr> :
               filteredCustomers.map(c => (
-                <tr key={c.id} className="hover:bg-slate-800/50 cursor-pointer group" onClick={() => setSelectedCustomer(c)}>
+                <tr key={c.id} className="hover:bg-slate-800/50 cursor-pointer group" onClick={() => { setSelectedCustomer(c); setIsEditing(false); }}>
                   <td className="p-4">
                     <div className="font-bold text-white">{c.firstName} {c.lastName}</div>
                     {c.isBusiness && <div className="text-xs text-amber-500 uppercase font-bold">{c.companyName}</div>}
@@ -210,100 +238,160 @@ export const CustomerDatabase = () => {
       {selectedCustomer && (
         <>
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 transition-opacity" onClick={() => setSelectedCustomer(null)} />
-          <div className="fixed top-0 right-0 h-full w-full md:w-[600px] bg-slate-950 border-l border-slate-900 z-50 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
+          <div className="fixed top-0 right-0 h-full w-full md:w-[700px] bg-slate-950 border-l border-slate-900 z-50 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
              
              {/* Header */}
              <div className="p-6 border-b border-slate-900 bg-slate-900/50 flex justify-between items-start">
                <div>
-                 <div className="flex items-center space-x-2 mb-1">
-                   <h2 className="text-2xl font-serif text-white">{selectedCustomer.firstName} {selectedCustomer.lastName}</h2>
-                   {selectedCustomer.tags.includes('VIP') && <Star size={16} className="text-amber-500 fill-amber-500" />}
-                 </div>
-                 <p className="text-slate-500 text-xs font-mono">{selectedCustomer.id}</p>
-               </div>
-               <button onClick={() => setSelectedCustomer(null)} className="p-2 hover:bg-slate-800 rounded-full text-slate-500 hover:text-white"><X size={24}/></button>
-             </div>
-
-             <div className="p-8 overflow-y-auto space-y-8">
-               {/* Quick Stats */}
-               <div className="grid grid-cols-3 gap-4">
-                  <div className="p-4 bg-slate-900 rounded-xl border border-slate-800 text-center">
-                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Totaal</p>
-                    <p className="text-xl font-bold text-white">{selectedCustomer.totalBookings}</p>
-                  </div>
-                  <div className="p-4 bg-slate-900 rounded-xl border border-slate-800 text-center">
-                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Waarde</p>
-                    <p className="text-xl font-bold text-emerald-500">€{selectedCustomer.totalSpend.toLocaleString()}</p>
-                  </div>
-                  <div className="p-4 bg-slate-900 rounded-xl border border-slate-800 text-center">
-                    <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Laatste</p>
-                    <p className="text-sm font-bold text-white mt-1">{selectedCustomer.lastBookingDate ? new Date(selectedCustomer.lastBookingDate).toLocaleDateString() : '-'}</p>
-                  </div>
-               </div>
-
-               {/* Contact Info */}
-               <div className="space-y-4">
-                 <h3 className="text-xs font-bold text-amber-500 uppercase tracking-widest border-b border-slate-800 pb-2">Gegevens</h3>
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
-                    <div className="space-y-3">
-                      <div className="flex items-center space-x-3 text-slate-300">
-                        <Mail size={14} className="text-slate-500" /> <span>{selectedCustomer.email}</span>
-                      </div>
-                      <div className="flex items-center space-x-3 text-slate-300">
-                        <Phone size={14} className="text-slate-500" /> <span>{selectedCustomer.phone}</span>
-                      </div>
-                    </div>
-                    <div className="space-y-3">
-                      <div className="text-slate-300">
-                        <p className="text-xs text-slate-500 mb-1">Adres</p>
-                        <p>{selectedCustomer.address}</p>
-                        <p>{selectedCustomer.city}</p>
-                      </div>
-                      {selectedCustomer.isBusiness && (
-                        <div className="text-slate-300">
-                          <p className="text-xs text-slate-500 mb-1">Bedrijf</p>
-                          <p className="font-bold text-amber-500">{selectedCustomer.companyName}</p>
-                        </div>
-                      )}
-                    </div>
-                 </div>
-               </div>
-
-               {/* Actions */}
-               <div className="grid grid-cols-2 gap-4">
-                 <Button variant="secondary" className="flex items-center justify-center">
-                   <Mail size={16} className="mr-2" /> Stuur Email
-                 </Button>
-                 <Button variant="primary" className="flex items-center justify-center bg-blue-600 border-blue-500 hover:bg-blue-700">
-                   <ArrowUpRight size={16} className="mr-2" /> Nieuwe Boeking
-                 </Button>
-               </div>
-
-               {/* History */}
-               <div className="space-y-4">
-                 <h3 className="text-xs font-bold text-amber-500 uppercase tracking-widest border-b border-slate-800 pb-2">Historie</h3>
-                 {selectedCustomer.history.length === 0 ? (
-                   <p className="text-slate-500 text-sm">Geen historie beschikbaar.</p>
+                 {isEditing ? (
+                   <h2 className="text-2xl font-serif text-white">Klant Bewerken</h2>
                  ) : (
-                   <div className="space-y-3">
-                     {selectedCustomer.history.map(res => (
-                       <div key={res.id} className="p-4 bg-slate-900 border border-slate-800 rounded-xl hover:border-slate-600 transition-colors">
-                          <div className="flex justify-between items-start mb-2">
-                            <div>
-                              <p className="font-bold text-white text-sm">{new Date(res.date).toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })}</p>
-                              <p className="text-xs text-slate-500">{res.id}</p>
-                            </div>
-                            <Badge status={res.status} />
-                          </div>
-                          <div className="flex justify-between items-center text-xs mt-3 pt-3 border-t border-slate-800">
-                             <span className="flex items-center text-slate-300"><Users size={12} className="mr-1"/> {res.partySize} personen</span>
-                             <span className="font-mono text-emerald-500 font-bold">€{(res.financials.finalTotal || res.financials.total).toFixed(2)}</span>
-                          </div>
-                       </div>
-                     ))}
-                   </div>
+                   <>
+                     <div className="flex items-center space-x-2 mb-1">
+                       <h2 className="text-2xl font-serif text-white">{selectedCustomer.salutation || 'Dhr.'} {selectedCustomer.firstName} {selectedCustomer.lastName}</h2>
+                       {selectedCustomer.tags.includes('VIP') && <Star size={16} className="text-amber-500 fill-amber-500" />}
+                     </div>
+                     <p className="text-slate-500 text-xs font-mono">{selectedCustomer.id}</p>
+                   </>
                  )}
                </div>
+               <div className="flex items-center space-x-2">
+                 {!isEditing ? (
+                   <Button onClick={() => { setEditForm(selectedCustomer); setIsEditing(true); }} variant="secondary" className="h-8 text-xs">
+                     <Edit3 size={14} className="mr-2"/> Bewerken
+                   </Button>
+                 ) : (
+                   <Button onClick={handleSaveCustomer} className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 border-none">
+                     <Save size={14} className="mr-2"/> Opslaan
+                   </Button>
+                 )}
+                 <button onClick={() => setSelectedCustomer(null)} className="p-2 hover:bg-slate-800 rounded-full text-slate-500 hover:text-white"><X size={24}/></button>
+               </div>
+             </div>
+
+             <div className="p-8 overflow-y-auto space-y-8 flex-grow">
+               
+               {isEditing && editForm ? (
+                 <div className="space-y-6 animate-in fade-in">
+                    <div className="grid grid-cols-2 gap-4">
+                       <Input label="Voornaam" value={editForm.firstName} onChange={(e: any) => setEditForm({...editForm, firstName: e.target.value})} />
+                       <Input label="Achternaam" value={editForm.lastName} onChange={(e: any) => setEditForm({...editForm, lastName: e.target.value})} />
+                       <Input label="Email" value={editForm.email} onChange={(e: any) => setEditForm({...editForm, email: e.target.value})} />
+                       <Input label="Telefoon" value={editForm.phone} onChange={(e: any) => setEditForm({...editForm, phone: e.target.value})} />
+                       <Input label="Bedrijfsnaam" value={editForm.companyName} onChange={(e: any) => setEditForm({...editForm, companyName: e.target.value})} />
+                    </div>
+                    
+                    <div className="pt-4 border-t border-slate-900">
+                      <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Adresgegevens</h4>
+                      <div className="grid grid-cols-4 gap-4">
+                         <div className="col-span-3"><Input label="Straat" value={editForm.street} onChange={(e: any) => setEditForm({...editForm, street: e.target.value})} /></div>
+                         <div className="col-span-1"><Input label="Huisnummer" value={editForm.houseNumber} onChange={(e: any) => setEditForm({...editForm, houseNumber: e.target.value})} /></div>
+                         <div className="col-span-1"><Input label="Postcode" value={editForm.zip} onChange={(e: any) => setEditForm({...editForm, zip: e.target.value})} /></div>
+                         <div className="col-span-3"><Input label="Stad" value={editForm.city} onChange={(e: any) => setEditForm({...editForm, city: e.target.value})} /></div>
+                      </div>
+                    </div>
+
+                    <div className="pt-4 border-t border-slate-900">
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 block">Interne Notities (CRM)</label>
+                      <textarea 
+                        className="w-full h-32 bg-slate-900 border border-slate-800 rounded-xl p-4 text-sm text-white focus:border-amber-500 outline-none resize-none"
+                        value={editForm.notes || ''}
+                        onChange={(e) => setEditForm({...editForm, notes: e.target.value})}
+                        placeholder="Plaats hier notities over voorkeuren, klachten of bijzonderheden..."
+                      />
+                    </div>
+                 </div>
+               ) : (
+                 <>
+                   {/* Quick Stats */}
+                   <div className="grid grid-cols-3 gap-4">
+                      <div className="p-4 bg-slate-900 rounded-xl border border-slate-800 text-center">
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Totaal</p>
+                        <p className="text-xl font-bold text-white">{selectedCustomer.totalBookings}</p>
+                      </div>
+                      <div className="p-4 bg-slate-900 rounded-xl border border-slate-800 text-center">
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Waarde</p>
+                        <p className="text-xl font-bold text-emerald-500">€{selectedCustomer.totalSpend.toLocaleString()}</p>
+                      </div>
+                      <div className="p-4 bg-slate-900 rounded-xl border border-slate-800 text-center">
+                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Laatste</p>
+                        <p className="text-sm font-bold text-white mt-1">{selectedCustomer.lastBookingDate ? new Date(selectedCustomer.lastBookingDate).toLocaleDateString() : '-'}</p>
+                      </div>
+                   </div>
+
+                   {/* Contact Info */}
+                   <div className="space-y-4">
+                     <h3 className="text-xs font-bold text-amber-500 uppercase tracking-widest border-b border-slate-800 pb-2">Gegevens</h3>
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
+                        <div className="space-y-3">
+                          <div className="flex items-center space-x-3 text-slate-300">
+                            <Mail size={14} className="text-slate-500" /> <span>{selectedCustomer.email}</span>
+                          </div>
+                          <div className="flex items-center space-x-3 text-slate-300">
+                            <Phone size={14} className="text-slate-500" /> <span>{selectedCustomer.phone}</span>
+                          </div>
+                        </div>
+                        <div className="space-y-3">
+                          <div className="text-slate-300">
+                            <p className="text-xs text-slate-500 mb-1 flex items-center"><MapPin size={10} className="mr-1"/> Adres</p>
+                            <p>{selectedCustomer.street} {selectedCustomer.houseNumber}</p>
+                            <p>{selectedCustomer.zip} {selectedCustomer.city}</p>
+                          </div>
+                          {selectedCustomer.isBusiness && (
+                            <div className="text-slate-300">
+                              <p className="text-xs text-slate-500 mb-1">Bedrijf</p>
+                              <p className="font-bold text-amber-500">{selectedCustomer.companyName}</p>
+                            </div>
+                          )}
+                        </div>
+                     </div>
+                   </div>
+
+                   {/* Notes Section */}
+                   {selectedCustomer.notes && (
+                     <div className="p-4 bg-amber-900/10 border border-amber-900/30 rounded-xl">
+                       <h4 className="text-xs font-bold text-amber-500 uppercase mb-2">Interne Notities</h4>
+                       <p className="text-sm text-amber-100 whitespace-pre-wrap">{selectedCustomer.notes}</p>
+                     </div>
+                   )}
+
+                   {/* Actions */}
+                   <div className="grid grid-cols-2 gap-4">
+                     <Button variant="secondary" className="flex items-center justify-center">
+                       <Mail size={16} className="mr-2" /> Stuur Email
+                     </Button>
+                     <Button variant="primary" className="flex items-center justify-center bg-blue-600 border-blue-500 hover:bg-blue-700">
+                       <ArrowUpRight size={16} className="mr-2" /> Nieuwe Boeking
+                     </Button>
+                   </div>
+
+                   {/* History */}
+                   <div className="space-y-4">
+                     <h3 className="text-xs font-bold text-amber-500 uppercase tracking-widest border-b border-slate-800 pb-2">Historie</h3>
+                     {selectedCustomer.history.length === 0 ? (
+                       <p className="text-slate-500 text-sm">Geen historie beschikbaar.</p>
+                     ) : (
+                       <div className="space-y-3">
+                         {selectedCustomer.history.map(res => (
+                           <div key={res.id} className="p-4 bg-slate-900 border border-slate-800 rounded-xl hover:border-slate-600 transition-colors">
+                              <div className="flex justify-between items-start mb-2">
+                                <div>
+                                  <p className="font-bold text-white text-sm">{new Date(res.date).toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                                  <p className="text-xs text-slate-500">{res.id}</p>
+                                </div>
+                                <Badge status={res.status} />
+                              </div>
+                              <div className="flex justify-between items-center text-xs mt-3 pt-3 border-t border-slate-800">
+                                 <span className="flex items-center text-slate-300"><Users size={12} className="mr-1"/> {res.partySize} personen</span>
+                                 <span className="font-mono text-emerald-500 font-bold">€{(res.financials.finalTotal || res.financials.total).toFixed(2)}</span>
+                              </div>
+                           </div>
+                         ))}
+                       </div>
+                     )}
+                   </div>
+                 </>
+               )}
              </div>
           </div>
         </>

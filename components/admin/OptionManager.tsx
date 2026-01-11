@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { AlertCircle, Clock, CheckCircle2, X } from 'lucide-react';
 import { Button, Badge } from '../UI';
@@ -52,12 +53,12 @@ export const OptionManager = () => {
         data={reservations}
         keyExtractor={r => r.id}
         columns={[
-          { header: 'Gast', accessor: r => <span className="font-bold text-white">{r.customer.lastName}</span> },
-          { header: 'Verloopt', accessor: r => {
+          { header: 'Gast', accessor: (r: Reservation) => <span className="font-bold text-white">{r.customer.lastName}</span> },
+          { header: 'Verloopt', accessor: (r: Reservation) => {
              const { label, color } = calculateTimeRemaining(r.optionExpiresAt);
              return <Badge status={color === 'red' ? 'CANCELLED' : 'OPTION'}>{label}</Badge>;
           }},
-          { header: 'Acties', accessor: res => (
+          { header: 'Acties', accessor: (res: Reservation) => (
             <div className="flex space-x-2">
                <button onClick={() => sendReminder(res)} className="flex flex-col items-center justify-center p-2 rounded hover:bg-orange-900/20 text-slate-400 hover:text-orange-500 transition-colors" title="Stuur Herinnering">
                  <AlertCircle size={18} />

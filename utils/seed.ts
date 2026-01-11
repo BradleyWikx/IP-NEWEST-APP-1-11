@@ -10,33 +10,84 @@ import { getEffectivePricing, calculateBookingTotals } from './pricing';
 
 const CAPACITY = 230;
 
+// THESE ARE JUST REFERENCE TYPES FOR LEGACY COMPAT, ACTUAL DEFINITIONS ARE BELOW
 const SHOW_TYPES: ShowType[] = [
-  { id: 'matinee', name: 'Sunday Matinee', color: 'emerald', basePrice: 45, premiumPrice: 65, startTime: '13:00', description: 'Gezellige middagvoorstelling voor de hele familie.' },
-  { id: 'weekday', name: 'Evening Performance', color: 'indigo', basePrice: 55, premiumPrice: 85, startTime: '19:30', description: 'Onze klassieke avondshow vol spektakel.' },
-  { id: 'weekend', name: 'Weekend Gala', color: 'amber', basePrice: 75, premiumPrice: 110, startTime: '19:00', description: 'De ultieme gala ervaring met live orkest en 5-gangen diner.' },
-  { id: 'special', name: 'Charity Gala Night', color: 'rose', basePrice: 90, premiumPrice: 150, startTime: '18:30', description: 'Exclusieve avond voor het goede doel met speciale gasten.' },
+  { id: 'matinee', name: 'Sunday Matinee', color: 'emerald', basePrice: 45, premiumPrice: 65, startTime: '13:00', description: 'Gezellige middagvoorstelling.' },
+  { id: 'weekday', name: 'Avondvoorstelling (Week)', color: 'indigo', basePrice: 55, premiumPrice: 85, startTime: '19:30', description: 'Onze klassieke avondshow.' },
+  { id: 'weekend', name: 'Weekend Gala', color: 'amber', basePrice: 75, premiumPrice: 110, startTime: '19:00', description: 'De ultieme gala ervaring.' },
+  { id: 'care_heroes', name: 'Zorgzame Helden', color: 'rose', basePrice: 35, premiumPrice: 60, startTime: '19:00', description: 'Speciale editie voor de zorg.' },
 ];
 
-const SHOW_DEFINITIONS: ShowDefinition[] = SHOW_TYPES.map(st => ({
-  id: st.id,
-  name: st.name,
-  description: st.description || '',
-  posterImage: st.id === 'matinee' ? 'https://images.unsplash.com/photo-1514525253440-b393452e8d26?auto=format&fit=crop&w=800&q=80' :
-               st.id === 'weekend' ? 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?auto=format&fit=crop&w=800&q=80' :
-               st.id === 'special' ? 'https://images.unsplash.com/photo-1460723237483-7a6dc9d0b212?auto=format&fit=crop&w=800&q=80' :
-               'https://images.unsplash.com/photo-1503095392237-fc785870e913?auto=format&fit=crop&w=800&q=80',
-  activeFrom: '2025-01-01',
-  activeTo: '2025-12-31',
-  isActive: true,
-  tags: ['Theater', 'Diner', 'Live Muziek'],
-  profiles: [{
-    id: `${st.id}-default`,
-    name: 'Standaard Profiel',
-    color: st.color,
-    timing: { doorTime: '18:00', startTime: st.startTime, endTime: '22:30' },
-    pricing: { standard: st.basePrice, premium: st.premiumPrice, addonPreDrink: 12.50, addonAfterDrink: 15.00 }
-  }]
-}));
+const SHOW_DEFINITIONS: ShowDefinition[] = [
+  {
+    id: 'SHOW-MATINEE',
+    name: 'Sunday Matinee',
+    description: 'Een heerlijke middag uit voor de hele familie. Geniet van onze show bij daglicht.',
+    activeFrom: '2025-01-01',
+    activeTo: '2025-12-31',
+    isActive: true,
+    tags: ['Middag', 'Familie'],
+    posterImage: 'https://images.unsplash.com/photo-1514525253440-b393452e8d26?auto=format&fit=crop&w=800&q=80',
+    profiles: [{
+      id: 'prof-matinee-default',
+      name: 'Standaard Matinee',
+      color: 'emerald',
+      timing: { doorTime: '12:00', startTime: '13:00', endTime: '16:30' },
+      pricing: { standard: 45.00, premium: 65.00, addonPreDrink: 10.00, addonAfterDrink: 12.50 }
+    }]
+  },
+  {
+    id: 'SHOW-WEEK',
+    name: 'Avondvoorstelling (Week)',
+    description: 'Onze reguliere avondvoorstelling op woensdag en donderdag.',
+    activeFrom: '2025-01-01',
+    activeTo: '2025-12-31',
+    isActive: true,
+    tags: ['Avond', 'Diner'],
+    posterImage: 'https://images.unsplash.com/photo-1503095392237-fc785870e913?auto=format&fit=crop&w=800&q=80',
+    profiles: [{
+      id: 'prof-week-default',
+      name: 'Week Avond',
+      color: 'indigo',
+      timing: { doorTime: '18:30', startTime: '19:30', endTime: '22:30' },
+      pricing: { standard: 55.00, premium: 85.00, addonPreDrink: 12.50, addonAfterDrink: 15.00 }
+    }]
+  },
+  {
+    id: 'SHOW-WEEKEND',
+    name: 'Weekend Gala',
+    description: 'De ultieme beleving op vrijdag en zaterdag. Inclusief uitgebreid diner en live band.',
+    activeFrom: '2025-01-01',
+    activeTo: '2025-12-31',
+    isActive: true,
+    tags: ['Gala', 'Live Muziek', 'Weekend'],
+    posterImage: 'https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?auto=format&fit=crop&w=800&q=80',
+    profiles: [{
+      id: 'prof-weekend-default',
+      name: 'Weekend Gala',
+      color: 'amber',
+      timing: { doorTime: '18:00', startTime: '19:00', endTime: '23:00' },
+      pricing: { standard: 75.00, premium: 110.00, addonPreDrink: 15.00, addonAfterDrink: 17.50 }
+    }]
+  },
+  {
+    id: 'SHOW-HEROES',
+    name: 'Zorgzame Helden',
+    description: 'Speciale benefietavond voor helden in de zorg. Gereduceerd tarief.',
+    activeFrom: '2025-01-01',
+    activeTo: '2025-12-31',
+    isActive: true,
+    tags: ['Charity', 'Zorg'],
+    posterImage: 'https://images.unsplash.com/photo-1460723237483-7a6dc9d0b212?auto=format&fit=crop&w=800&q=80',
+    profiles: [{
+      id: 'prof-heroes-default',
+      name: 'Zorg Special',
+      color: 'rose',
+      timing: { doorTime: '18:00', startTime: '19:00', endTime: '22:30' },
+      pricing: { standard: 35.00, premium: 60.00, addonPreDrink: 10.00, addonAfterDrink: 12.50 }
+    }]
+  }
+];
 
 const MERCH_CATALOG: MerchandiseItem[] = [
   { id: 'prog-book', name: 'Luxury Program Book', price: 15.00, category: 'Souvenir', stock: 100, active: true, description: '50 pagina\'s achter de schermen bij de show.', image: 'https://images.unsplash.com/photo-1544947950-fa07a98d237f?auto=format&fit=crop&w=600&q=80' },
@@ -178,12 +229,14 @@ const generateCalendar = (): CalendarEvent[] => {
     // Skip some days for other events
     if (i === 5 || i === 12 || i === 20 || i === 25 || i === 26) continue;
 
-    let showId = 'weekday';
-    if (day === 0) showId = 'matinee';
-    if (day === 5 || day === 6) showId = 'weekend';
-    if (i === 15) showId = 'special';
+    // Logic for new Show Definitions
+    let showId = 'SHOW-WEEK'; // Default
+    if (day === 0) showId = 'SHOW-MATINEE';
+    if (day === 5 || day === 6) showId = 'SHOW-WEEKEND';
+    if (i === 15) showId = 'SHOW-HEROES';
 
-    const st = SHOW_TYPES.find(s => s.id === showId)!;
+    const st = SHOW_DEFINITIONS.find(s => s.id === showId)!;
+    const profile = st.profiles[0];
     
     events.push({
       id: `SHOW-${dateStr}`,
@@ -192,18 +245,18 @@ const generateCalendar = (): CalendarEvent[] => {
       title: st.name,
       visibility: 'PUBLIC',
       bookingEnabled: true,
-      colorKey: st.color,
+      colorKey: profile.color,
       times: {
-        doorsOpen: '18:00',
-        start: st.startTime,
-        end: '22:30'
+        doorsOpen: profile.timing.doorTime,
+        start: profile.timing.startTime,
+        end: profile.timing.endTime
       },
       showId,
-      profileId: `${showId}-default`,
-      status: Math.random() > 0.9 ? 'CLOSED' : Math.random() > 0.8 ? 'WAITLIST' : 'OPEN',
+      profileId: profile.id,
+      status: 'OPEN', // Default all to OPEN
       capacity: CAPACITY,
-      bookedCount: Math.floor(Math.random() * 50),
-      pricing: { standard: st.basePrice, premium: st.premiumPrice, addonPreDrink: 12.50, addonAfterDrink: 15.00 }
+      bookedCount: 0, // Reset to 0 so calculations are clean based on actual reservations
+      pricing: profile.pricing
     });
   }
 
@@ -279,9 +332,9 @@ const MOCK_RESERVATIONS: Reservation[] = [
     id: 'RES-12345678',
     createdAt: new Date().toISOString(),
     customerId: 'CUST-001',
-    customer: { id: 'CUST-001', firstName: 'Jan', lastName: 'Jansen', email: 'jan@voorbeeld.nl', phone: '0612345678', address: 'Hoofdstraat 1', city: 'Amsterdam' },
+    customer: { id: 'CUST-001', firstName: 'Jan', lastName: 'Jansen', email: 'jan@voorbeeld.nl', phone: '0612345678', address: 'Hoofdstraat 1', city: 'Amsterdam', notes: 'Is een vaste gast.' },
     date: new Date().toISOString().split('T')[0],
-    showId: 'weekend',
+    showId: 'SHOW-WEEKEND',
     status: BookingStatus.CONFIRMED,
     partySize: 4,
     packageType: 'premium',
@@ -317,7 +370,7 @@ export const resetDemoData = () => {
   seedDemoData();
 };
 
-// --- Generator Functions ---
+// ... Generator Functions remain largely same, updated to use new Show Definitions in logic ...
 
 const NAMES = ['De Vries', 'Bakker', 'Visser', 'Smit', 'Mulder', 'Janssen', 'De Jong', 'Bos', 'Meijer', 'Vermeulen'];
 const FIRSTNAMES = ['Emma', 'Noah', 'Mila', 'Sem', 'Julia', 'Lucas', 'Sophie', 'Daan', 'Tess', 'Finn'];
@@ -362,7 +415,8 @@ export const generateRandomBookings = (count: number) => {
         email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}@example.com`,
         phone: '0612345678',
         address: 'Willekeurigestraat 1',
-        city: 'Amsterdam'
+        city: 'Amsterdam',
+        notes: ''
       },
       date: event.date,
       showId: event.showId,
@@ -391,6 +445,8 @@ export const generateRandomBookings = (count: number) => {
 
   bookingRepo.saveAll([...existing, ...newBookings]);
 };
+
+// ... other generators unchanged ...
 
 export const generateRandomWaitlist = (count: number) => {
   const events = calendarRepo.getLegacyEvents();

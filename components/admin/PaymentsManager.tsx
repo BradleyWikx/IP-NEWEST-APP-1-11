@@ -197,11 +197,11 @@ export const PaymentsManager = () => {
             columns={[
                 { 
                     header: 'Datum Show', 
-                    accessor: r => <span className="font-mono text-slate-400 text-xs">{new Date(r.date).toLocaleDateString()}</span> 
+                    accessor: (r: Reservation) => <span className="font-mono text-slate-400 text-xs">{new Date(r.date).toLocaleDateString()}</span> 
                 },
                 { 
                     header: 'Reservering', 
-                    accessor: r => (
+                    accessor: (r: Reservation) => (
                         <div>
                             <span className="block font-bold text-white text-sm">{r.customer.lastName}, {r.customer.firstName}</span>
                             <span className="text-[10px] text-slate-500 font-mono">{r.id}</span>
@@ -210,11 +210,11 @@ export const PaymentsManager = () => {
                 },
                 {
                     header: 'Bedrag',
-                    accessor: r => <span className="font-mono font-bold text-white">€{r.financials.finalTotal.toFixed(2)}</span>
+                    accessor: (r: Reservation) => <span className="font-mono font-bold text-white">€{r.financials.finalTotal.toFixed(2)}</span>
                 },
                 {
                     header: activeTab === 'OPEN' ? 'Vervaldatum' : 'Betaald Op',
-                    accessor: r => {
+                    accessor: (r: Reservation) => {
                         if (activeTab === 'OPEN') {
                             const status = getPaymentStatus(r);
                             const due = r.financials.paymentDueAt ? new Date(r.financials.paymentDueAt) : null;
@@ -237,7 +237,7 @@ export const PaymentsManager = () => {
                 },
                 {
                     header: 'Acties',
-                    accessor: r => (
+                    accessor: (r: Reservation) => (
                         <div className="flex justify-end space-x-2">
                            {activeTab === 'OPEN' ? (
                                <>

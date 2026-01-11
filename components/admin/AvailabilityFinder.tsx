@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Calendar, Users, Filter, ChevronRight, AlertTriangle, Clock } from 'lucide-react';
 import { Card, Button, Badge } from '../UI';
@@ -54,7 +55,7 @@ export const AvailabilityFinder: React.FC<AvailabilityFinderProps> = ({ onSelect
         // Calculate Occupancy
         const occupancy = (e as any).bookedCount || 0;
         const capacity = (e as any).capacity || 230;
-        const remaining = capacity - occupancy;
+        const remaining = Math.max(0, capacity - occupancy);
         
         // Score: Closer dates higher, Open status higher
         let score = 0;
@@ -171,7 +172,12 @@ export const AvailabilityFinder: React.FC<AvailabilityFinderProps> = ({ onSelect
                   <h4 className="font-bold text-white text-lg">{show?.name}</h4>
                   <div className="flex items-center text-xs text-slate-400 space-x-3">
                     <span className="flex items-center"><Clock size={12} className="mr-1"/> {event.times?.start || '19:30'}</span>
-                    <span className="flex items-center"><Users size={12} className="mr-1"/> {occupancy} / {capacity} bezet</span>
+                    
+                    {/* Capacity Indicator in Result */}
+                    <span className={`flex items-center font-bold ${remaining < 20 ? 'text-amber-500' : 'text-emerald-500'}`}>
+                       <Users size={12} className="mr-1"/> 
+                       {remaining} plekken vrij
+                    </span>
                   </div>
                 </div>
               </div>
@@ -180,9 +186,20 @@ export const AvailabilityFinder: React.FC<AvailabilityFinderProps> = ({ onSelect
                 {isTight && (
                   <div className="flex items-center text-amber-500 text-xs font-bold px-3 py-1 bg-amber-900/20 rounded-full border border-amber-900/50">
                     <AlertTriangle size={12} className="mr-1.5" />
-                    Capaciteit krap
+                    Krap
                   </div>
                 )}
+                {/* Visualizing Occupancy Bar */}
+                <div className="hidden md:block w-24">
+                   <div className="text-[9px] text-slate-500 text-right mb-1">{occupancy} / {capacity}</div>
+                   <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                      <div 
+                        className={`h-full ${occupancy > capacity ? 'bg-purple-500' : remaining < 20 ? 'bg-amber-500' : 'bg-emerald-500'}`} 
+                        style={{ width: `${Math.min(100, (occupancy/capacity)*100)}%` }}
+                      />
+                   </div>
+                </div>
+
                 <Badge status={(event as any).status}>{(event as any).status}</Badge>
                 <ChevronRight className="text-slate-600 group-hover:text-white transition-colors" />
               </div>

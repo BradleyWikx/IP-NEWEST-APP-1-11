@@ -1,3 +1,4 @@
+
 export type AdminRole = 'ADMIN' | 'EDITOR' | 'HOST';
 
 export enum BookingStatus {
@@ -110,6 +111,7 @@ export interface Address {
 
 export interface Customer {
   id: string;
+  salutation?: string; // NEW: Aanhef
   firstName: string;
   lastName: string;
   email: string;
@@ -125,6 +127,7 @@ export interface Customer {
   billingAddress?: Address;
   billingInstructions?: string; 
   isBusiness?: boolean;
+  notes?: string; // NEW: Internal CRM notes
 }
 
 export interface ReservationFinancials {
@@ -179,6 +182,7 @@ export interface Reservation {
   optionExpiresAt?: string;
   startTime?: string;
   adminPriceOverride?: AdminPriceOverride;
+  tags?: string[]; // NEW: Manual tags like "Mooie Plaatsen", "VIP"
 }
 
 export interface WaitlistEntry {
@@ -219,7 +223,6 @@ export interface VoucherOrder {
   buyer: {
     firstName: string;
     lastName: string;
-    email: string;
   };
   items: VoucherOrderItem[];
   amount: number;

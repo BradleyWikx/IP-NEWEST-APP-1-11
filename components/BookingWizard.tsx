@@ -59,6 +59,7 @@ export const BookingWizard = () => {
     merchandise: [],
     voucherCode: '',
     customer: { 
+      salutation: 'Dhr.', // Default
       firstName: '', 
       lastName: '', 
       email: '', 
@@ -170,6 +171,7 @@ export const BookingWizard = () => {
     if (last) {
       updateWizard({
         customer: {
+          salutation: last.salutation || 'Dhr.',
           firstName: last.firstName,
           lastName: last.lastName,
           email: last.email,
@@ -458,19 +460,41 @@ export const BookingWizard = () => {
             )}
 
             <Card className="p-6 md:p-8 bg-slate-900 border-slate-800 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Input 
-                  label="Voornaam *" 
-                  value={wizardData.customer.firstName} 
-                  onChange={(e: any) => updateWizard({ customer: { ...wizardData.customer, firstName: e.target.value } })} 
-                  onBlur={(e: any) => handleCapitalize(e, 'firstName')}
-                />
-                <Input 
-                  label="Achternaam *" 
-                  value={wizardData.customer.lastName} 
-                  onChange={(e: any) => updateWizard({ customer: { ...wizardData.customer, lastName: e.target.value } })} 
-                  onBlur={(e: any) => handleCapitalize(e, 'lastName')}
-                />
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                
+                {/* Salutation */}
+                <div className="md:col-span-1">
+                  <label className="text-xs font-bold text-amber-500/80 uppercase tracking-widest font-serif mb-2 block">Aanhef</label>
+                  <select 
+                    className="w-full px-4 py-3 bg-black/40 border border-slate-800 rounded-xl text-amber-50 focus:border-amber-600 outline-none"
+                    value={wizardData.customer.salutation || 'Dhr.'}
+                    onChange={(e) => updateWizard({ customer: { ...wizardData.customer, salutation: e.target.value } })}
+                  >
+                    <option value="Dhr.">Dhr.</option>
+                    <option value="Mevr.">Mevr.</option>
+                    <option value="Fam.">Fam.</option>
+                    <option value="-">-</option>
+                  </select>
+                </div>
+
+                <div className="md:col-span-3">
+                  {/* Spacer for alignment if needed, or merge first name here if layout prefers */}
+                  <Input 
+                    label="Voornaam *" 
+                    value={wizardData.customer.firstName} 
+                    onChange={(e: any) => updateWizard({ customer: { ...wizardData.customer, firstName: e.target.value } })} 
+                    onBlur={(e: any) => handleCapitalize(e, 'firstName')}
+                  />
+                </div>
+
+                <div className="md:col-span-2">
+                  <Input 
+                    label="Achternaam *" 
+                    value={wizardData.customer.lastName} 
+                    onChange={(e: any) => updateWizard({ customer: { ...wizardData.customer, lastName: e.target.value } })} 
+                    onBlur={(e: any) => handleCapitalize(e, 'lastName')}
+                  />
+                </div>
                 <div className="md:col-span-2">
                   <Input label="Email *" type="email" value={wizardData.customer.email} onChange={(e: any) => updateWizard({ customer: { ...wizardData.customer, email: e.target.value } })} />
                 </div>
@@ -730,7 +754,7 @@ export const BookingWizard = () => {
                      </div>
                      <div>
                        <p className="text-xs text-slate-500 uppercase font-bold">Gegevens</p>
-                       <p className="text-white">{wizardData.customer.firstName} {wizardData.customer.lastName}</p>
+                       <p className="text-white">{wizardData.customer.salutation} {wizardData.customer.firstName} {wizardData.customer.lastName}</p>
                        <p className="text-slate-400">{wizardData.customer.email}</p>
                        <p className="text-slate-400">{wizardData.customer.phoneCode} {wizardData.customer.phone}</p>
                        {wizardData.customer.companyName && <p className="text-amber-500 text-xs mt-1">{wizardData.customer.companyName}</p>}

@@ -154,15 +154,15 @@ export const Stepper = ({ steps, current }: { steps: string[], current: number }
  * Renders as a Slide-Over (Right) on Desktop.
  * Renders as a Bottom Sheet on Mobile.
  */
-interface DrawerProps {
+export interface DrawerProps {
   isOpen: boolean;
   onClose: () => void;
   title: string;
-  children: React.ReactNode;
+  children?: React.ReactNode;
   widthClass?: string; // e.g. "md:w-[600px]"
 }
 
-export const ResponsiveDrawer = ({ isOpen, onClose, title, children, widthClass = "md:w-[600px]" }: DrawerProps) => {
+export const ResponsiveDrawer: React.FC<DrawerProps> = ({ isOpen, onClose, title, children, widthClass = "md:w-[600px]" }) => {
   const isMobile = useIsMobile();
   const [isRendered, setIsRendered] = useState(false);
 

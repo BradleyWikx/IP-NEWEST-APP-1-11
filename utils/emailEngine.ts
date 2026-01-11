@@ -38,6 +38,7 @@ const getBookingContext = (booking: Reservation) => {
   const show = shows.find(s => s.id === booking.showId);
 
   return {
+    salutation: booking.customer.salutation || 'Beste', // NEW
     firstName: booking.customer.firstName,
     lastName: booking.customer.lastName,
     fullName: `${booking.customer.firstName} ${booking.customer.lastName}`,
@@ -119,7 +120,7 @@ export const triggerEmail = (
   } else if (entity.type === 'VOUCHER_ORDER') {
     const v = entity.data as VoucherOrder;
     context = getVoucherOrderContext(v);
-    toEmail = v.buyer.email;
+    toEmail = v.customerEmail || '';
   }
 
   // Merge extra context (e.g. voucher codes)
@@ -179,7 +180,7 @@ export const getEmailsForEntity = (entityId: string): EmailLog[] => {
  * Helper to get variable suggestions for the UI
  */
 export const getAvailableVariables = (category: EmailCategory): string[] => {
-  const common = ['{{firstName}}', '{{lastName}}', '{{fullName}}'];
+  const common = ['{{salutation}}', '{{firstName}}', '{{lastName}}', '{{fullName}}'];
   
   switch(category) {
     case 'BOOKING':

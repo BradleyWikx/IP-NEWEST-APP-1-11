@@ -93,10 +93,10 @@ export const ChangeRequestInbox = () => {
         keyExtractor={r => r.id}
         onRowClick={(r) => setSelectedRequest(r)}
         columns={[
-          { header: 'Type', accessor: r => <Badge status={r.type === 'CANCELLATION' ? 'CANCELLED' : 'OPTION'}>{r.type}</Badge> },
-          { header: 'Klant', accessor: r => <span className="font-bold text-white">{r.customerName}</span> },
-          { header: 'Bericht', accessor: r => <span className="text-slate-400 italic truncate block max-w-xs">"{r.message || r.details?.message}"</span> },
-          { header: 'Datum', accessor: r => <span className="font-mono text-xs">{new Date(r.createdAt).toLocaleDateString()}</span> }
+          { header: 'Type', accessor: (r: ChangeRequest) => <Badge status={r.type === 'CANCELLATION' ? 'CANCELLED' : 'OPTION'}>{r.type}</Badge> },
+          { header: 'Klant', accessor: (r: ChangeRequest) => <span className="font-bold text-white">{r.customerName}</span> },
+          { header: 'Bericht', accessor: (r: ChangeRequest) => <span className="text-slate-400 italic truncate block max-w-xs">"{r.message || r.details?.message}"</span> },
+          { header: 'Datum', accessor: (r: ChangeRequest) => <span className="font-mono text-xs">{new Date(r.createdAt).toLocaleDateString()}</span> }
         ]}
         emptyMessage="Geen openstaande verzoeken."
       />

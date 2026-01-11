@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { ChevronLeft, ChevronRight, List, Grid, Clock, Users, Maximize2, Minimize2, CheckCircle2, Lock, Mic, Briefcase, Calendar } from 'lucide-react';
+import { ChevronLeft, ChevronRight, List, Grid, Clock, Users, Maximize2, Minimize2, CheckCircle2, Lock, Mic, Briefcase, Calendar, AlertCircle } from 'lucide-react';
 import { Badge } from '../UI';
 import { ShowEvent } from '../../types';
 
@@ -77,7 +77,7 @@ export const CalendarLegend = () => (
   </div>
 );
 
-export const DateTile = ({ day, onClick, isAdmin, isDense, isSelected, isBulkMode }: CalendarDayProps) => {
+export const DateTile: React.FC<CalendarDayProps> = ({ day, onClick, isAdmin, isDense, isSelected, isBulkMode }) => {
   const { date, isCurrentMonth, isToday, event, show, status, theme } = day;
   
   const opacity = isCurrentMonth ? 'opacity-100' : 'opacity-30 grayscale';
@@ -90,6 +90,34 @@ export const DateTile = ({ day, onClick, isAdmin, isDense, isSelected, isBulkMod
   const finalBg = isBulkMode ? (isSelected ? 'bg-amber-900/30' : 'bg-slate-950/80') : baseBg;
   const finalBorder = isSelected ? 'border-amber-500' : 'border-slate-800/50';
   const accentBorder = isShow && show && !isBulkMode ? `border-l-2 border-l-${theme.primary}-500` : 'border-l border-l-transparent';
+
+  // Capacity Logic for Admins
+  let capacityBar = null;
+  let capacityText = null;
+
+  if (isAdmin && isShow && event) {
+    const booked = (event as any).bookedCount || 0;
+    const capacity = (event as any).capacity || 230;
+    const pct = Math.min(100, (booked / capacity) * 100);
+    
+    let barColor = 'bg-emerald-500';
+    if (pct > 50) barColor = 'bg-amber-500';
+    if (pct > 90) barColor = 'bg-red-500';
+    if (booked > capacity) barColor = 'bg-purple-500'; // Overbooked
+
+    capacityBar = (
+      <div className="w-full h-1 bg-slate-800 rounded-full mt-1.5 overflow-hidden">
+        <div className={`h-full ${barColor}`} style={{ width: `${pct}%` }} />
+      </div>
+    );
+
+    capacityText = (
+      <div className={`text-[9px] font-mono mt-0.5 flex justify-between ${pct > 90 ? 'text-red-400 font-bold' : 'text-slate-500'}`}>
+        <span>{booked}/{capacity}</span>
+        {booked > capacity && <AlertCircle size={10} className="text-purple-500" />}
+      </div>
+    );
+  }
 
   // Customer facing logic: Only show public shows
   if (!isAdmin && event && !isShow) return (
@@ -118,13 +146,21 @@ export const DateTile = ({ day, onClick, isAdmin, isDense, isSelected, isBulkMod
           <div className={`font-black uppercase tracking-tight leading-none text-${theme.primary}-400 line-clamp-2 ${isDense ? 'text-[8px]' : 'text-[10px]'}`}>
             {show.name}
           </div>
-          {!isDense && (
-            <div className="flex justify-between items-end mt-1">
-               <span className="text-[9px] text-slate-500 font-mono">{event.times?.start || 'N/A'}</span>
-               {status === 'WAITLIST' && <span className="w-1.5 h-1.5 rounded-full bg-orange-500"/>}
-               {status === 'CLOSED' && <span className="w-1.5 h-1.5 rounded-full bg-red-500"/>}
-               {status === 'OPEN' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"/>}
-            </div>
+          
+          {isAdmin ? (
+            <>
+              {capacityBar}
+              {capacityText}
+            </>
+          ) : (
+            !isDense && (
+              <div className="flex justify-between items-end mt-1">
+                 <span className="text-[9px] text-slate-500 font-mono">{event.times?.start || 'N/A'}</span>
+                 {status === 'WAITLIST' && <span className="w-1.5 h-1.5 rounded-full bg-orange-500"/>}
+                 {status === 'CLOSED' && <span className="w-1.5 h-1.5 rounded-full bg-red-500"/>}
+                 {status === 'OPEN' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"/>}
+              </div>
+            )
           )}
         </div>
       )}
@@ -136,7 +172,7 @@ export const DateTile = ({ day, onClick, isAdmin, isDense, isSelected, isBulkMod
   );
 };
 
-export const AgendaItem = ({ day, onClick, isAdmin }: CalendarDayProps) => {
+export const AgendaItem: React.FC<CalendarDayProps> = ({ day, onClick, isAdmin }) => {
   const { date, event, show, theme, status } = day;
   
   const isShow = event?.type === 'SHOW';
@@ -144,6 +180,11 @@ export const AgendaItem = ({ day, onClick, isAdmin }: CalendarDayProps) => {
 
   const dayName = date.toLocaleDateString('nl-NL', { weekday: 'short' });
   const dayNum = date.getDate();
+
+  // Admin Capacity Info
+  const booked = (event as any).bookedCount || 0;
+  const capacity = (event as any).capacity || 0;
+  const pct = capacity > 0 ? Math.round((booked / capacity) * 100) : 0;
 
   return (
     <div 
@@ -170,6 +211,18 @@ export const AgendaItem = ({ day, onClick, isAdmin }: CalendarDayProps) => {
           <div className="text-sm text-slate-500 font-bold">{event.title}</div>
         )}
       </div>
+
+      {isAdmin && isShow && (
+        <div className="shrink-0 w-32 mr-4 hidden sm:block">
+           <div className="flex justify-between text-[10px] uppercase font-bold text-slate-500 mb-1">
+             <span>Bezetting</span>
+             <span className={pct > 90 ? 'text-red-500' : 'text-slate-300'}>{booked}/{capacity}</span>
+           </div>
+           <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+             <div className={`h-full ${pct > 90 ? 'bg-red-500' : pct > 60 ? 'bg-amber-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, pct)}%` }} />
+           </div>
+        </div>
+      )}
 
       <div className="shrink-0 ml-2">
         {isShow ? (

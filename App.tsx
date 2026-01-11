@@ -33,7 +33,8 @@ import { DemoControlPanel } from './components/admin/DemoControlPanel';
 import { TaskManager } from './components/admin/TaskManager';
 import { PaymentsManager } from './components/admin/PaymentsManager';
 import { PromoManager } from './components/admin/PromoManager';
-import { AdminBookingWizard } from './components/admin/AdminBookingWizard'; // NEW
+import { AdminBookingWizard } from './components/admin/AdminBookingWizard';
+import { DataImporter } from './components/admin/DataImporter'; // NEW
 
 // --- Dashboard Specifics ---
 import { PaymentWidget } from './components/admin/PaymentWidget';
@@ -365,7 +366,8 @@ const App: React.FC = () => {
               <Route path="/admin/calendar" element={<CalendarManager />} />
               <Route path="/admin/planning" element={<PlanningManager />} />
               <Route path="/admin/reservations" element={<ReservationManager />} />
-              <Route path="/admin/reservations/new" element={<AdminBookingWizard />} /> {/* NEW ROUTE */}
+              <Route path="/admin/reservations/new" element={<AdminBookingWizard />} />
+              <Route path="/admin/import" element={<DataImporter />} /> {/* NEW ROUTE */}
               <Route path="/admin/inbox" element={<ChangeRequestInbox />} />
               <Route path="/admin/tasks" element={<TaskManager />} /> 
               <Route path="/admin/shows" element={<ShowsManager />} />
