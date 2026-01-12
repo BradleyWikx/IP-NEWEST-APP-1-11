@@ -5,8 +5,9 @@ import {
   ChangeRequest, Subscriber, AuditLogEntry, VoucherSaleConfig,
   CalendarEvent, ShowEvent, EmailTemplate, EmailLog,
   AdminNotification, NotificationType, NotificationSeverity,
-  Task, TaskType, TaskStatus, PromoCodeRule
+  Task, TaskType, TaskStatus, PromoCodeRule, AdminNote
 } from '../types';
+import { logAuditAction } from './auditLogger';
 
 // --- Keys ---
 export const KEYS = {
@@ -28,7 +29,8 @@ export const KEYS = {
   VOUCHER_CONFIG: 'grand_stage_voucher_sales_config',
   EMAIL_TEMPLATES: 'grand_stage_email_templates_v2',
   EMAIL_LOGS: 'grand_stage_email_logs_v2',
-  PROMOS: 'grand_stage_promo_rules', // New
+  PROMOS: 'grand_stage_promo_rules', 
+  ADMIN_NOTES: 'grand_stage_admin_notes', // New
   META: 'grand_stage_meta'
 };
 
@@ -82,6 +84,72 @@ class Repository<T extends { id?: string } | any> {
 class BookingRepository extends Repository<Reservation> {
   constructor() {
     super(KEYS.RESERVATIONS);
+  }
+
+  // OVERRIDE: Only return active items (not deleted)
+  getAll(): Reservation[] {
+    const all = super.getAll();
+    return all.filter(r => !r.deletedAt);
+  }
+
+  // NEW: Get soft deleted items
+  getTrash(): Reservation[] {
+    const all = super.getAll();
+    return all.filter(r => !!r.deletedAt);
+  }
+
+  // OVERRIDE: Perform Soft Delete
+  delete(id: string): void {
+    const items = super.getAll();
+    const updated = items.map(r => r.id === id ? { ...r, deletedAt: new Date().toISOString() } : r);
+    this.saveAll(updated);
+    
+    logAuditAction('SOFT_DELETE', 'RESERVATION', id, { 
+      description: 'Item moved to trash'
+    });
+  }
+
+  // NEW: Restore from Trash
+  restore(id: string): void {
+    const items = super.getAll();
+    const updated = items.map(r => r.id === id ? { ...r, deletedAt: undefined } : r);
+    this.saveAll(updated);
+
+    logAuditAction('RESTORE', 'RESERVATION', id, { 
+      description: 'Item restored from trash'
+    });
+  }
+
+  // NEW: Hard Delete
+  hardDelete(id: string): void {
+    super.delete(id); // Call parent which actually filters it out
+    logAuditAction('HARD_DELETE', 'RESERVATION', id, { 
+      description: 'Item permanently deleted'
+    });
+  }
+
+  // NEW: Auto Cleanup ( > 30 days)
+  runCleanup() {
+    const all = super.getAll();
+    const now = new Date();
+    const threshold = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
+    
+    let deletedCount = 0;
+    const kept = all.filter(r => {
+      if (!r.deletedAt) return true;
+      const deletedDate = new Date(r.deletedAt);
+      if ((now.getTime() - deletedDate.getTime()) > threshold) {
+        deletedCount++;
+        return false; // Remove
+      }
+      return true; // Keep
+    });
+
+    if (deletedCount > 0) {
+      console.log(`[Trash] Auto-cleaned ${deletedCount} items.`);
+      this.saveAll(kept);
+      logAuditAction('AUTO_CLEANUP', 'SYSTEM', 'TRASH', { description: `Removed ${deletedCount} old items from trash` });
+    }
   }
 
   findByIdempotencyKey(key: string): Reservation | undefined {
@@ -400,6 +468,7 @@ export const auditRepo = new Repository<AuditLogEntry>(KEYS.AUDIT);
 export const emailTemplateRepo = new Repository<EmailTemplate>(KEYS.EMAIL_TEMPLATES);
 export const emailLogRepo = new Repository<EmailLog>(KEYS.EMAIL_LOGS);
 export const promoRepo = new Repository<PromoCodeRule>(KEYS.PROMOS);
+export const notesRepo = new Repository<AdminNote>(KEYS.ADMIN_NOTES);
 export const notificationsRepo = new NotificationsRepository();
 export const tasksRepo = new TasksRepository();
 export const settingsRepo = new SettingsRepository();
@@ -422,6 +491,7 @@ export const getEmailLogs = () => emailLogRepo.getAll();
 export const getPromoRules = () => promoRepo.getAll();
 export const getNotifications = () => notificationsRepo.getAll();
 export const getTasks = () => tasksRepo.getAll();
+export const getNotes = () => notesRepo.getAll();
 
 // Alias
 export const getShows = getShowDefinitions;

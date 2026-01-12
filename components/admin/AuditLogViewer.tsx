@@ -102,6 +102,7 @@ export const AuditLogViewer = () => {
               <option value="CALENDAR">Kalender</option>
               <option value="SYSTEM">Systeem</option>
               <option value="CUSTOMER">Klanten</option>
+              <option value="WAITLIST">Wachtlijst</option>
             </select>
           </div>
         </div>

@@ -6,8 +6,7 @@ import {
 } from './calendar/CalendarComponents';
 import { ResponsiveDrawer, Button, Badge } from './UI';
 import { Availability } from '../types';
-import { Clock, Star, AlertCircle, Calendar as CalIcon, ChevronRight } from 'lucide-react';
-import { WaitlistModal } from './WaitlistModal';
+import { Clock, Star, AlertCircle, Calendar as CalIcon, ChevronRight, Lock, Hourglass } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useIsMobile } from '../hooks/useMediaQuery';
 
@@ -19,7 +18,6 @@ interface CalendarProps {
 export const CustomerCalendar = ({ onSelect, selectedDate }: CalendarProps) => {
   const { currentMonth, navigateMonth, calendarDays, viewMode, setViewMode, isDense, setIsDense } = useCalendarLogic(selectedDate, 'CUSTOMER');
   const [selectedDay, setSelectedDay] = useState<any>(null);
-  const [showWaitlist, setShowWaitlist] = useState(false);
   const navigate = useNavigate();
   const isMobile = useIsMobile();
 
@@ -36,15 +34,18 @@ export const CustomerCalendar = ({ onSelect, selectedDate }: CalendarProps) => {
 
   const handleBookNow = () => {
     if (selectedDay && selectedDay.event) {
+      // Prevent booking if closed
+      if (selectedDay.status === 'CLOSED') return;
+
       if (onSelect) {
         onSelect(selectedDay.dateStr, selectedDay.event.showId, selectedDay.status);
       } else {
-        // Default navigation
+        // Navigate with state to trigger Wizard logic
         navigate('/book/wizard', { 
           state: { 
             date: selectedDay.dateStr, 
             showId: selectedDay.event.showId,
-            availability: selectedDay.status
+            availability: selectedDay.status // Pass calculated status (OPEN or WAITLIST)
           } 
         });
       }
@@ -102,7 +103,18 @@ export const CustomerCalendar = ({ onSelect, selectedDate }: CalendarProps) => {
                )}
                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
                <div className="absolute bottom-4 left-6">
-                 <Badge status={selectedDay.status} className="mb-2" />
+                 {/* Status Badge inside Image */}
+                 {selectedDay.status === 'CLOSED' && (
+                    <span className="px-3 py-1 rounded-full bg-red-600 text-white text-xs font-bold uppercase tracking-widest shadow-lg flex items-center w-fit mb-2">
+                      <Lock size={12} className="mr-1.5" /> Volgeboekt
+                    </span>
+                 )}
+                 {selectedDay.status === 'WAITLIST' && (
+                    <span className="px-3 py-1 rounded-full bg-orange-500 text-black text-xs font-bold uppercase tracking-widest shadow-lg flex items-center w-fit mb-2">
+                      <Hourglass size={12} className="mr-1.5" /> Wachtlijst Open
+                    </span>
+                 )}
+                 
                  <p className="text-white text-2xl font-serif font-bold leading-none shadow-black drop-shadow-md">{selectedDay.show.name}</p>
                </div>
             </div>
@@ -138,28 +150,44 @@ export const CustomerCalendar = ({ onSelect, selectedDate }: CalendarProps) => {
                </div>
             </div>
 
-            {/* Pricing Hint */}
-            <div className="flex justify-between items-center text-sm px-2">
-              <span className="text-slate-400">Vanaf prijs</span>
-              <span className="font-serif text-amber-500 text-lg">€{selectedDay.event.pricing?.standard || selectedDay.show.profiles[0].pricing.standard} <span className="text-xs text-slate-500 font-sans">p.p.</span></span>
-            </div>
+            {/* Pricing Hint - Hide if closed/waitlist to reduce noise */}
+            {selectedDay.status === 'OPEN' && (
+                <div className="flex justify-between items-center text-sm px-2">
+                <span className="text-slate-400">Vanaf prijs</span>
+                <span className="font-serif text-amber-500 text-lg">€{selectedDay.event.pricing?.standard || selectedDay.show.profiles[0].pricing.standard} <span className="text-xs text-slate-500 font-sans">p.p.</span></span>
+                </div>
+            )}
 
-            {/* Actions */}
+            {/* Dynamic Actions based on Status */}
             <div className="pt-2">
                {selectedDay.status === 'CLOSED' ? (
-                 <Button disabled className="w-full bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed">
-                   Helaas Volgeboekt
-                 </Button>
+                 <div className="space-y-3 animate-in fade-in">
+                    <div className="bg-red-900/20 border border-red-900/50 p-4 rounded-xl flex items-start">
+                        <Lock size={20} className="text-red-500 mr-3 mt-0.5 shrink-0" />
+                        <div>
+                            <h4 className="text-red-400 font-bold text-sm">Helaas Volgeboekt</h4>
+                            <p className="text-red-300/70 text-xs mt-1">
+                                Zowel de zaal als de wachtlijst voor deze datum zitten vol. Probeer een andere datum.
+                            </p>
+                        </div>
+                    </div>
+                    <Button disabled className="w-full bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed opacity-50">
+                        Niet Beschikbaar
+                    </Button>
+                 </div>
                ) : selectedDay.status === 'WAITLIST' ? (
-                 <>
-                   <div className="bg-amber-900/20 border border-amber-900/50 p-3 rounded-lg mb-3 flex items-start">
+                 <div className="space-y-3 animate-in fade-in">
+                   <div className="bg-amber-900/20 border border-amber-900/50 p-3 rounded-lg flex items-start">
                      <AlertCircle size={16} className="text-amber-500 mr-2 shrink-0 mt-0.5" />
-                     <p className="text-xs text-amber-200">Deze datum is vol. U kunt zich vrijblijvend inschrijven op de wachtlijst.</p>
+                     <p className="text-xs text-amber-200">
+                        <strong>Deze datum is vol.</strong> U kunt zich inschrijven op de wachtlijst. 
+                        We nemen contact op zodra er een tafel vrijkomt.
+                     </p>
                    </div>
-                   <Button onClick={() => setShowWaitlist(true)} className="w-full bg-amber-600 hover:bg-amber-700 text-black border-none">
-                     Inschrijven Wachtlijst
+                   <Button onClick={handleBookNow} className="w-full bg-amber-600 hover:bg-amber-700 text-black border-none shadow-lg shadow-amber-900/20">
+                     <Hourglass size={18} className="mr-2" /> Inschrijven Wachtlijst
                    </Button>
-                 </>
+                 </div>
                ) : (
                  <Button onClick={handleBookNow} className="w-full h-12 text-lg shadow-xl shadow-red-900/20">
                    Start Reservering <ChevronRight size={18} className="ml-2" />
@@ -169,16 +197,6 @@ export const CustomerCalendar = ({ onSelect, selectedDate }: CalendarProps) => {
           </div>
         )}
       </ResponsiveDrawer>
-
-      {/* Waitlist Modal */}
-      {showWaitlist && selectedDay && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <WaitlistModal 
-            date={selectedDay.dateStr} 
-            onClose={() => setShowWaitlist(false)} 
-          />
-        </div>
-      )}
     </div>
   );
 };

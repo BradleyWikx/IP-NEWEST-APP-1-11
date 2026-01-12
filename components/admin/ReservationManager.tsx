@@ -5,11 +5,12 @@ import {
   Ticket, Search, Filter, CheckCircle2, XCircle,
   Clock, AlertCircle, MoreHorizontal, Mail, Phone,
   Calendar, User, DollarSign, ChevronRight, X, Edit3,
-  Utensils, PartyPopper, Star, Tag, Wine, ShoppingBag, Music
+  Utensils, PartyPopper, Star, Tag, Wine, ShoppingBag, Music,
+  CheckSquare, Square, History, Save, RefreshCw
 } from 'lucide-react';
 import { Button, Card, Badge, ResponsiveDrawer, Input } from '../UI';
 import { Reservation, BookingStatus, AdminPriceOverride } from '../../types';
-import { bookingRepo, tasksRepo, saveData, STORAGE_KEYS } from '../../utils/storage';
+import { bookingRepo, tasksRepo, saveData, STORAGE_KEYS, calendarRepo, showRepo } from '../../utils/storage';
 import { undoManager } from '../../utils/undoManager';
 import { logAuditAction } from '../../utils/auditLogger';
 import { triggerEmail } from '../../utils/emailEngine';
@@ -17,6 +18,7 @@ import { ResponsiveTable } from '../ResponsiveTable';
 import { getPaymentStatus, getPaymentColor } from '../../utils/paymentHelpers';
 import { PriceOverridePanel } from './PriceOverridePanel';
 import { recalculateReservationFinancials } from '../../utils/pricing';
+import { AuditTimeline } from './AuditTimeline';
 
 // --- Tag Logic ---
 
@@ -91,13 +93,19 @@ export const ReservationManager = () => {
   const [searchTerm, setSearchTerm] = useState('');
   
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
+  const [detailTab, setDetailTab] = useState<'DETAILS' | 'HISTORY'>('DETAILS');
   
+  // Bulk Selection State
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
   // Payment Modal State
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState('FACTUUR');
 
-  // Pricing Mode
+  // Edit Modes
   const [isEditingPrice, setIsEditingPrice] = useState(false);
+  const [isEditingDetails, setIsEditingDetails] = useState(false);
+  const [editFormData, setEditFormData] = useState<any>(null); // Temp state for editing details
 
   useEffect(() => {
     refreshData();
@@ -107,12 +115,29 @@ export const ReservationManager = () => {
     const dateParam = searchParams.get('date');
     if (dateParam) setFilterDate(dateParam);
 
+    // Deep link open
+    const openId = searchParams.get('open');
+    if (openId && !selectedReservation) {
+        const res = bookingRepo.getById(openId);
+        if(res) setSelectedReservation(res);
+    }
+
     return () => window.removeEventListener('storage-update', refreshData);
   }, [searchParams]);
 
   const refreshData = () => {
     setReservations(bookingRepo.getAll().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
   };
+
+  // --- Bulk Selection Logic ---
+  const toggleSelection = (id: string) => {
+    const newSet = new Set(selectedIds);
+    if (newSet.has(id)) newSet.delete(id);
+    else newSet.add(id);
+    setSelectedIds(newSet);
+  };
+
+  // --- Single Update Logic ---
 
   const updateStatus = (id: string, status: BookingStatus) => {
     const original = reservations.find(r => r.id === id);
@@ -167,6 +192,16 @@ export const ReservationManager = () => {
        const fresh = bookingRepo.getById(id);
        if (fresh) setSelectedReservation(fresh);
     }
+  };
+
+  const deleteReservation = (id: string) => {
+    if (!confirm('Weet u zeker dat u deze reservering naar de prullenbak wilt verplaatsen?')) return;
+    
+    bookingRepo.delete(id); // Calls soft delete now
+    undoManager.showSuccess("Reservering verplaatst naar prullenbak.");
+    
+    setSelectedReservation(null);
+    refreshData();
   };
 
   const toggleManualTag = (tag: string) => {
@@ -255,6 +290,59 @@ export const ReservationManager = () => {
     refreshData();
   };
 
+  // --- Detail Editing Logic ---
+  const handleStartEditDetails = () => {
+    if (!selectedReservation) return;
+    setEditFormData({
+        date: selectedReservation.date,
+        startTime: selectedReservation.startTime || '19:30',
+        partySize: selectedReservation.partySize,
+        packageType: selectedReservation.packageType,
+        firstName: selectedReservation.customer.firstName,
+        lastName: selectedReservation.customer.lastName,
+        email: selectedReservation.customer.email,
+        phone: selectedReservation.customer.phone
+    });
+    setIsEditingDetails(true);
+  };
+
+  const handleSaveDetails = () => {
+    if (!selectedReservation || !editFormData) return;
+
+    // Create updated object
+    let updatedReservation = {
+        ...selectedReservation,
+        date: editFormData.date,
+        startTime: editFormData.startTime,
+        partySize: parseInt(editFormData.partySize),
+        packageType: editFormData.packageType,
+        customer: {
+            ...selectedReservation.customer,
+            firstName: editFormData.firstName,
+            lastName: editFormData.lastName,
+            email: editFormData.email,
+            phone: editFormData.phone
+        }
+    };
+
+    // Recalculate price because PartySize or Package might have changed
+    updatedReservation.financials = recalculateReservationFinancials(updatedReservation);
+
+    // Save
+    bookingRepo.update(selectedReservation.id, () => updatedReservation);
+    
+    logAuditAction('UPDATE_DETAILS', 'RESERVATION', selectedReservation.id, {
+        description: 'Updated booking details (pax/date/package)',
+        before: selectedReservation,
+        after: updatedReservation
+    });
+
+    undoManager.showSuccess("Gegevens bijgewerkt en prijs herberekend.");
+    setSelectedReservation(updatedReservation);
+    setIsEditingDetails(false);
+    refreshData();
+  };
+
   const filteredReservations = reservations.filter(r => {
     const matchesStatus = filterStatus === 'ALL' || r.status === filterStatus;
     const matchesSearch =
@@ -262,14 +350,13 @@ export const ReservationManager = () => {
       r.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
       r.customer.email.toLowerCase().includes(searchTerm.toLowerCase());
     
-    // Date Logic: Only filter if date is set
     const matchesDate = !filterDate || r.date === filterDate;
 
     return matchesStatus && matchesSearch && matchesDate;
   });
 
   return (
-    <div className="h-full flex flex-col space-y-6">
+    <div className="h-full flex flex-col space-y-6 relative">
       <div className="flex justify-between items-end">
         <div>
           <h2 className="text-3xl font-serif text-white">Reserveringen</h2>
@@ -289,7 +376,6 @@ export const ReservationManager = () => {
         </div>
 
         <div className="flex items-center space-x-2 w-full md:w-auto overflow-x-auto">
-          {/* Date Filter */}
           <div className="relative">
              <input 
                type="date" 
@@ -322,12 +408,26 @@ export const ReservationManager = () => {
         </div>
       </Card>
 
-      <div className="flex-grow">
+      <div className="flex-grow pb-16">
         <ResponsiveTable
           data={filteredReservations}
           keyExtractor={(r: Reservation) => r.id}
-          onRowClick={(r) => { setSelectedReservation(r); setIsEditingPrice(false); }}
+          onRowClick={(r) => { setSelectedReservation(r); setIsEditingPrice(false); setIsEditingDetails(false); setDetailTab('DETAILS'); }}
           columns={[
+            { 
+              header: '', 
+              className: 'w-10',
+              accessor: (r: Reservation) => (
+                <div onClick={(e) => e.stopPropagation()}>
+                  <input 
+                    type="checkbox" 
+                    checked={selectedIds.has(r.id)}
+                    onChange={() => toggleSelection(r.id)}
+                    className="rounded bg-slate-800 border-slate-600 checked:bg-amber-500 w-4 h-4 cursor-pointer"
+                  />
+                </div>
+              )
+            },
             { header: 'Datum', accessor: (r: Reservation) => <span className="font-mono text-slate-400 text-xs">{new Date(r.date).toLocaleDateString()}</span> },
             { header: 'Klant', accessor: (r: Reservation) => (
               <div>
@@ -385,185 +485,244 @@ export const ReservationManager = () => {
         title="Reservering Details"
       >
         {selectedReservation && (
-          <div className="space-y-8 pb-12">
-             {/* Labels / Tags Section */}
-             <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl">
-               <h4 className="text-xs font-bold text-amber-500 uppercase tracking-widest mb-3 flex items-center">
-                 <Tag size={14} className="mr-2"/> Labels & Kenmerken
-               </h4>
-               <div className="flex flex-wrap gap-2">
-                 {/* Auto Tags (ReadOnly) */}
-                 {getReservationTags(selectedReservation).filter(t => t.isAuto).map(t => (
-                   <span key={t.label} className={`text-[10px] font-bold px-2 py-1 rounded border uppercase flex items-center opacity-70 ${t.color}`}>
-                     {t.icon && <t.icon size={12} className="mr-1" />} {t.label}
-                   </span>
-                 ))}
-                 
-                 {/* Manual Toggles */}
-                 {['Mooie Plaatsen', 'VIP', 'Mobiel Beperkt', 'Pers', 'Vrienden/Familie'].map(tag => {
-                   const isActive = selectedReservation.tags?.includes(tag);
-                   return (
-                     <button
-                       key={tag}
-                       onClick={() => toggleManualTag(tag)}
-                       className={`text-[10px] font-bold px-2 py-1 rounded border uppercase flex items-center transition-all ${
-                         isActive 
-                           ? 'bg-pink-600 text-white border-pink-500 shadow-lg' 
-                           : 'bg-slate-950 text-slate-500 border-slate-800 hover:border-slate-600'
-                       }`}
-                     >
-                       {isActive && <CheckCircle2 size={12} className="mr-1" />}
-                       {tag}
-                     </button>
-                   );
-                 })}
-                 
-                 {/* Custom Tag Input */}
-                 <div className="flex items-center">
-                   <input 
-                     placeholder="+ Label" 
-                     className="bg-transparent border-b border-slate-700 text-xs text-white w-20 focus:outline-none focus:border-amber-500 pb-0.5"
-                     onKeyDown={(e) => {
-                       if (e.key === 'Enter') {
-                         addCustomTag(e.currentTarget.value);
-                         e.currentTarget.value = '';
-                       }
-                     }}
-                   />
-                 </div>
-               </div>
+          <div className="space-y-6 pb-12">
+             
+             {/* Tabs */}
+             <div className="flex border-b border-slate-800 mb-4">
+                <button 
+                  onClick={() => setDetailTab('DETAILS')}
+                  className={`px-4 py-2 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${detailTab === 'DETAILS' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+                >
+                  Details
+                </button>
+                <button 
+                  onClick={() => setDetailTab('HISTORY')}
+                  className={`px-4 py-2 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${detailTab === 'HISTORY' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+                >
+                  Geschiedenis
+                </button>
              </div>
 
-             <div className="grid grid-cols-2 gap-4">
-               <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl">
-                 <p className="text-xs font-bold text-slate-500 uppercase">Klant</p>
-                 <p className="font-bold text-white text-lg">{selectedReservation.customer.salutation} {selectedReservation.customer.firstName} {selectedReservation.customer.lastName}</p>
-                 <p className="text-sm text-slate-400">{selectedReservation.customer.email}</p>
-                 <p className="text-sm text-slate-400">{selectedReservation.customer.phone}</p>
-                 {selectedReservation.customer.companyName && <p className="text-xs text-amber-500 font-bold mt-1">{selectedReservation.customer.companyName}</p>}
-               </div>
-               <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl">
-                 <p className="text-xs font-bold text-slate-500 uppercase">Boeking</p>
-                 <p className="font-mono text-white">{selectedReservation.id}</p>
-                 <p className="text-sm text-slate-400">Datum: {new Date(selectedReservation.date).toLocaleDateString()}</p>
-                 <p className="text-sm text-slate-400">Arrangement: <span className="text-white capitalize">{selectedReservation.packageType}</span></p>
-               </div>
-             </div>
-
-             {/* Pricing Section */}
-             {isEditingPrice ? (
-               <PriceOverridePanel 
-                 reservation={selectedReservation} 
-                 onSave={handlePriceSave} 
-                 onCancel={() => setIsEditingPrice(false)} 
-               />
-             ) : (
-               <div className="space-y-4">
-                 <div className="flex justify-between items-center border-b border-slate-800 pb-2">
-                   <h4 className="text-xs font-bold text-amber-500 uppercase tracking-widest">Financieel</h4>
-                   <Button variant="ghost" onClick={() => setIsEditingPrice(true)} className="h-6 text-xs px-2 text-slate-400 hover:text-white">
-                     <Edit3 size={12} className="mr-1"/> Bewerken
-                   </Button>
-                 </div>
-                 
-                 <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 flex justify-between items-center">
-                    <div className="flex flex-col">
-                      <span className="text-sm text-slate-400">Totaalbedrag</span>
-                      <div className="flex items-baseline space-x-2">
-                        <span className="text-xl font-mono text-white">€{(selectedReservation.financials.finalTotal || 0).toFixed(2)}</span>
-                        {selectedReservation.adminPriceOverride && (
-                          <Badge status="OPTION" className="scale-75 origin-left">Aangepast</Badge>
-                        )}
-                      </div>
-                      
-                      {selectedReservation.adminPriceOverride && (
-                        <div className="text-[10px] text-amber-500 mt-1">
-                          Reden: {selectedReservation.adminPriceOverride.reason}
-                        </div>
-                      )}
-
-                      {selectedReservation.financials.isPaid && (
-                         <span className="text-xs text-emerald-500 font-bold mt-1">
-                           Betaald via {selectedReservation.financials.paymentMethod || 'Onbekend'}
-                         </span>
-                      )}
-                    </div>
-                    <div className="flex space-x-2">
-                      {!selectedReservation.financials.isPaid ? (
-                        <>
-                          <Button 
-                            variant="secondary" 
-                            className="h-8 text-xs bg-emerald-900/20 text-emerald-500 border-emerald-900"
-                            onClick={() => setShowPaymentModal(true)}
-                          >
-                            Markeer Betaald
-                          </Button>
-                          <Button variant="ghost" className="h-8 text-xs text-amber-500 hover:text-amber-400" onClick={() => sendPaymentReminder(selectedReservation)}>
-                            <Mail size={14} className="mr-1" /> Herinnering
-                          </Button>
-                        </>
-                      ) : (
-                          <div className="flex items-center text-emerald-500">
-                             <CheckCircle2 size={18} className="mr-2"/> Betaald
-                          </div>
-                      )}
-                    </div>
-                 </div>
+             {detailTab === 'HISTORY' && (
+               <div className="space-y-6 animate-in fade-in">
+                 <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center">
+                   <History size={14} className="mr-2"/> Tijdlijn Activiteit
+                 </h4>
+                 <AuditTimeline entityId={selectedReservation.id} />
                </div>
              )}
 
-             <div className="space-y-4">
-               <h4 className="text-xs font-bold text-amber-500 uppercase tracking-widest border-b border-slate-800 pb-2">Status & Notities</h4>
-               <div className="flex gap-2 flex-wrap mb-4">
-                 {Object.values(BookingStatus).map(status => (
-                   <button
-                     key={status}
-                     onClick={() => updateStatus(selectedReservation.id, status)}
-                     disabled={selectedReservation.status === status}
-                     className={`px-3 py-1.5 rounded-lg border text-xs font-bold uppercase transition-all ${
-                       selectedReservation.status === status
-                         ? 'bg-white text-black border-white'
-                         : 'bg-slate-900 text-slate-500 border-slate-800 hover:border-slate-600'
-                     }`}
-                   >
-                     {status}
-                   </button>
-                 ))}
-               </div>
+             {detailTab === 'DETAILS' && (
+               <div className="space-y-8 animate-in fade-in">
+                 
+                 {/* EDIT FORM */}
+                 {isEditingDetails ? (
+                    <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl space-y-4 animate-in fade-in">
+                        <div className="flex justify-between items-center mb-2">
+                            <h4 className="text-sm font-bold text-white flex items-center"><Edit3 size={14} className="mr-2"/> Gegevens Bewerken</h4>
+                            <button onClick={() => setIsEditingDetails(false)}><X size={16} className="text-slate-500 hover:text-white"/></button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-4">
+                            <Input label="Datum (YYYY-MM-DD)" type="date" value={editFormData.date} onChange={(e: any) => setEditFormData({...editFormData, date: e.target.value})} />
+                            <Input label="Tijd" type="time" value={editFormData.startTime} onChange={(e: any) => setEditFormData({...editFormData, startTime: e.target.value})} />
+                            <Input label="Personen" type="number" value={editFormData.partySize} onChange={(e: any) => setEditFormData({...editFormData, partySize: e.target.value})} />
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Arrangement</label>
+                                <select 
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:border-amber-500"
+                                    value={editFormData.packageType}
+                                    onChange={(e) => setEditFormData({...editFormData, packageType: e.target.value})}
+                                >
+                                    <option value="standard">Standard</option>
+                                    <option value="premium">Premium</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div className="pt-2 border-t border-slate-800 grid grid-cols-2 gap-4">
+                            <Input label="Voornaam" value={editFormData.firstName} onChange={(e: any) => setEditFormData({...editFormData, firstName: e.target.value})} />
+                            <Input label="Achternaam" value={editFormData.lastName} onChange={(e: any) => setEditFormData({...editFormData, lastName: e.target.value})} />
+                            <Input label="Email" value={editFormData.email} onChange={(e: any) => setEditFormData({...editFormData, email: e.target.value})} />
+                            <Input label="Telefoon" value={editFormData.phone} onChange={(e: any) => setEditFormData({...editFormData, phone: e.target.value})} />
+                        </div>
+                        <div className="flex justify-end pt-2">
+                            <Button onClick={handleSaveDetails} className="bg-emerald-600 hover:bg-emerald-700 h-8 text-xs">Opslaan & Herberekenen</Button>
+                        </div>
+                    </div>
+                 ) : (
+                    <div className="grid grid-cols-2 gap-4 relative group">
+                        <Button 
+                            variant="secondary" 
+                            onClick={handleStartEditDetails} 
+                            className="absolute top-2 right-2 h-7 w-7 p-0 z-10 opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Bewerk Gegevens"
+                        >
+                            <Edit3 size={12}/>
+                        </Button>
+                        
+                        <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl">
+                            <p className="text-xs font-bold text-slate-500 uppercase">Klant</p>
+                            <p className="font-bold text-white text-lg">{selectedReservation.customer.salutation} {selectedReservation.customer.firstName} {selectedReservation.customer.lastName}</p>
+                            <p className="text-sm text-slate-400">{selectedReservation.customer.email}</p>
+                            <p className="text-sm text-slate-400">{selectedReservation.customer.phone}</p>
+                            {selectedReservation.customer.companyName && <p className="text-xs text-amber-500 font-bold mt-1">{selectedReservation.customer.companyName}</p>}
+                        </div>
+                        <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl">
+                            <p className="text-xs font-bold text-slate-500 uppercase">Boeking</p>
+                            <p className="font-mono text-white">{selectedReservation.id}</p>
+                            <p className="text-sm text-slate-400">Datum: {new Date(selectedReservation.date).toLocaleDateString()}</p>
+                            <p className="text-sm text-slate-400">Tijd: {selectedReservation.startTime || '19:30'}</p>
+                            <p className="text-sm text-slate-400">Gasten: <span className="text-white font-bold">{selectedReservation.partySize}</span></p>
+                            <p className="text-sm text-slate-400">Arrangement: <span className="text-white capitalize">{selectedReservation.packageType}</span></p>
+                        </div>
+                    </div>
+                 )}
 
-               <div className="grid grid-cols-1 gap-4">
-                 {selectedReservation.notes.dietary && (
-                   <div className="p-3 bg-red-900/10 border border-red-900/30 rounded-lg">
-                     <p className="text-xs font-bold text-red-500 uppercase mb-1 flex items-center"><Utensils size={12} className="mr-1"/> Dieetwensen</p>
-                     <p className="text-sm text-red-100">{selectedReservation.notes.dietary}</p>
+                 {/* Pricing Section */}
+                 {isEditingPrice ? (
+                   <PriceOverridePanel 
+                     reservation={selectedReservation} 
+                     onSave={handlePriceSave} 
+                     onCancel={() => setIsEditingPrice(false)} 
+                   />
+                 ) : (
+                   <div className="space-y-4">
+                     <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                       <h4 className="text-xs font-bold text-amber-500 uppercase tracking-widest">Financieel</h4>
+                       <Button variant="ghost" onClick={() => setIsEditingPrice(true)} className="h-6 text-xs px-2 text-slate-400 hover:text-white">
+                         <Edit3 size={12} className="mr-1"/> Prijs Aanpassen
+                       </Button>
+                     </div>
+                     
+                     <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 flex justify-between items-center">
+                        <div className="flex flex-col">
+                          <span className="text-sm text-slate-400">Totaalbedrag</span>
+                          <div className="flex items-baseline space-x-2">
+                            <span className="text-xl font-mono text-white">€{(selectedReservation.financials.finalTotal || 0).toFixed(2)}</span>
+                            {selectedReservation.adminPriceOverride && (
+                              <Badge status="OPTION" className="scale-75 origin-left">Aangepast</Badge>
+                            )}
+                          </div>
+                          
+                          {selectedReservation.adminPriceOverride && (
+                            <div className="text-[10px] text-amber-500 mt-1">
+                              Reden: {selectedReservation.adminPriceOverride.reason}
+                            </div>
+                          )}
+
+                          {selectedReservation.financials.isPaid && (
+                             <span className="text-xs text-emerald-500 font-bold mt-1">
+                               Betaald via {selectedReservation.financials.paymentMethod || 'Onbekend'}
+                             </span>
+                          )}
+                        </div>
+                        <div className="flex space-x-2">
+                          {!selectedReservation.financials.isPaid ? (
+                            <>
+                              <Button 
+                                variant="secondary" 
+                                className="h-8 text-xs bg-emerald-900/20 text-emerald-500 border-emerald-900"
+                                onClick={() => setShowPaymentModal(true)}
+                              >
+                                Markeer Betaald
+                              </Button>
+                              <Button variant="ghost" className="h-8 text-xs text-amber-500 hover:text-amber-400" onClick={() => triggerEmail('BOOKING_PAYMENT_REMINDER', { type: 'RESERVATION', id: selectedReservation.id, data: selectedReservation })}>
+                                <Mail size={14} className="mr-1" /> Herinnering
+                              </Button>
+                            </>
+                          ) : (
+                              <div className="flex items-center text-emerald-500">
+                                 <CheckCircle2 size={18} className="mr-2"/> Betaald
+                              </div>
+                          )}
+                        </div>
+                     </div>
+
+                     {/* Receipt Breakdown */}
+                     {selectedReservation.financials.priceBreakdown && selectedReservation.financials.priceBreakdown.length > 0 && (
+                       <div className="bg-slate-950 p-4 rounded border border-slate-800">
+                          <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Rekening Specificatie</h4>
+                          <div className="space-y-2">
+                            {selectedReservation.financials.priceBreakdown.map((item, idx) => (
+                              <div key={idx} className="flex justify-between text-xs text-slate-300">
+                                 <span className="flex-grow">{item.quantity}x {item.label}</span>
+                                 <span className="font-mono">€{item.total.toFixed(2)}</span>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="border-t border-slate-800 mt-3 pt-2 flex justify-between font-bold text-white text-sm">
+                             <span>Totaal</span>
+                             <span className="font-mono">€{selectedReservation.financials.finalTotal.toFixed(2)}</span>
+                          </div>
+                       </div>
+                     )}
                    </div>
                  )}
-                 {selectedReservation.notes.isCelebrating && (
-                   <div className="p-3 bg-blue-900/10 border border-blue-900/30 rounded-lg">
-                     <p className="text-xs font-bold text-blue-500 uppercase mb-1 flex items-center"><PartyPopper size={12} className="mr-1"/> Viering</p>
-                     <p className="text-sm text-blue-100">{selectedReservation.notes.celebrationText}</p>
+
+                 <div className="space-y-4">
+                   <h4 className="text-xs font-bold text-amber-500 uppercase tracking-widest border-b border-slate-800 pb-2">Status & Notities</h4>
+                   <div className="flex gap-2 flex-wrap mb-4">
+                     {Object.values(BookingStatus).map(status => (
+                       <button
+                         key={status}
+                         onClick={() => updateStatus(selectedReservation.id, status)}
+                         disabled={selectedReservation.status === status}
+                         className={`px-3 py-1.5 rounded-lg border text-xs font-bold uppercase transition-all ${
+                           selectedReservation.status === status
+                             ? 'bg-white text-black border-white'
+                             : 'bg-slate-900 text-slate-500 border-slate-800 hover:border-slate-600'
+                         }`}
+                       >
+                         {status}
+                       </button>
+                     ))}
                    </div>
-                 )}
-                 <div className="p-3 bg-slate-900 border border-slate-800 rounded-lg">
-                    <p className="text-xs font-bold text-slate-500 uppercase mb-1">Interne Notitie</p>
-                    <textarea
-                      className="w-full bg-transparent text-sm text-slate-300 outline-none resize-none"
-                      placeholder="Plaats hier interne notities..."
-                      rows={3}
-                      defaultValue={selectedReservation.notes.internal}
-                      onBlur={(e) => {
-                        const val = e.target.value;
-                        if (val !== selectedReservation.notes.internal) {
-                           bookingRepo.update(selectedReservation.id, r => ({
-                             ...r,
-                             notes: { ...r.notes, internal: val }
-                           }));
-                        }
-                      }}
-                    />
+
+                   <div className="grid grid-cols-1 gap-4">
+                     {selectedReservation.notes.dietary && (
+                       <div className="p-3 bg-red-900/10 border border-red-900/30 rounded-lg">
+                         <p className="text-xs font-bold text-red-500 uppercase mb-1 flex items-center"><Utensils size={12} className="mr-1"/> Dieetwensen</p>
+                         <p className="text-sm text-red-100">{selectedReservation.notes.dietary}</p>
+                       </div>
+                     )}
+                     {selectedReservation.notes.isCelebrating && (
+                       <div className="p-3 bg-blue-900/10 border border-blue-900/30 rounded-lg">
+                         <p className="text-xs font-bold text-blue-500 uppercase mb-1 flex items-center"><PartyPopper size={12} className="mr-1"/> Viering</p>
+                         <p className="text-sm text-blue-100">{selectedReservation.notes.celebrationText}</p>
+                       </div>
+                     )}
+                     <div className="p-3 bg-slate-900 border border-slate-800 rounded-lg">
+                        <p className="text-xs font-bold text-slate-500 uppercase mb-1">Interne Notitie</p>
+                        <textarea
+                          className="w-full bg-transparent text-sm text-slate-300 outline-none resize-none"
+                          placeholder="Plaats hier interne notities..."
+                          rows={3}
+                          defaultValue={selectedReservation.notes.internal}
+                          onBlur={(e) => {
+                            const val = e.target.value;
+                            if (val !== selectedReservation.notes.internal) {
+                               bookingRepo.update(selectedReservation.id, r => ({
+                                 ...r,
+                                 notes: { ...r.notes, internal: val }
+                               }));
+                            }
+                          }}
+                        />
+                     </div>
+                   </div>
+                 </div>
+
+                 {/* Delete Action */}
+                 <div className="pt-4 border-t border-slate-800">
+                    <Button 
+                      variant="ghost" 
+                      onClick={() => deleteReservation(selectedReservation.id)} 
+                      className="w-full text-red-500 hover:bg-red-900/20 hover:text-red-400"
+                    >
+                      <XCircle size={16} className="mr-2" /> Verplaats naar Prullenbak
+                    </Button>
                  </div>
                </div>
-             </div>
+             )}
           </div>
         )}
       </ResponsiveDrawer>

@@ -1,0 +1,87 @@
+
+import { Reservation } from '../types';
+
+export interface CustomerMetrics {
+  totalSpend: number;
+  bookingCount: number;
+  lastBookingDate: Date | null;
+  firstBookingDate: Date | null;
+}
+
+export type CustomerSegment = 'BIG_SPENDER' | 'REGULAR' | 'SLEEPING' | 'NEW' | 'VIP';
+
+export const calculateCustomerMetrics = (history: Reservation[]): CustomerMetrics => {
+  const activeBookings = history.filter(r => r.status !== 'CANCELLED');
+  
+  const totalSpend = activeBookings.reduce((sum, r) => sum + (r.financials.finalTotal || r.financials.total || 0), 0);
+  const bookingCount = activeBookings.length;
+  
+  let lastBookingDate: Date | null = null;
+  let firstBookingDate: Date | null = null;
+
+  if (activeBookings.length > 0) {
+    // Sort chronological
+    const sorted = [...activeBookings].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    firstBookingDate = new Date(sorted[0].date);
+    lastBookingDate = new Date(sorted[sorted.length - 1].date);
+  }
+
+  return { totalSpend, bookingCount, lastBookingDate, firstBookingDate };
+};
+
+export const getCustomerSegments = (metrics: CustomerMetrics): CustomerSegment[] => {
+  const segments: CustomerSegment[] = [];
+  const now = new Date();
+
+  // Big Spender (> 500 EUR)
+  if (metrics.totalSpend > 500) {
+    segments.push('BIG_SPENDER');
+  }
+
+  // Regular (> 3 bookings)
+  if (metrics.bookingCount > 3) {
+    segments.push('REGULAR');
+  }
+
+  // Sleeping (Last booking > 1 year ago)
+  if (metrics.lastBookingDate) {
+    const diffTime = Math.abs(now.getTime() - metrics.lastBookingDate.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
+    if (diffDays > 365) {
+      segments.push('SLEEPING');
+    }
+  }
+
+  // New (First booking < 30 days ago)
+  if (metrics.firstBookingDate) {
+    const diffTime = Math.abs(now.getTime() - metrics.firstBookingDate.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    if (diffDays < 30) {
+      segments.push('NEW');
+    }
+  }
+
+  return segments;
+};
+
+export const getSegmentStyle = (segment: CustomerSegment): string => {
+  switch (segment) {
+    case 'BIG_SPENDER': return 'bg-emerald-900/30 text-emerald-400 border-emerald-900/50';
+    case 'REGULAR': return 'bg-blue-900/30 text-blue-400 border-blue-900/50';
+    case 'VIP': return 'bg-amber-900/30 text-amber-400 border-amber-900/50';
+    case 'SLEEPING': return 'bg-slate-800 text-slate-500 border-slate-700';
+    case 'NEW': return 'bg-purple-900/30 text-purple-400 border-purple-900/50';
+    default: return 'bg-slate-900 text-slate-400';
+  }
+};
+
+export const getSegmentLabel = (segment: CustomerSegment): string => {
+  switch (segment) {
+    case 'BIG_SPENDER': return 'Big Spender';
+    case 'REGULAR': return 'Stamgast';
+    case 'VIP': return 'VIP';
+    case 'SLEEPING': return 'Slapend';
+    case 'NEW': return 'Nieuw';
+    default: return segment;
+  }
+};

@@ -223,7 +223,8 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
           paid: 0,
           isPaid: false,
           paymentMethod: 'FACTUUR',
-          paymentDueAt: new Date(new Date().setDate(new Date().getDate() + 14)).toISOString()
+          paymentDueAt: new Date(new Date().setDate(new Date().getDate() + 14)).toISOString(),
+          priceBreakdown: totals.items // Save breakdown
         },
         notes: {
           dietary: draft.dietary,

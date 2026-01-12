@@ -291,7 +291,8 @@ export const DataImporter = () => {
           isPaid,
           paidAt: isPaid ? new Date().toISOString() : undefined,
           paymentMethod: isPaid ? 'IMPORT' : undefined,
-          paymentDueAt: new Date(new Date().setDate(new Date().getDate() + 14)).toISOString()
+          paymentDueAt: new Date(new Date().setDate(new Date().getDate() + 14)).toISOString(),
+          priceBreakdown: finalTotals.items // Store breakdown
         },
         notes: {
           internal: `Imported via CSV. ${row.notes || ''}`

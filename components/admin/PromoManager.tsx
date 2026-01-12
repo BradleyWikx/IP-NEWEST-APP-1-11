@@ -1,16 +1,155 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Tag, Plus, Trash2, Edit3, Save, X, Percent, DollarSign, 
-  Users, CheckCircle2, AlertCircle, Copy, Calendar
+  Users, CheckCircle2, AlertCircle, Copy, Calendar, BarChart3, TrendingUp, Award
 } from 'lucide-react';
 import { Button, Input, Card, Badge, ResponsiveDrawer } from '../UI';
-import { PromoCodeRule, DiscountKind, PromoScope } from '../../types';
-import { promoRepo, saveData, STORAGE_KEYS } from '../../utils/storage';
+import { PromoCodeRule, DiscountKind, PromoScope, Reservation } from '../../types';
+import { promoRepo, bookingRepo, saveData, STORAGE_KEYS } from '../../utils/storage';
 import { logAuditAction } from '../../utils/auditLogger';
 import { ResponsiveTable } from '../ResponsiveTable';
 
+// --- ANALYTICS COMPONENT ---
+
+interface PromoStats {
+  code: string;
+  usageCount: number;
+  totalRevenue: number;
+  totalDiscount: number;
+  lastUsed?: string;
+}
+
+const PromoAnalytics = () => {
+  const [stats, setStats] = useState<PromoStats[]>([]);
+  const [summary, setSummary] = useState({ totalDiscount: 0, topCodeByVol: '', topCodeByRev: '' });
+
+  useEffect(() => {
+    const reservations = bookingRepo.getAll();
+    const map = new Map<string, PromoStats>();
+
+    reservations.forEach(res => {
+      // Skip cancelled or archive if needed, though archive might be relevant for history
+      if (res.status === 'CANCELLED') return;
+
+      const code = res.financials.voucherCode || res.voucherCode;
+      
+      if (code) {
+        const entry = map.get(code) || { code, usageCount: 0, totalRevenue: 0, totalDiscount: 0 };
+        
+        entry.usageCount += 1;
+        entry.totalRevenue += (res.financials.finalTotal || 0);
+        entry.totalDiscount += (res.financials.discount || 0);
+        
+        // Track last used date
+        if (!entry.lastUsed || new Date(res.createdAt) > new Date(entry.lastUsed)) {
+            entry.lastUsed = res.createdAt;
+        }
+
+        map.set(code, entry);
+      }
+    });
+
+    const statsArray = Array.from(map.values()).sort((a, b) => b.totalRevenue - a.totalRevenue);
+    
+    // Summary Calcs
+    const totalDiscount = statsArray.reduce((sum, s) => sum + s.totalDiscount, 0);
+    const topByVol = [...statsArray].sort((a,b) => b.usageCount - a.usageCount)[0]?.code || '-';
+    const topByRev = statsArray[0]?.code || '-';
+
+    setStats(statsArray);
+    setSummary({ totalDiscount, topCodeByVol: topByVol, topCodeByRev: topByRev });
+  }, []);
+
+  const maxRevenue = Math.max(...stats.map(s => s.totalRevenue), 1);
+
+  return (
+    <div className="space-y-6 animate-in fade-in">
+       {/* KPI Cards */}
+       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <Card className="p-6 bg-slate-900 border-slate-800 flex items-center space-x-4">
+             <div className="p-3 bg-emerald-900/20 text-emerald-500 rounded-full">
+               <DollarSign size={24} />
+             </div>
+             <div>
+               <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Totale Korting</p>
+               <p className="text-2xl font-serif text-white">€{summary.totalDiscount.toLocaleString()}</p>
+             </div>
+          </Card>
+          <Card className="p-6 bg-slate-900 border-slate-800 flex items-center space-x-4">
+             <div className="p-3 bg-blue-900/20 text-blue-500 rounded-full">
+               <TrendingUp size={24} />
+             </div>
+             <div>
+               <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Beste Omzet</p>
+               <p className="text-2xl font-serif text-white">{summary.topCodeByRev}</p>
+             </div>
+          </Card>
+          <Card className="p-6 bg-slate-900 border-slate-800 flex items-center space-x-4">
+             <div className="p-3 bg-amber-900/20 text-amber-500 rounded-full">
+               <Users size={24} />
+             </div>
+             <div>
+               <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Meest Gebruikt</p>
+               <p className="text-2xl font-serif text-white">{summary.topCodeByVol}</p>
+             </div>
+          </Card>
+       </div>
+
+       {/* Detailed Table */}
+       <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+          <div className="p-4 border-b border-slate-800">
+            <h3 className="font-bold text-white text-sm flex items-center">
+              <BarChart3 size={16} className="mr-2 text-slate-400"/> Prestaties per Code
+            </h3>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-950 text-slate-500 text-[10px] uppercase tracking-widest font-bold">
+                <tr>
+                  <th className="p-4">Code</th>
+                  <th className="p-4 text-center">Gebruik</th>
+                  <th className="p-4">Omzet Impact</th>
+                  <th className="p-4 text-right">Korting Weggegeven</th>
+                  <th className="p-4 text-right">Laatst Gebruikt</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {stats.length === 0 ? (
+                  <tr><td colSpan={5} className="p-8 text-center text-slate-500">Geen promotie data gevonden.</td></tr>
+                ) : (
+                  stats.map(s => (
+                    <tr key={s.code} className="hover:bg-slate-800/50 transition-colors">
+                      <td className="p-4 font-bold text-white font-mono">{s.code}</td>
+                      <td className="p-4 text-center">
+                        <span className="bg-slate-800 text-slate-300 px-2 py-1 rounded text-xs font-bold">{s.usageCount}x</span>
+                      </td>
+                      <td className="p-4 w-1/3">
+                        <div className="flex flex-col justify-center">
+                          <span className="text-xs font-bold text-emerald-500 mb-1">€{s.totalRevenue.toLocaleString()}</span>
+                          <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden">
+                            <div className="h-full bg-emerald-600 rounded-full" style={{ width: `${(s.totalRevenue / maxRevenue) * 100}%` }} />
+                          </div>
+                        </div>
+                      </td>
+                      <td className="p-4 text-right font-mono text-amber-500">€{s.totalDiscount.toFixed(2)}</td>
+                      <td className="p-4 text-right text-xs text-slate-500">
+                        {s.lastUsed ? new Date(s.lastUsed).toLocaleDateString() : '-'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+       </div>
+    </div>
+  );
+};
+
+// --- MAIN MANAGER ---
+
 export const PromoManager = () => {
+  const [activeTab, setActiveTab] = useState<'CODES' | 'ANALYTICS'>('CODES');
   const [promos, setPromos] = useState<PromoCodeRule[]>([]);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingPromo, setEditingPromo] = useState<PromoCodeRule | null>(null);
@@ -114,36 +253,47 @@ export const PromoManager = () => {
       <div className="flex justify-between items-end">
         <div>
           <h2 className="text-3xl font-serif text-white">Promotie Codes</h2>
-          <p className="text-slate-500 text-sm">Beheer kortingsacties en gastenlijst codes.</p>
+          <p className="text-slate-500 text-sm">Beheer kortingsacties en analyseer prestaties.</p>
         </div>
-        <Button onClick={handleCreate} className="flex items-center">
-          <Plus size={18} className="mr-2" /> Nieuwe Code
-        </Button>
+        {activeTab === 'CODES' && (
+          <Button onClick={handleCreate} className="flex items-center">
+            <Plus size={18} className="mr-2" /> Nieuwe Code
+          </Button>
+        )}
       </div>
 
-      <ResponsiveTable
-        data={promos}
-        keyExtractor={p => p.id}
-        columns={[
-          { header: 'Code', accessor: (p: PromoCodeRule) => <span className="font-mono font-bold text-amber-500 text-lg">{p.code}</span> },
-          { header: 'Label', accessor: (p: PromoCodeRule) => <span className="font-bold text-white">{p.label}</span> },
-          { header: 'Type', accessor: (p: PromoCodeRule) => <span className="text-xs uppercase bg-slate-900 border border-slate-700 px-2 py-1 rounded text-slate-400">{getKindLabel(p.kind)}</span> },
-          { header: 'Waarde', accessor: (p: PromoCodeRule) => {
-             if (p.percentage) return <span className="text-emerald-500 font-bold">{p.percentage}%</span>;
-             if (p.fixedAmountPerPerson) return <span className="text-emerald-500 font-bold">€{p.fixedAmountPerPerson} p.p.</span>;
-             if (p.fixedAmountTotal) return <span className="text-emerald-500 font-bold">€{p.fixedAmountTotal}</span>;
-             if (p.kind === DiscountKind.INVITED_COMP) return <span className="text-purple-500 font-bold">Gratis</span>;
-             return '-';
-          }},
-          { header: 'Status', accessor: (p: PromoCodeRule) => <Badge status={p.enabled ? 'CONFIRMED' : 'CANCELLED'}>{p.enabled ? 'Actief' : 'Inactief'}</Badge> },
-          { header: 'Acties', accessor: (p: PromoCodeRule) => (
-            <div className="flex space-x-2 justify-end">
-              <Button variant="ghost" onClick={() => handleEdit(p)} className="h-8 w-8 p-0 text-slate-400 hover:text-white"><Edit3 size={16}/></Button>
-              <Button variant="ghost" onClick={() => handleDelete(p.id)} className="h-8 w-8 p-0 text-slate-400 hover:text-red-500"><Trash2 size={16}/></Button>
-            </div>
-          )}
-        ]}
-      />
+      <div className="flex space-x-1 border-b border-slate-800">
+        <button onClick={() => setActiveTab('CODES')} className={`px-6 py-3 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'CODES' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Codes Beheren</button>
+        <button onClick={() => setActiveTab('ANALYTICS')} className={`px-6 py-3 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'ANALYTICS' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Analyse</button>
+      </div>
+
+      {activeTab === 'ANALYTICS' ? (
+        <PromoAnalytics />
+      ) : (
+        <ResponsiveTable
+          data={promos}
+          keyExtractor={p => p.id}
+          columns={[
+            { header: 'Code', accessor: (p: PromoCodeRule) => <span className="font-mono font-bold text-amber-500 text-lg">{p.code}</span> },
+            { header: 'Label', accessor: (p: PromoCodeRule) => <span className="font-bold text-white">{p.label}</span> },
+            { header: 'Type', accessor: (p: PromoCodeRule) => <span className="text-xs uppercase bg-slate-900 border border-slate-700 px-2 py-1 rounded text-slate-400">{getKindLabel(p.kind)}</span> },
+            { header: 'Waarde', accessor: (p: PromoCodeRule) => {
+               if (p.percentage) return <span className="text-emerald-500 font-bold">{p.percentage}%</span>;
+               if (p.fixedAmountPerPerson) return <span className="text-emerald-500 font-bold">€{p.fixedAmountPerPerson} p.p.</span>;
+               if (p.fixedAmountTotal) return <span className="text-emerald-500 font-bold">€{p.fixedAmountTotal}</span>;
+               if (p.kind === DiscountKind.INVITED_COMP) return <span className="text-purple-500 font-bold">Gratis</span>;
+               return '-';
+            }},
+            { header: 'Status', accessor: (p: PromoCodeRule) => <Badge status={p.enabled ? 'CONFIRMED' : 'CANCELLED'}>{p.enabled ? 'Actief' : 'Inactief'}</Badge> },
+            { header: 'Acties', accessor: (p: PromoCodeRule) => (
+              <div className="flex space-x-2 justify-end">
+                <Button variant="ghost" onClick={() => handleEdit(p)} className="h-8 w-8 p-0 text-slate-400 hover:text-white"><Edit3 size={16}/></Button>
+                <Button variant="ghost" onClick={() => handleDelete(p.id)} className="h-8 w-8 p-0 text-slate-400 hover:text-red-500"><Trash2 size={16}/></Button>
+              </div>
+            )}
+          ]}
+        />
+      )}
 
       <ResponsiveDrawer isOpen={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} title="Promotie Bewerken">
         {editingPromo && (

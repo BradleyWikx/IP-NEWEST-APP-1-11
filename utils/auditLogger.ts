@@ -4,7 +4,7 @@ export interface AuditLogEntry {
   timestamp: string;
   user: { name: string; role: string };
   action: string; // e.g., 'UPDATE_STATUS', 'BULK_EDIT'
-  entityType: 'RESERVATION' | 'CALENDAR' | 'SYSTEM' | 'CUSTOMER';
+  entityType: 'RESERVATION' | 'CALENDAR' | 'SYSTEM' | 'CUSTOMER' | 'WAITLIST';
   entityId: string;
   changes?: { 
     before?: any; 
@@ -23,7 +23,7 @@ const getCurrentUser = () => ({
 
 export const logAuditAction = (
   action: string,
-  entityType: 'RESERVATION' | 'CALENDAR' | 'SYSTEM' | 'CUSTOMER',
+  entityType: 'RESERVATION' | 'CALENDAR' | 'SYSTEM' | 'CUSTOMER' | 'WAITLIST',
   entityId: string,
   changes: { before?: any; after?: any; description?: string } = {}
 ) => {

@@ -1,8 +1,10 @@
 
 import { useState, useMemo, useEffect } from 'react';
-import { calendarRepo, getShowDefinitions, bookingRepo } from '../utils/storage';
+import { calendarRepo, getShowDefinitions, bookingRepo, waitlistRepo } from '../utils/storage';
 import { ShowDefinition, Availability, CalendarEvent, ShowEvent } from '../types';
 import { useIsMobile, useMediaQuery } from './useMediaQuery';
+import { toLocalISOString } from '../utils/dateHelpers';
+import { calculateEventStatus } from '../utils/status';
 
 interface DayData {
   date: Date;
@@ -12,6 +14,7 @@ interface DayData {
   event?: CalendarEvent;
   show?: ShowDefinition;
   status: Availability;
+  waitlistCount: number; 
   theme: {
     bg: string;
     text: string;
@@ -24,6 +27,7 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
   const [currentMonth, setCurrentMonth] = useState(initialDate ? new Date(initialDate) : new Date());
   const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]);
   const [shows, setShows] = useState<ShowDefinition[]>([]);
+  const [waitlistCounts, setWaitlistCounts] = useState<Record<string, number>>({});
   
   // View Mode defaults
   const isMobile = useIsMobile();
@@ -43,7 +47,6 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
 
   useEffect(() => {
     refreshData();
-    // Listen for reservation updates to recalculate capacity immediately
     window.addEventListener('storage-update', refreshData);
     return () => window.removeEventListener('storage-update', refreshData);
   }, []);
@@ -51,27 +54,35 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
   const refreshData = () => {
     const rawEvents = calendarRepo.getAll();
     const allReservations = bookingRepo.getAll();
+    const allWaitlist = waitlistRepo.getAll();
     
-    // Dynamically calculate booked count based on active reservations
+    // 1. Calculate Waitlist Counts per Date (Active entries only)
+    const wlCounts: Record<string, number> = {};
+    allWaitlist.forEach(w => {
+      if (w.status === 'PENDING') {
+        wlCounts[w.date] = (wlCounts[w.date] || 0) + 1; 
+      }
+    });
+    setWaitlistCounts(wlCounts);
+
+    // 2. Dynamically calculate booked count based on active reservations
     const enrichedEvents = rawEvents.map(event => {
       if (event.type === 'SHOW') {
         const bookingsForDate = allReservations.filter(r => 
           r.date === event.date && 
           r.status !== 'CANCELLED' && 
           r.status !== 'ARCHIVED' &&
-          r.status !== 'INVITED' // Invited usually doesn't count towards paid capacity, or change logic if needed
+          r.status !== 'NOSHOW' && // Exclude NoShows from capacity? Usually yes, seat is gone, but for planning maybe free up. Let's keep them counted as "seats used" historically, but for future booking, seats are gone.
+          r.status !== 'WAITLIST' // Don't count waitlist as booked seats
         );
         
-        // Sum party sizes
+        // Sum total people
         const realBookedCount = bookingsForDate.reduce((sum, r) => sum + r.partySize, 0);
         
-        // Also count INVITED if they take up seats (Business rule decision: usually yes)
-        const invitedBookings = allReservations.filter(r => r.date === event.date && r.status === 'INVITED');
-        const invitedCount = invitedBookings.reduce((sum, r) => sum + r.partySize, 0);
-
+        // Update the event object locally with real-time data
         return { 
           ...event, 
-          bookedCount: realBookedCount + invitedCount 
+          bookedCount: realBookedCount
         };
       }
       return event;
@@ -97,36 +108,39 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
       // Customer: Only Public Shows
       if (e.type !== 'SHOW') return false;
       if (e.visibility !== 'PUBLIC') return false;
+      // Admin might hide specific events
       return true;
     });
 
     const days: DayData[] = [];
     
-    const startDay = firstDay.getDay(); // 0 = Sun
-    const padStart = startDay === 0 ? 6 : startDay - 1; // Mon start
+    const startDay = firstDay.getDay(); 
+    const europeanStartDay = (startDay + 6) % 7;
     
     // Previous Month Padding
-    for (let i = 0; i < padStart; i++) {
-      const d = new Date(year, month, -((padStart - 1) - i));
-      days.push(createDayData(d, false, visibleEvents, shows));
+    for (let i = 0; i < europeanStartDay; i++) {
+      const d = new Date(year, month, -(europeanStartDay - 1 - i));
+      days.push(createDayData(d, false, visibleEvents, shows, waitlistCounts));
     }
     
     // Current Month
     for (let d = 1; d <= lastDay.getDate(); d++) {
       const date = new Date(year, month, d);
-      days.push(createDayData(date, true, visibleEvents, shows));
+      days.push(createDayData(date, true, visibleEvents, shows, waitlistCounts));
     }
     
     // Next Month Padding
-    const endDay = lastDay.getDay(); 
-    const padEnd = endDay === 0 ? 0 : 7 - endDay;
+    const endDay = lastDay.getDay();
+    const europeanEndDay = (endDay + 6) % 7;
+    const padEnd = 6 - europeanEndDay;
+    
     for (let i = 1; i <= padEnd; i++) {
       const d = new Date(year, month + 1, i);
-      days.push(createDayData(d, false, visibleEvents, shows));
+      days.push(createDayData(d, false, visibleEvents, shows, waitlistCounts));
     }
     
     return days;
-  }, [currentMonth, allEvents, shows, mode]);
+  }, [currentMonth, allEvents, shows, mode, waitlistCounts]);
 
   return {
     currentMonth,
@@ -140,11 +154,18 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
   };
 };
 
-// Helper to create day data
-const createDayData = (date: Date, isCurrentMonth: boolean, events: CalendarEvent[], shows: ShowDefinition[]): DayData => {
-  const dateStr = date.toISOString().split('T')[0];
-  const todayStr = new Date().toISOString().split('T')[0];
+const createDayData = (
+  date: Date, 
+  isCurrentMonth: boolean, 
+  events: CalendarEvent[], 
+  shows: ShowDefinition[],
+  waitlistCounts: Record<string, number>
+): DayData => {
+  const dateStr = toLocalISOString(date); 
+  const todayStr = toLocalISOString(new Date());
+  
   const event = events.find(e => e.date === dateStr);
+  const wlCount = waitlistCounts[dateStr] || 0;
   
   let show = undefined;
   let theme = { bg: 'bg-slate-900', text: 'text-slate-500', border: 'border-slate-800', primary: 'slate' };
@@ -155,7 +176,14 @@ const createDayData = (date: Date, isCurrentMonth: boolean, events: CalendarEven
       const showEvent = event as ShowEvent;
       show = shows.find(s => s.id === showEvent.showId);
       const profile = show?.profiles.find(p => p.id === showEvent.profileId) || show?.profiles[0];
-      status = showEvent.status;
+      
+      // --- SMART STATUS CALCULATION ---
+      status = calculateEventStatus(
+        showEvent.bookedCount, 
+        showEvent.capacity, 
+        wlCount, 
+        showEvent.status // Pass manual status to allow hard override
+      );
       
       if (profile) {
         const c = profile.color || 'slate';
@@ -167,7 +195,6 @@ const createDayData = (date: Date, isCurrentMonth: boolean, events: CalendarEven
         };
       }
     } else {
-      // Non-Show Events (Admin Only typically)
       status = 'CLOSED';
       theme = {
         bg: event.type === 'BLACKOUT' ? 'bg-red-950/30' : 'bg-slate-800/30',
@@ -186,6 +213,7 @@ const createDayData = (date: Date, isCurrentMonth: boolean, events: CalendarEven
     event,
     show,
     status,
+    waitlistCount: wlCount,
     theme
   };
 };

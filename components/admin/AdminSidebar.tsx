@@ -22,7 +22,9 @@ import {
   CheckSquare,
   DollarSign,
   Tag,
-  UploadCloud
+  UploadCloud,
+  ChefHat,
+  Trash2
 } from 'lucide-react';
 import { AdminRole } from '../../types';
 
@@ -54,6 +56,7 @@ const MENU_STRUCTURE: NavGroup[] = [
       { label: 'Reserveringen', icon: Ticket, path: '/admin/reservations', roles: ['ADMIN', 'EDITOR'] },
       { label: 'Wachtlijst', icon: Clock, path: '/admin/waitlist', roles: ['ADMIN', 'EDITOR'] },
       { label: 'Host View', icon: UserCheck, path: '/admin/host', roles: ['ADMIN', 'EDITOR', 'HOST'] },
+      { label: 'Keuken & Bar', icon: ChefHat, path: '/admin/kitchen', roles: ['ADMIN', 'EDITOR', 'HOST'] },
     ]
   },
   {
@@ -82,6 +85,7 @@ const MENU_STRUCTURE: NavGroup[] = [
       { label: 'Audit Log', icon: ShieldAlert, path: '/admin/audit', roles: ['ADMIN'] },
       { label: 'Embed Center', icon: Code, path: '/admin/embed', roles: ['ADMIN'] },
       { label: 'Instellingen', icon: Settings, path: '/admin/settings', roles: ['ADMIN'] },
+      { label: 'Prullenbak', icon: Trash2, path: '/admin/trash', roles: ['ADMIN'] },
     ]
   }
 ];

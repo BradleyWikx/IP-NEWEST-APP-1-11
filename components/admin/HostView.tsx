@@ -2,15 +2,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Printer, Users, Utensils, PartyPopper, AlertCircle, CheckCircle2, 
-  Search, Package, Star, XCircle, Clock
+  Search, Package, Star, XCircle, Clock, Scan, UserX
 } from 'lucide-react';
 import { Button, Card, Input, Badge } from '../UI';
-import { BookingStatus } from '../../types';
+import { BookingStatus, Reservation } from '../../types';
 import { MOCK_SHOW_TYPES as SHOW_TYPES_DATA, MOCK_ADDONS } from '../../mock/data';
-import { bookingRepo } from '../../utils/storage';
+import { bookingRepo, customerRepo } from '../../utils/storage';
+import { ScannerModal } from './ScannerModal';
+import { undoManager } from '../../utils/undoManager';
 
 interface HostReservation {
   id: string;
+  customerId: string; // Needed for risk lookup
   customerName: string;
   partySize: number;
   time: string; 
@@ -26,42 +29,78 @@ interface HostReservation {
   tags: string[];
   createdAt: string;
   showId: string;
+  riskLevel: number; // 0 = none, >0 = count of no-shows
 }
 
 export const HostView = () => {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [reservations, setReservations] = useState<any[]>([]);
+  const [customers, setCustomers] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'ACTIVE' | 'CANCELLED'>('ACTIVE');
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Scanner State
+  const [showScanner, setShowScanner] = useState(false);
 
   useEffect(() => {
     const loadData = () => {
-      const stored = bookingRepo.getAll();
-      setReservations(stored);
+      setReservations(bookingRepo.getAll());
+      setCustomers(customerRepo.getAll());
     };
     loadData();
     const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);
   }, []);
 
+  const handleScanCheckIn = (res: Reservation) => {
+    // In a real app, this would likely toggle a specific "arrived" boolean
+    // For now, we'll visually acknowledge (or could update a local arrived state)
+    undoManager.showSuccess(`${res.customer.firstName} is ingecheckt!`);
+    setShowScanner(false);
+  };
+
+  const handleNoShow = (resId: string, customerId: string) => {
+    if (!confirm("Markeer als No-Show? Dit wordt geregistreerd bij de klant.")) return;
+
+    // 1. Update Reservation
+    const res = bookingRepo.getById(resId);
+    if (res) {
+        bookingRepo.update(resId, r => ({ ...r, status: BookingStatus.NOSHOW }));
+    }
+
+    // 2. Update Customer Counter
+    const cust = customerRepo.getById(customerId);
+    if (cust) {
+        const newCount = (cust.noShowCount || 0) + 1;
+        customerRepo.update(customerId, c => ({ ...c, noShowCount: newCount }));
+    }
+
+    undoManager.showSuccess("No-Show geregistreerd.");
+    // Data refresh happens via polling or could force it here
+    const updatedRes = bookingRepo.getAll();
+    setReservations(updatedRes);
+    setCustomers(customerRepo.getAll());
+  };
+
   // --- LOGIC: Dynamic Table Numbering ---
   const { activeList, cancelledList, stats } = useMemo(() => {
     const daily = reservations.filter(r => r.date === selectedDate);
     
-    // 1. Separate Active vs Cancelled
+    // 1. Separate Active vs Cancelled/NoShow
     const activeRaw = daily.filter(r => 
-      r.status !== 'CANCELLED' && 
-      r.status !== 'ARCHIVED' && 
-      r.status !== 'WAITLIST'
+      r.status !== BookingStatus.CANCELLED && 
+      r.status !== BookingStatus.ARCHIVED && 
+      r.status !== BookingStatus.WAITLIST &&
+      r.status !== BookingStatus.NOSHOW
     );
     
     const cancelledRaw = daily.filter(r => 
-      r.status === 'CANCELLED' || 
-      r.status === 'ARCHIVED'
+      r.status === BookingStatus.CANCELLED || 
+      r.status === BookingStatus.ARCHIVED ||
+      r.status === BookingStatus.NOSHOW
     );
 
     // 2. Sort Active by creation date (First come = Table 1)
-    // You can change this to 'r.startTime' if you prefer time-based sorting
     const sortedActive = activeRaw.sort((a, b) => 
       new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
     );
@@ -69,6 +108,8 @@ export const HostView = () => {
     // 3. Map to View Model & Assign Dynamic Table Numbers
     const mapToHostModel = (res: any, index: number, isActive: boolean): HostReservation => {
       const show = SHOW_TYPES_DATA[res.showId];
+      const customer = customers.find(c => c.id === res.customerId);
+      const riskLevel = customer?.noShowCount || 0;
       
       const computedTags = [...(res.tags || [])];
       if (res.packageType === 'premium') computedTags.push('PREMIUM');
@@ -76,6 +117,7 @@ export const HostView = () => {
 
       return {
         id: res.id,
+        customerId: res.customerId,
         customerName: `${res.customer.lastName}, ${res.customer.firstName}`,
         partySize: res.partySize, 
         time: res.startTime || show?.startTime || '19:30',
@@ -87,7 +129,8 @@ export const HostView = () => {
         notes: res.notes,
         tags: computedTags,
         createdAt: res.createdAt,
-        showId: res.showId
+        showId: res.showId,
+        riskLevel
       };
     };
 
@@ -102,7 +145,7 @@ export const HostView = () => {
     };
 
     return { activeList, cancelledList, stats };
-  }, [reservations, selectedDate]);
+  }, [reservations, customers, selectedDate]);
 
   const displayList = activeTab === 'ACTIVE' ? activeList : cancelledList;
 
@@ -127,6 +170,9 @@ export const HostView = () => {
             onChange={(e: any) => setSelectedDate(e.target.value)}
             className="bg-slate-900 border-slate-800 text-white"
           />
+          <Button onClick={() => setShowScanner(true)} className="flex items-center bg-amber-600 hover:bg-amber-700 text-black border-none">
+            <Scan size={18} className="mr-2" /> Scanner
+          </Button>
           <Button onClick={handlePrint} variant="secondary" className="flex items-center">
             <Printer size={18} className="mr-2" /> Print Gastenlijst
           </Button>
@@ -162,7 +208,7 @@ export const HostView = () => {
              onClick={() => setActiveTab('CANCELLED')}
              className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all flex items-center ${activeTab === 'CANCELLED' ? 'bg-red-900/20 text-red-400 border border-red-900/50 shadow' : 'text-slate-500 hover:text-slate-300'}`}
            >
-             <XCircle size={14} className="mr-2"/> Geannuleerd ({cancelledList.length})
+             <XCircle size={14} className="mr-2"/> Geannuleerd / No-Show ({cancelledList.length})
            </button>
         </div>
 
@@ -197,14 +243,15 @@ export const HostView = () => {
                  <th className="p-4 border-b border-slate-800 print:border-slate-300 w-40">Labels</th>
                  <th className="p-4 border-b border-slate-800 print:border-slate-300">Bijzonderheden</th>
                  <th className="p-4 border-b border-slate-800 print:border-slate-300 w-20 text-center print:hidden">Status</th>
+                 {activeTab === 'ACTIVE' && <th className="p-4 border-b border-slate-800 print:hidden w-16">Actie</th>}
                </tr>
              </thead>
              <tbody className="divide-y divide-slate-800 print:divide-slate-300 text-sm">
                {filteredList.length === 0 ? (
-                 <tr><td colSpan={7} className="p-8 text-center text-slate-500">Geen reserveringen gevonden in deze lijst.</td></tr>
+                 <tr><td colSpan={8} className="p-8 text-center text-slate-500">Geen reserveringen gevonden in deze lijst.</td></tr>
                ) : (
                  filteredList.map((res) => (
-                   <tr key={res.id} className={`group ${res.status === 'CANCELLED' ? 'opacity-50 hover:opacity-100 bg-red-900/5' : 'hover:bg-slate-800/50 print:hover:bg-transparent'}`}>
+                   <tr key={res.id} className={`group ${res.status === BookingStatus.CANCELLED || res.status === BookingStatus.NOSHOW ? 'opacity-50 hover:opacity-100 bg-red-900/5' : 'hover:bg-slate-800/50 print:hover:bg-transparent'}`}>
                      
                      {/* Dynamic Table Number - Only for Active */}
                      {activeTab === 'ACTIVE' && (
@@ -217,7 +264,14 @@ export const HostView = () => {
 
                      <td className="p-4 font-mono text-slate-400 print:text-black align-top pt-5">{res.time}</td>
                      <td className="p-4 align-top pt-4">
-                       <div className="font-bold text-white print:text-black text-base">{res.customerName}</div>
+                       <div className="flex items-center">
+                         <div className="font-bold text-white print:text-black text-base">{res.customerName}</div>
+                         {res.riskLevel > 1 && (
+                           <span className="ml-2 px-2 py-0.5 bg-red-600 text-white text-[10px] font-bold uppercase rounded flex items-center animate-pulse">
+                             <AlertCircle size={10} className="mr-1" /> Risico ({res.riskLevel})
+                           </span>
+                         )}
+                       </div>
                        <div className="text-[10px] text-slate-500 print:text-slate-600 font-mono flex items-center gap-2">
                          {res.id}
                          <span className="print:hidden">• geboekt {new Date(res.createdAt).toLocaleDateString()}</span>
@@ -256,12 +310,27 @@ export const HostView = () => {
                        </div>
                      </td>
                      <td className="p-4 text-center print:hidden align-top pt-4">
-                        {res.status === 'CANCELLED' ? (
+                        {res.status === BookingStatus.CANCELLED ? (
                           <Badge status="CANCELLED">Geannuleerd</Badge>
+                        ) : res.status === BookingStatus.NOSHOW ? (
+                          <Badge status="NOSHOW">No Show</Badge>
                         ) : (
-                          <Badge status={res.status === 'CONFIRMED' ? 'CONFIRMED' : 'OPTION'}>{res.status === 'CONFIRMED' ? 'OK' : 'Optie'}</Badge>
+                          <Badge status={res.status === BookingStatus.CONFIRMED ? 'CONFIRMED' : 'OPTION'}>{res.status === 'CONFIRMED' ? 'OK' : 'Optie'}</Badge>
                         )}
                      </td>
+                     
+                     {activeTab === 'ACTIVE' && (
+                       <td className="p-4 align-top pt-4 print:hidden">
+                         <Button 
+                           variant="ghost" 
+                           onClick={() => handleNoShow(res.id, res.customerId)} 
+                           className="h-8 w-8 p-0 text-slate-500 hover:text-red-500 hover:bg-red-900/20"
+                           title="Markeer als No-Show"
+                         >
+                           <UserX size={16} />
+                         </Button>
+                       </td>
+                     )}
                    </tr>
                  ))
                )}
@@ -269,6 +338,9 @@ export const HostView = () => {
            </table>
          </div>
       </Card>
+
+      {/* SCANNER OVERLAY */}
+      {showScanner && <ScannerModal onClose={() => setShowScanner(false)} onCheckIn={handleScanCheckIn} />}
     </div>
   );
 };

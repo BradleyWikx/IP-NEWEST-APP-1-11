@@ -34,11 +34,14 @@ import { TaskManager } from './components/admin/TaskManager';
 import { PaymentsManager } from './components/admin/PaymentsManager';
 import { PromoManager } from './components/admin/PromoManager';
 import { AdminBookingWizard } from './components/admin/AdminBookingWizard';
-import { DataImporter } from './components/admin/DataImporter'; // NEW
+import { DataImporter } from './components/admin/DataImporter';
+import { KitchenDashboard } from './components/admin/KitchenDashboard';
+import { TrashManager } from './components/admin/TrashManager'; // NEW
 
 // --- Dashboard Specifics ---
 import { PaymentWidget } from './components/admin/PaymentWidget';
 import { TasksWidget } from './components/admin/TasksWidget';
+import { AdminNotesWidget } from './components/admin/AdminNotesWidget'; 
 import { Card, Button } from './components/UI';
 import { bookingRepo, isSeeded, requestRepo, getWaitlist, getEvents, getShowDefinitions } from './utils/storage';
 import { seedDemoData } from './utils/seed';
@@ -280,6 +283,7 @@ const DashboardHome = () => {
 
         {/* Side Column */}
         <div className="space-y-8">
+           <AdminNotesWidget />
            <TasksWidget />
            <PaymentWidget reservations={bookingRepo.getAll()} />
            
@@ -367,7 +371,8 @@ const App: React.FC = () => {
               <Route path="/admin/planning" element={<PlanningManager />} />
               <Route path="/admin/reservations" element={<ReservationManager />} />
               <Route path="/admin/reservations/new" element={<AdminBookingWizard />} />
-              <Route path="/admin/import" element={<DataImporter />} /> {/* NEW ROUTE */}
+              <Route path="/admin/import" element={<DataImporter />} /> 
+              <Route path="/admin/kitchen" element={<KitchenDashboard />} /> 
               <Route path="/admin/inbox" element={<ChangeRequestInbox />} />
               <Route path="/admin/tasks" element={<TaskManager />} /> 
               <Route path="/admin/shows" element={<ShowsManager />} />
@@ -384,6 +389,7 @@ const App: React.FC = () => {
               <Route path="/admin/host" element={<HostView />} />
               <Route path="/admin/payments" element={<PaymentsManager />} />
               <Route path="/admin/promos" element={<PromoManager />} />
+              <Route path="/admin/trash" element={<TrashManager />} /> 
               <Route path="*" element={<DashboardHome />} />
             </Routes>
           </AdminLayout>

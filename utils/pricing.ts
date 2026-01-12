@@ -6,7 +6,8 @@ import {
   MerchandiseSelection,
   Reservation,
   ReservationFinancials,
-  AdminPriceOverride
+  AdminPriceOverride,
+  LineItem
 } from '../types';
 import { 
   MOCK_ADDONS, 
@@ -16,15 +17,6 @@ import { getVouchers, getEvents, getShowDefinitions } from './storage';
 import { calculatePromoDiscount, PricingContext } from '../logic/discountEngine';
 
 // --- Interfaces ---
-
-export interface LineItem {
-  id: string;
-  label: string;
-  quantity: number;
-  unitPrice: number;
-  total: number;
-  category: 'TICKET' | 'ADDON' | 'MERCH' | 'FEE' | 'DISCOUNT' | 'ADJUSTMENT';
-}
 
 export interface PricingBreakdown {
   subtotal: number;
@@ -339,7 +331,7 @@ export const recalculateReservationFinancials = (reservation: Reservation): Rese
     discount: totals.discountAmount,
     finalTotal: totals.amountDue,
     isPaid: isPaid,
+    priceBreakdown: totals.items, // Save the breakdown
     // paymentDueAt remains unchanged
   };
 };
-    

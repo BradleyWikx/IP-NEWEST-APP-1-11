@@ -8,7 +8,8 @@ export enum BookingStatus {
   CANCELLED = 'CANCELLED',
   WAITLIST = 'WAITLIST',
   INVITED = 'INVITED',
-  ARCHIVED = 'ARCHIVED'
+  ARCHIVED = 'ARCHIVED',
+  NOSHOW = 'NOSHOW'
 }
 
 export interface ShowType {
@@ -128,6 +129,16 @@ export interface Customer {
   billingInstructions?: string; 
   isBusiness?: boolean;
   notes?: string; // NEW: Internal CRM notes
+  noShowCount?: number; // NEW: Risk tracking
+}
+
+export interface LineItem {
+  id: string;
+  label: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+  category: 'TICKET' | 'ADDON' | 'MERCH' | 'FEE' | 'DISCOUNT' | 'ADJUSTMENT';
 }
 
 export interface ReservationFinancials {
@@ -143,13 +154,16 @@ export interface ReservationFinancials {
   payOnNightAllowed?: boolean;
   voucherCode?: string;
   voucherUsed?: number;
+  priceBreakdown?: LineItem[]; // NEW: Stored receipt lines
 }
 
 export interface ReservationNotes {
-  dietary?: string;
+  dietary?: string; // Human readable summary
+  structuredDietary?: Record<string, number>; // Specific counts e.g. { "Vegan": 2 }
   isCelebrating?: boolean;
   celebrationText?: string;
   internal?: string;
+  comments?: string; // Extra user comments separate from dietary
 }
 
 export interface AdminPriceOverride {
@@ -183,6 +197,7 @@ export interface Reservation {
   startTime?: string;
   adminPriceOverride?: AdminPriceOverride;
   tags?: string[]; // NEW: Manual tags like "Mooie Plaatsen", "VIP"
+  deletedAt?: string; // NEW: Soft delete timestamp
 }
 
 export interface WaitlistEntry {
@@ -540,4 +555,12 @@ export interface PromoCodeRule {
   constraints?: PromoConstraints;
   allowWithVoucher: boolean; // Can use voucher to pay remainder?
   allowStacking: boolean;    // Can use with other promos? (Default false)
+}
+
+// --- PRODUCTIVITY TOOLS ---
+export interface AdminNote {
+  id: string;
+  text: string;
+  authorRole: AdminRole;
+  createdAt: string;
 }

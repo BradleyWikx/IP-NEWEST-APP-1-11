@@ -200,6 +200,19 @@ const ShowEditorDrawer = ({ show, onSave, onClose }: ShowEditorProps) => {
                    />
                  </div>
 
+                 {/* Explicit Show Image URL Input */}
+                 <div className="md:col-span-2 bg-slate-900 p-4 rounded-xl border border-slate-800">
+                    <Input 
+                      label="Afbeelding URL (Poster / Logo)" 
+                      value={formData.posterImage || ''} 
+                      onChange={(e: any) => setFormData({...formData, posterImage: e.target.value})} 
+                      placeholder="https://..." 
+                    />
+                    <p className="text-[10px] text-slate-500 mt-2">
+                      Plak hier een directe link naar de afbeelding. Deze wordt getoond in de agenda.
+                    </p>
+                 </div>
+
                  <Input type="date" label="Actief Vanaf *" value={formData.activeFrom} onChange={(e: any) => setFormData({...formData, activeFrom: e.target.value})} />
                  <Input type="date" label="Actief Tot" value={formData.activeTo} onChange={(e: any) => setFormData({...formData, activeTo: e.target.value})} />
 
@@ -351,8 +364,12 @@ export const ShowsManager = () => {
           filteredShows.map(show => (
             <Card key={show.id} className="p-6 flex flex-col md:flex-row items-start md:items-center justify-between group hover:border-slate-600 transition-colors">
                <div className="flex items-start space-x-6">
-                  <div className="w-16 h-16 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-center text-slate-700">
-                    <ImageIcon size={24} />
+                  <div className="w-16 h-16 bg-slate-950 rounded-xl border border-slate-800 flex items-center justify-center text-slate-700 overflow-hidden relative">
+                    {show.posterImage ? (
+                      <img src={show.posterImage} alt={show.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <ImageIcon size={24} />
+                    )}
                   </div>
                   <div>
                     <div className="flex items-center space-x-3 mb-1">

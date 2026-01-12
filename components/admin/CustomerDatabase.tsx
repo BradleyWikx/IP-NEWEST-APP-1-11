@@ -4,22 +4,27 @@ import { useSearchParams } from 'react-router-dom';
 import { 
   Users, Search, Mail, Phone, Calendar, 
   ChevronRight, Star, AlertCircle, ShoppingBag, 
-  ArrowUpRight, Ticket, X, Edit3, Save, MapPin
+  ArrowUpRight, Ticket, X, Edit3, Save, MapPin, 
+  Merge, RefreshCw, AlertTriangle, CheckCircle2
 } from 'lucide-react';
 import { Button, Input, Card, Badge } from '../UI';
 import { Customer, Reservation, BookingStatus } from '../../types';
 import { loadData, saveData, STORAGE_KEYS, customerRepo, bookingRepo } from '../../utils/storage';
 import { logAuditAction } from '../../utils/auditLogger';
+import { calculateCustomerMetrics, getCustomerSegments, getSegmentStyle, getSegmentLabel, CustomerSegment } from '../../utils/customerLogic';
+import { undoManager } from '../../utils/undoManager';
 
 interface CustomerProfile extends Customer {
   totalBookings: number;
   totalSpend: number;
   lastBookingDate: string | null;
   history: Reservation[];
-  tags: string[];
+  segments: CustomerSegment[]; // Replaced raw tags with computed segments
+  rawTags: string[]; // Keep legacy tags
 }
 
 export const CustomerDatabase = () => {
+  const [activeTab, setActiveTab] = useState<'LIST' | 'MAINTENANCE'>('LIST');
   const [customers, setCustomers] = useState<CustomerProfile[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerProfile | null>(null);
@@ -48,7 +53,8 @@ export const CustomerDatabase = () => {
         totalSpend: 0,
         lastBookingDate: null,
         history: [],
-        tags: []
+        segments: [],
+        rawTags: []
       });
     });
 
@@ -59,7 +65,7 @@ export const CustomerDatabase = () => {
       
       // If customer exists but only in reservation (not in seed list), create entry
       if (!profile && res.customer) {
-        // Try finding by email match first to avoid dupes
+        // Try finding by email match first to avoid dupes in this transient map
         const existingByEmail = Array.from(profileMap.values()).find(
           p => p.email.toLowerCase() === res.customer.email.toLowerCase()
         );
@@ -86,7 +92,8 @@ export const CustomerDatabase = () => {
             totalSpend: 0,
             lastBookingDate: null,
             history: [],
-            tags: []
+            segments: [],
+            rawTags: []
           };
           profileMap.set(profile.id, profile);
         }
@@ -94,26 +101,27 @@ export const CustomerDatabase = () => {
 
       if (profile) {
         profile.history.push(res);
-        if (res.status !== BookingStatus.CANCELLED) {
-          profile.totalBookings += 1;
-          profile.totalSpend += (res.financials.finalTotal || res.financials.total || 0);
-        }
-        
-        const resDate = new Date(res.date);
-        if (!profile.lastBookingDate || resDate > new Date(profile.lastBookingDate)) {
-          profile.lastBookingDate = res.date;
-        }
-
-        if (res.notes?.dietary && !profile.tags.includes('DIETARY')) profile.tags.push('DIETARY');
-        if ((res.voucherCode || res.financials?.voucherCode) && !profile.tags.includes('VOUCHER')) profile.tags.push('VOUCHER');
+        // Tag aggregation
+        if (res.notes?.dietary && !profile.rawTags.includes('DIETARY')) profile.rawTags.push('DIETARY');
+        if ((res.voucherCode || res.financials?.voucherCode) && !profile.rawTags.includes('VOUCHER')) profile.rawTags.push('VOUCHER');
       }
     });
 
-    // 3. Finalize Tags
+    // 3. Compute Metrics & Segments
     const profiles = Array.from(profileMap.values()).map(p => {
-      if (p.totalSpend > 500) p.tags.push('HIGH_VALUE');
-      if (p.totalBookings > 3) p.tags.push('VIP');
+      // Sort history
       p.history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      
+      // Calculate Metrics
+      const metrics = calculateCustomerMetrics(p.history);
+      p.totalBookings = metrics.bookingCount;
+      p.totalSpend = metrics.totalSpend;
+      p.lastBookingDate = metrics.lastBookingDate ? metrics.lastBookingDate.toISOString() : null;
+      
+      // Assign Segments
+      p.segments = getCustomerSegments(metrics);
+      if(p.notes?.includes('VIP')) p.segments.push('VIP'); // Legacy manual override check
+
       return p;
     });
 
@@ -131,13 +139,7 @@ export const CustomerDatabase = () => {
 
   const handleSaveCustomer = () => {
     if (!editForm || !selectedCustomer) return;
-
-    // Save to Repo
     customerRepo.update(editForm.id, () => editForm);
-    
-    // Also update any future reservations linking to this customer ID? 
-    // Ideally yes, but for now we just update the CRM record. 
-    // Usually reservation snapshots contact info at booking time.
     
     logAuditAction('UPDATE_CUSTOMER', 'CUSTOMER', editForm.id, {
       description: 'Customer details updated',
@@ -145,9 +147,7 @@ export const CustomerDatabase = () => {
     });
 
     setIsEditing(false);
-    refreshData(); // Re-aggregates
-    
-    // Update selected view immediately
+    refreshData();
     const updatedProfile = { ...selectedCustomer, ...editForm };
     setSelectedCustomer(updatedProfile);
   };
@@ -157,6 +157,55 @@ export const CustomerDatabase = () => {
     c.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.companyName?.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  // --- DUPLICATE LOGIC ---
+  const potentialDuplicates = useMemo(() => {
+    const grouped = new Map<string, CustomerProfile[]>();
+    customers.forEach(c => {
+        const key = c.email.toLowerCase().trim();
+        if (!key) return;
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key)!.push(c);
+    });
+
+    return Array.from(grouped.entries())
+      .filter(([_, group]) => group.length > 1)
+      .map(([email, group]) => ({ email, group }));
+  }, [customers]);
+
+  const handleMerge = (targetId: string, sourceId: string) => {
+    if (!confirm("Weet je zeker dat je deze klanten wilt samenvoegen? Dit kan niet ongedaan worden gemaakt.")) return;
+
+    const sourceCustomer = customers.find(c => c.id === sourceId);
+    const targetCustomer = customers.find(c => c.id === targetId);
+    if (!sourceCustomer || !targetCustomer) return;
+
+    // 1. Move Reservations
+    const sourceReservations = bookingRepo.getAll().filter(r => r.customerId === sourceId);
+    const backupReservations = JSON.parse(JSON.stringify(sourceReservations));
+
+    sourceReservations.forEach(res => {
+        bookingRepo.update(res.id, (r) => ({
+            ...r,
+            customerId: targetId,
+            customer: { ...targetCustomer } // Update embedded snapshot
+        }));
+    });
+
+    // 2. Delete Source Customer
+    customerRepo.delete(sourceId);
+
+    // 3. Log & Undo
+    logAuditAction('MERGE_CUSTOMERS', 'CUSTOMER', targetId, {
+        description: `Merged ${sourceId} into ${targetId}. Moved ${sourceReservations.length} bookings.`
+    });
+
+    // Undo is tricky here, but we can try to restore the deleted customer and revert bookings
+    // Simplification: We don't implement full merge-undo in this snippet, but logging is key.
+    
+    undoManager.showSuccess(`${sourceReservations.length} boekingen overgezet. ${sourceCustomer.lastName} verwijderd.`);
+    refreshData();
+  };
 
   return (
     <div className="h-full flex flex-col space-y-6">
@@ -168,71 +217,136 @@ export const CustomerDatabase = () => {
         </div>
       </div>
 
-      {/* Filter */}
-      <Card className="p-4 bg-slate-900/50">
-         <div className="relative">
-           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-           <input 
-             className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500 transition-colors"
-             placeholder="Zoek op naam, email of bedrijf..."
-             value={searchTerm}
-             onChange={e => setSearchTerm(e.target.value)}
-           />
-         </div>
-      </Card>
-
-      {/* List */}
-      <div className="flex-grow bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col">
-        <div className="overflow-x-auto flex-grow">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-950 text-slate-500 text-[10px] uppercase tracking-widest font-bold sticky top-0">
-              <tr>
-                <th className="p-4">Naam / Bedrijf</th>
-                <th className="p-4">Contact</th>
-                <th className="p-4 text-center">Boekingen</th>
-                <th className="p-4 text-right">Totaal Besteed</th>
-                <th className="p-4">Laatste Bezoek</th>
-                <th className="p-4">Labels</th>
-                <th className="p-4 text-right">Actie</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {filteredCustomers.length === 0 ? <tr><td colSpan={7} className="p-8 text-center text-slate-500">Geen klanten gevonden.</td></tr> :
-              filteredCustomers.map(c => (
-                <tr key={c.id} className="hover:bg-slate-800/50 cursor-pointer group" onClick={() => { setSelectedCustomer(c); setIsEditing(false); }}>
-                  <td className="p-4">
-                    <div className="font-bold text-white">{c.firstName} {c.lastName}</div>
-                    {c.isBusiness && <div className="text-xs text-amber-500 uppercase font-bold">{c.companyName}</div>}
-                  </td>
-                  <td className="p-4">
-                    <div className="text-slate-300 flex items-center text-xs mb-1"><Mail size={12} className="mr-2 opacity-50"/>{c.email}</div>
-                    <div className="text-slate-400 flex items-center text-xs"><Phone size={12} className="mr-2 opacity-50"/>{c.phone}</div>
-                  </td>
-                  <td className="p-4 text-center">
-                    <span className="font-bold text-white bg-slate-800 px-2 py-1 rounded-full text-xs">{c.totalBookings}</span>
-                  </td>
-                  <td className="p-4 text-right text-slate-300 font-mono">
-                    €{c.totalSpend.toLocaleString()}
-                  </td>
-                  <td className="p-4 text-slate-500 text-xs">
-                    {c.lastBookingDate ? new Date(c.lastBookingDate).toLocaleDateString() : '-'}
-                  </td>
-                  <td className="p-4">
-                    <div className="flex gap-1 flex-wrap">
-                      {c.tags.includes('VIP') && <span className="w-2 h-2 rounded-full bg-amber-500" title="Frequent Guest"/>}
-                      {c.tags.includes('HIGH_VALUE') && <span className="w-2 h-2 rounded-full bg-emerald-500" title="High Spender"/>}
-                      {c.tags.includes('DIETARY') && <span className="w-2 h-2 rounded-full bg-purple-500" title="Dietary Notes"/>}
-                    </div>
-                  </td>
-                  <td className="p-4 text-right">
-                    <Button variant="ghost" className="h-8 w-8 p-0 text-slate-500 hover:text-white"><ChevronRight size={16}/></Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="flex space-x-1 border-b border-slate-800">
+        <button onClick={() => setActiveTab('LIST')} className={`px-6 py-3 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'LIST' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Lijst</button>
+        <button onClick={() => setActiveTab('MAINTENANCE')} className={`px-6 py-3 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'MAINTENANCE' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>
+            Onderhoud
+            {potentialDuplicates.length > 0 && <span className="ml-2 bg-red-500 text-white px-1.5 py-0.5 rounded-full text-[9px]">{potentialDuplicates.length}</span>}
+        </button>
       </div>
+
+      {activeTab === 'LIST' && (
+        <>
+            <Card className="p-4 bg-slate-900/50">
+                <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                <input 
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500 transition-colors"
+                    placeholder="Zoek op naam, email of bedrijf..."
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                />
+                </div>
+            </Card>
+
+            <div className="flex-grow bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col">
+                <div className="overflow-x-auto flex-grow">
+                <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-950 text-slate-500 text-[10px] uppercase tracking-widest font-bold sticky top-0">
+                    <tr>
+                        <th className="p-4">Naam / Bedrijf</th>
+                        <th className="p-4">Contact</th>
+                        <th className="p-4 text-center">Boekingen</th>
+                        <th className="p-4 text-right">Totaal Besteed</th>
+                        <th className="p-4">Segmenten</th>
+                        <th className="p-4 text-right">Actie</th>
+                    </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                    {filteredCustomers.length === 0 ? <tr><td colSpan={6} className="p-8 text-center text-slate-500">Geen klanten gevonden.</td></tr> :
+                    filteredCustomers.map(c => (
+                        <tr key={c.id} className="hover:bg-slate-800/50 cursor-pointer group" onClick={() => { setSelectedCustomer(c); setIsEditing(false); }}>
+                        <td className="p-4">
+                            <div className="font-bold text-white">{c.firstName} {c.lastName}</div>
+                            {c.isBusiness && <div className="text-xs text-amber-500 uppercase font-bold">{c.companyName}</div>}
+                        </td>
+                        <td className="p-4">
+                            <div className="text-slate-300 flex items-center text-xs mb-1"><Mail size={12} className="mr-2 opacity-50"/>{c.email}</div>
+                            <div className="text-slate-400 flex items-center text-xs"><Phone size={12} className="mr-2 opacity-50"/>{c.phone}</div>
+                        </td>
+                        <td className="p-4 text-center">
+                            <span className="font-bold text-white bg-slate-800 px-2 py-1 rounded-full text-xs">{c.totalBookings}</span>
+                        </td>
+                        <td className="p-4 text-right text-slate-300 font-mono">
+                            €{c.totalSpend.toLocaleString()}
+                        </td>
+                        <td className="p-4">
+                            <div className="flex gap-1 flex-wrap">
+                            {c.segments.map(seg => (
+                                <span key={seg} className={`px-2 py-0.5 rounded border text-[9px] font-bold uppercase ${getSegmentStyle(seg)}`}>
+                                    {getSegmentLabel(seg)}
+                                </span>
+                            ))}
+                            {c.rawTags.includes('DIETARY') && <span className="w-2 h-2 rounded-full bg-red-500 mt-1.5" title="Heeft Dieetwensen"/>}
+                            </div>
+                        </td>
+                        <td className="p-4 text-right">
+                            <Button variant="ghost" className="h-8 w-8 p-0 text-slate-500 hover:text-white"><ChevronRight size={16}/></Button>
+                        </td>
+                        </tr>
+                    ))}
+                    </tbody>
+                </table>
+                </div>
+            </div>
+        </>
+      )}
+
+      {activeTab === 'MAINTENANCE' && (
+          <div className="space-y-6 animate-in fade-in">
+              <div className="flex items-center space-x-4 p-4 bg-slate-900 border border-slate-800 rounded-xl">
+                  <div className="p-3 bg-blue-900/20 text-blue-500 rounded-full">
+                      <Merge size={24} />
+                  </div>
+                  <div>
+                      <h3 className="text-lg font-bold text-white">Duplicaten Detectie</h3>
+                      <p className="text-sm text-slate-400">Er zijn <strong>{potentialDuplicates.length}</strong> groepen met mogelijke dubbele accounts gevonden op basis van e-mailadres.</p>
+                  </div>
+              </div>
+
+              {potentialDuplicates.length === 0 ? (
+                  <div className="text-center p-12 bg-slate-900/50 rounded-xl border border-dashed border-slate-800 text-slate-500">
+                      <CheckCircle2 size={32} className="mx-auto mb-2 opacity-50 text-emerald-500" />
+                      <p>Geen duplicaten gevonden.</p>
+                  </div>
+              ) : (
+                  <div className="grid gap-6">
+                      {potentialDuplicates.map((group, idx) => (
+                          <Card key={idx} className="p-6 bg-slate-900 border-slate-800">
+                              <h4 className="font-bold text-white mb-4 flex items-center">
+                                  <AlertTriangle size={16} className="text-amber-500 mr-2" />
+                                  {group.email} <span className="ml-2 text-xs font-normal text-slate-500">({group.group.length} records)</span>
+                              </h4>
+                              <div className="space-y-3">
+                                  {group.group.map(cust => (
+                                      <div key={cust.id} className="flex items-center justify-between p-3 bg-black/40 rounded-lg border border-slate-800">
+                                          <div>
+                                              <p className="text-sm font-bold text-slate-200">{cust.firstName} {cust.lastName}</p>
+                                              <p className="text-xs text-slate-500 font-mono">{cust.id} • {cust.totalBookings} boekingen</p>
+                                          </div>
+                                          
+                                          {/* Merge Action: Merge INTO this customer */}
+                                          <div className="flex space-x-2">
+                                              {group.group.filter(c => c.id !== cust.id).map(source => (
+                                                  <Button 
+                                                    key={source.id} 
+                                                    onClick={() => handleMerge(cust.id, source.id)}
+                                                    variant="secondary"
+                                                    className="text-[10px] h-7 px-2"
+                                                  >
+                                                      Voeg {source.firstName} ({source.id.slice(-4)}) hieraan toe
+                                                  </Button>
+                                              ))}
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+                          </Card>
+                      ))}
+                  </div>
+              )}
+          </div>
+      )}
 
       {/* Detail Drawer */}
       {selectedCustomer && (
@@ -249,9 +363,15 @@ export const CustomerDatabase = () => {
                    <>
                      <div className="flex items-center space-x-2 mb-1">
                        <h2 className="text-2xl font-serif text-white">{selectedCustomer.salutation || 'Dhr.'} {selectedCustomer.firstName} {selectedCustomer.lastName}</h2>
-                       {selectedCustomer.tags.includes('VIP') && <Star size={16} className="text-amber-500 fill-amber-500" />}
+                       {selectedCustomer.segments.includes('VIP') && <Star size={16} className="text-amber-500 fill-amber-500" />}
                      </div>
-                     <p className="text-slate-500 text-xs font-mono">{selectedCustomer.id}</p>
+                     <div className="flex gap-2 mt-2">
+                        {selectedCustomer.segments.map(seg => (
+                            <React.Fragment key={seg}>
+                                <Badge status="CONFIRMED" className={`${getSegmentStyle(seg)} border`}>{getSegmentLabel(seg)}</Badge>
+                            </React.Fragment>
+                        ))}
+                     </div>
                    </>
                  )}
                </div>
