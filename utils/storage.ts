@@ -81,11 +81,151 @@ class Repository<T extends { id?: string } | any> {
   }
 }
 
+// --- Notifications Repository (Defined early for use in others) ---
+class NotificationsRepository extends Repository<AdminNotification> {
+  constructor() {
+    super(KEYS.NOTIFICATIONS);
+  }
+
+  getUnreadCount(): number {
+    return this.getAll().filter(n => !n.readAt).length;
+  }
+
+  markRead(id: string) {
+    this.update(id, n => ({ ...n, readAt: new Date().toISOString() }));
+  }
+
+  markAllRead() {
+    const all = this.getAll();
+    const updated = all.map(n => n.readAt ? n : ({ ...n, readAt: new Date().toISOString() }));
+    this.saveAll(updated);
+  }
+
+  create(partial: Omit<AdminNotification, 'id' | 'createdAt'>) {
+    const all = this.getAll();
+    
+    // Dedupe: Check if similar notification exists created in last 10 minutes
+    const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000).getTime();
+    const duplicate = all.find(n => 
+      n.entityType === partial.entityType && 
+      n.entityId === partial.entityId && 
+      n.type === partial.type &&
+      new Date(n.createdAt).getTime() > tenMinsAgo
+    );
+
+    if (duplicate) return;
+
+    const notification: AdminNotification = {
+      id: `NOTIF-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      createdAt: new Date().toISOString(),
+      ...partial
+    };
+
+    // Add to start
+    this.saveAll([notification, ...all].slice(0, 200)); // Keep last 200
+  }
+
+  createFromEvent(
+    type: NotificationType, 
+    entity: any, 
+    extraContext?: any
+  ) {
+    let title = '';
+    let message = '';
+    let link = '';
+    let severity: NotificationSeverity = 'INFO';
+    let entityType: AdminNotification['entityType'] = 'RESERVATION';
+    let entityId = entity.id;
+
+    switch (type) {
+      case 'NEW_BOOKING':
+        entityType = 'RESERVATION';
+        title = 'Nieuwe Reservering';
+        message = `${entity.customer.firstName} ${entity.customer.lastName} (${entity.partySize}p) voor ${new Date(entity.date).toLocaleDateString()}.`;
+        link = '/admin/reservations';
+        severity = 'INFO';
+        break;
+      case 'NEW_CHANGE_REQUEST':
+        entityType = 'CHANGE_REQUEST';
+        entityId = entity.id;
+        title = 'Wijzigingsverzoek';
+        message = `${entity.customerName} wil een wijziging doorgeven.`;
+        link = '/admin/inbox';
+        severity = 'WARNING';
+        break;
+      case 'NEW_WAITLIST':
+        entityType = 'WAITLIST';
+        title = 'Wachtlijst Inschrijving';
+        message = `${entity.contactName} (${entity.partySize}p) voor ${new Date(entity.date).toLocaleDateString()}.`;
+        link = '/admin/waitlist';
+        break;
+      case 'NEW_VOUCHER_ORDER':
+        entityType = 'VOUCHER_ORDER';
+        title = 'Theaterbon Bestelling';
+        message = `Nieuwe bestelling van ${entity.buyer.lastName} (€${entity.amount}).`;
+        link = '/admin/vouchers';
+        break;
+      case 'OPTION_EXPIRING':
+        entityType = 'RESERVATION';
+        title = 'Optie Verloopt Bijna';
+        message = `Optie van ${entity.customer.lastName} verloopt binnenkort.`;
+        link = '/admin/reservations';
+        severity = 'WARNING';
+        break;
+      case 'PAYMENT_OVERDUE':
+        entityType = 'RESERVATION';
+        title = 'Betaling Te Laat';
+        message = `Betaling voor ${entity.customer.lastName} (${entity.id}) is te laat.`;
+        link = '/admin/reservations';
+        severity = 'URGENT';
+        break;
+    }
+
+    this.create({ type, title, message, link, entityType, entityId, severity });
+  }
+
+  runComputedChecks() {
+    const reservations = bookingRepo.getAll();
+    const now = new Date();
+    
+    reservations.forEach(res => {
+      // 1. Check Overdue
+      if (res.status !== 'CANCELLED' && res.status !== 'ARCHIVED' && res.status !== 'INVITED') {
+        const { isPaid, paymentDueAt } = res.financials;
+        if (!isPaid && paymentDueAt) {
+          const due = new Date(paymentDueAt);
+          if (due < now) {
+            this.createFromEvent('PAYMENT_OVERDUE', res);
+          }
+        }
+      }
+
+      // 2. Check Option Expiry (within 48 hours)
+      if (res.status === 'OPTION' && res.optionExpiresAt) {
+        const expires = new Date(res.optionExpiresAt);
+        const diffHours = (expires.getTime() - now.getTime()) / (1000 * 60 * 60);
+        if (diffHours > 0 && diffHours < 48) {
+          this.createFromEvent('OPTION_EXPIRING', res);
+        }
+      }
+    });
+  }
+}
+
+export const notificationsRepo = new NotificationsRepository();
+
 // ... existing BookingRepository ...
 class BookingRepository extends Repository<Reservation> {
   constructor() {
     super(KEYS.RESERVATIONS);
     this.archivePastReservations();
+  }
+
+  // Override ADD to trigger notification automatically
+  add(item: Reservation): void {
+    super.add(item);
+    // Auto-notify admins
+    notificationsRepo.createFromEvent('NEW_BOOKING', item);
   }
 
   // "De Nachtwacht": Auto-archive old reservations
@@ -95,9 +235,6 @@ class BookingRepository extends Repository<Reservation> {
     let changed = false;
 
     const updated = all.map(r => {
-      // Logic: Date < Today AND Status is a final state (Confirmed/NoShow/Cancelled)
-      // We do NOT archive 'OPEN' payments that are confirmed unless we want to force cleanup.
-      // Assuming CONFIRMED is done. REQUEST/OPTION should expire via Tasks, not archive.
       if (r.date < today && 
          (r.status === BookingStatus.CONFIRMED || r.status === BookingStatus.NOSHOW || r.status === BookingStatus.CANCELLED)
       ) {
@@ -307,134 +444,15 @@ class SettingsRepository {
   }
 }
 
-// --- Notifications Repository ---
-class NotificationsRepository extends Repository<AdminNotification> {
+// --- Specialized Voucher Order Repository ---
+class VoucherOrderRepository extends Repository<VoucherOrder> {
   constructor() {
-    super(KEYS.NOTIFICATIONS);
+    super(KEYS.VOUCHER_ORDERS);
   }
 
-  getUnreadCount(): number {
-    return this.getAll().filter(n => !n.readAt).length;
-  }
-
-  markRead(id: string) {
-    this.update(id, n => ({ ...n, readAt: new Date().toISOString() }));
-  }
-
-  markAllRead() {
-    const all = this.getAll();
-    const updated = all.map(n => n.readAt ? n : ({ ...n, readAt: new Date().toISOString() }));
-    this.saveAll(updated);
-  }
-
-  create(partial: Omit<AdminNotification, 'id' | 'createdAt'>) {
-    const all = this.getAll();
-    
-    // Dedupe: Check if similar notification exists created in last 10 minutes
-    const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000).getTime();
-    const duplicate = all.find(n => 
-      n.entityType === partial.entityType && 
-      n.entityId === partial.entityId && 
-      n.type === partial.type &&
-      new Date(n.createdAt).getTime() > tenMinsAgo
-    );
-
-    if (duplicate) return;
-
-    const notification: AdminNotification = {
-      id: `NOTIF-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
-      createdAt: new Date().toISOString(),
-      ...partial
-    };
-
-    // Add to start
-    this.saveAll([notification, ...all].slice(0, 200)); // Keep last 200
-  }
-
-  createFromEvent(
-    type: NotificationType, 
-    entity: any, 
-    extraContext?: any
-  ) {
-    let title = '';
-    let message = '';
-    let link = '';
-    let severity: NotificationSeverity = 'INFO';
-    let entityType: AdminNotification['entityType'] = 'RESERVATION';
-    let entityId = entity.id;
-
-    switch (type) {
-      case 'NEW_BOOKING':
-        entityType = 'RESERVATION';
-        title = 'Nieuwe Reservering';
-        message = `${entity.customer.firstName} ${entity.customer.lastName} (${entity.partySize}p) voor ${new Date(entity.date).toLocaleDateString()}.`;
-        link = '/admin/reservations';
-        severity = 'INFO';
-        break;
-      case 'NEW_CHANGE_REQUEST':
-        entityType = 'CHANGE_REQUEST';
-        entityId = entity.id;
-        title = 'Wijzigingsverzoek';
-        message = `${entity.customerName} wil een wijziging doorgeven.`;
-        link = '/admin/inbox';
-        severity = 'WARNING';
-        break;
-      case 'NEW_WAITLIST':
-        entityType = 'WAITLIST';
-        title = 'Wachtlijst Inschrijving';
-        message = `${entity.contactName} (${entity.partySize}p) voor ${new Date(entity.date).toLocaleDateString()}.`;
-        link = '/admin/waitlist';
-        break;
-      case 'NEW_VOUCHER_ORDER':
-        entityType = 'VOUCHER_ORDER';
-        title = 'Theaterbon Bestelling';
-        message = `Nieuwe bestelling van ${entity.buyer.lastName} (€${entity.amount}).`;
-        link = '/admin/vouchers';
-        break;
-      case 'OPTION_EXPIRING':
-        entityType = 'RESERVATION';
-        title = 'Optie Verloopt Bijna';
-        message = `Optie van ${entity.customer.lastName} verloopt binnenkort.`;
-        link = '/admin/reservations';
-        severity = 'WARNING';
-        break;
-      case 'PAYMENT_OVERDUE':
-        entityType = 'RESERVATION';
-        title = 'Betaling Te Laat';
-        message = `Betaling voor ${entity.customer.lastName} (${entity.id}) is te laat.`;
-        link = '/admin/reservations';
-        severity = 'URGENT';
-        break;
-    }
-
-    this.create({ type, title, message, link, entityType, entityId, severity });
-  }
-
-  runComputedChecks() {
-    const reservations = bookingRepo.getAll();
-    const now = new Date();
-    
-    reservations.forEach(res => {
-      // 1. Check Overdue
-      if (res.status !== 'CANCELLED' && res.status !== 'ARCHIVED' && res.status !== 'INVITED') {
-        const { isPaid, paymentDueAt } = res.financials;
-        if (!isPaid && paymentDueAt) {
-          const due = new Date(paymentDueAt);
-          if (due < now) {
-            this.createFromEvent('PAYMENT_OVERDUE', res);
-          }
-        }
-      }
-
-      // 2. Check Option Expiry (within 48 hours)
-      if (res.status === 'OPTION' && res.optionExpiresAt) {
-        const expires = new Date(res.optionExpiresAt);
-        const diffHours = (expires.getTime() - now.getTime()) / (1000 * 60 * 60);
-        if (diffHours > 0 && diffHours < 48) {
-          this.createFromEvent('OPTION_EXPIRING', res);
-        }
-      }
-    });
+  add(item: VoucherOrder) {
+    super.add(item);
+    notificationsRepo.createFromEvent('NEW_VOUCHER_ORDER', item);
   }
 }
 
@@ -495,7 +513,7 @@ export const bookingRepo = new BookingRepository();
 export const customerRepo = new Repository<Customer>(KEYS.CUSTOMERS);
 export const waitlistRepo = new Repository<WaitlistEntry>(KEYS.WAITLIST);
 export const voucherRepo = new Repository<Voucher>(KEYS.VOUCHERS);
-export const voucherOrderRepo = new Repository<VoucherOrder>(KEYS.VOUCHER_ORDERS);
+export const voucherOrderRepo = new VoucherOrderRepository(); // Use new specialized class
 export const merchRepo = new Repository<MerchandiseItem>(KEYS.MERCHANDISE);
 export const requestRepo = new Repository<ChangeRequest>(KEYS.REQUESTS);
 export const subscriberRepo = new Repository<Subscriber>(KEYS.SUBSCRIBERS);
@@ -504,7 +522,6 @@ export const emailTemplateRepo = new Repository<EmailTemplate>(KEYS.EMAIL_TEMPLA
 export const emailLogRepo = new Repository<EmailLog>(KEYS.EMAIL_LOGS);
 export const promoRepo = new Repository<PromoCodeRule>(KEYS.PROMOS);
 export const notesRepo = new Repository<AdminNote>(KEYS.ADMIN_NOTES);
-export const notificationsRepo = new NotificationsRepository();
 export const tasksRepo = new TasksRepository();
 export const settingsRepo = new SettingsRepository();
 

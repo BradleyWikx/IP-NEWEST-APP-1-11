@@ -16,6 +16,9 @@ import {
 import { getVouchers, getEvents, getShowDefinitions } from './storage';
 import { calculatePromoDiscount, PricingContext } from '../logic/discountEngine';
 
+// --- Constants ---
+export const VOUCHER_SHIPPING_FEE = 4.00;
+
 // --- Interfaces ---
 
 export interface PricingBreakdown {
@@ -41,6 +44,18 @@ export interface EffectivePricing {
 }
 
 // --- Core Functions ---
+
+/**
+ * Calculates total for voucher order including shipping
+ */
+export const calculateVoucherTotal = (baseAmount: number, deliveryMethod: 'DIGITAL' | 'PICKUP' | 'POST') => {
+  const shipping = deliveryMethod === 'POST' ? VOUCHER_SHIPPING_FEE : 0;
+  return {
+    subtotal: baseAmount,
+    shipping,
+    total: baseAmount + shipping
+  };
+};
 
 /**
  * Determines the final base prices for a specific event date.

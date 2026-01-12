@@ -66,6 +66,7 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
     setWaitlistCounts(wlCounts);
 
     // 2. Dynamically calculate booked count based on active reservations
+    // CRITICAL: REQUESTs must count to prevent overbooking while pending approval
     const enrichedEvents = rawEvents.map(event => {
       if (event.type === 'SHOW') {
         const bookingsForDate = allReservations.filter(r => 
@@ -74,6 +75,7 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
           r.status !== 'ARCHIVED' &&
           r.status !== 'NOSHOW' && 
           r.status !== 'WAITLIST'
+          // Implicitly includes: CONFIRMED, OPTION, ARRIVED, INVITED, and REQUEST
         );
         
         // Sum total people

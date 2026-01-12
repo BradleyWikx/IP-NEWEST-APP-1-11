@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
-import { Wallet, Plus, Download, Filter, CheckCircle2, AlertCircle, Copy, FileText, Layers } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Wallet, Plus, Download, Filter, CheckCircle2, AlertCircle, Copy, FileText, Layers, Truck, MapPin, Phone } from 'lucide-react';
 import { Button, Input, Card, Badge, ResponsiveDrawer } from '../UI';
 import { Voucher, VoucherOrder } from '../../types';
 import { voucherRepo, voucherOrderRepo, saveData, STORAGE_KEYS } from '../../utils/storage';
@@ -10,6 +11,7 @@ import { logAuditAction } from '../../utils/auditLogger';
 import { triggerEmail } from '../../utils/emailEngine';
 import { EmailHistory } from './EmailHistory';
 import { toCSV, downloadCSV } from '../../utils/csvExport';
+import { VOUCHER_SHIPPING_FEE } from '../../utils/pricing';
 
 // --- SECURE CODE GENERATOR ---
 
@@ -58,6 +60,7 @@ export const VoucherManager = () => {
   const [orders, setOrders] = useState<VoucherOrder[]>([]);
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<VoucherOrder | null>(null);
+  const [searchParams] = useSearchParams();
   
   // Bulk Generator State
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
@@ -70,8 +73,19 @@ export const VoucherManager = () => {
   }, []);
 
   const refreshData = () => {
-    setOrders(voucherOrderRepo.getAll().sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+    const allOrders = voucherOrderRepo.getAll().sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    setOrders(allOrders);
     setVouchers(voucherRepo.getAll());
+
+    // Deep Linking Logic
+    const openId = searchParams.get('open');
+    if (openId) {
+        const target = allOrders.find(o => o.id === openId);
+        if (target) {
+            setSelectedOrder(target);
+            setActiveTab('ORDERS');
+        }
+    }
   };
 
   const handleUpdateOrderStatus = (orderId: string, status: VoucherOrder['status'], extraUpdates: Partial<VoucherOrder> = {}) => {
@@ -238,8 +252,13 @@ export const VoucherManager = () => {
             columns={[
               { header: 'Datum', accessor: (o: VoucherOrder) => <span className="font-mono text-slate-400">{new Date(o.createdAt).toLocaleDateString()}</span> },
               { header: 'Klant', accessor: (o: VoucherOrder) => <span className="font-bold text-white">{o.customerName || o.buyer.lastName}</span> },
-              { header: 'Bedrag', accessor: (o: VoucherOrder) => <span className="text-emerald-500 font-mono">€{o.amount.toFixed(2)}</span> },
-              { header: 'Methode', accessor: (o: VoucherOrder) => <span className="text-xs uppercase">{o.deliveryMethod}</span> },
+              { header: 'Totaal', accessor: (o: VoucherOrder) => <span className="text-emerald-500 font-mono">€{o.totals.grandTotal.toFixed(2)}</span> },
+              { header: 'Levering', accessor: (o: VoucherOrder) => (
+                  <div className="flex items-center">
+                      <span className="text-xs uppercase mr-2">{o.deliveryMethod}</span>
+                      {o.deliveryMethod === 'POST' && <span className="text-[10px] text-slate-500 bg-slate-900 px-1.5 rounded">+€{VOUCHER_SHIPPING_FEE.toFixed(0)}</span>}
+                  </div>
+              )},
               { header: 'Status', accessor: (o: VoucherOrder) => <Badge status={o.status === 'PAID' ? 'CONFIRMED' : o.status === 'REQUESTED' ? 'REQUEST' : 'ARCHIVED'}>{o.status}</Badge> }
             ]}
           />
@@ -247,17 +266,50 @@ export const VoucherManager = () => {
             {selectedOrder && (
               <div className="space-y-6">
                 <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-                   <h4 className="text-xs font-bold text-slate-500 uppercase mb-2">Details</h4>
-                   <div className="space-y-1 text-sm text-slate-300">
-                     <p>Naam: {selectedOrder.customerName}</p>
-                     <p>Email: {selectedOrder.customerEmail}</p>
-                     <p>Levering: {selectedOrder.deliveryMethod}</p>
+                   <h4 className="text-xs font-bold text-slate-500 uppercase mb-3 flex items-center"><FileText size={14} className="mr-2"/> Bestelgegevens</h4>
+                   <div className="space-y-2 text-sm text-slate-300">
+                     <p><strong>Naam:</strong> {selectedOrder.buyer.firstName} {selectedOrder.buyer.lastName}</p>
+                     <p><strong>Email:</strong> {selectedOrder.customerEmail}</p>
+                     <div className="flex items-start mt-2 pt-2 border-t border-slate-800">
+                        <Truck size={16} className="mr-2 text-amber-500 shrink-0 mt-0.5" />
+                        <div>
+                            <span className="font-bold block text-white">{selectedOrder.deliveryMethod}</span>
+                            {selectedOrder.recipient.address && (
+                                <div className="text-xs text-slate-400 mt-1">
+                                    {selectedOrder.recipient.address.street}<br/>
+                                    {selectedOrder.recipient.address.zip} {selectedOrder.recipient.address.city}
+                                </div>
+                            )}
+                        </div>
+                     </div>
                    </div>
                 </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
+                    <h4 className="text-xs font-bold text-slate-500 uppercase mb-3">Items</h4>
+                    {selectedOrder.items.map((item, i) => (
+                        <div key={i} className="flex justify-between text-sm text-slate-300 mb-1">
+                            <span>{item.quantity}x {item.label}</span>
+                            <span>€{item.price.toFixed(2)}</span>
+                        </div>
+                    ))}
+                    {selectedOrder.totals.shipping > 0 && (
+                        <div className="flex justify-between text-sm text-slate-400 border-t border-slate-800 pt-2 mt-2">
+                            <span>Verzendkosten</span>
+                            <span>€{selectedOrder.totals.shipping.toFixed(2)}</span>
+                        </div>
+                    )}
+                    <div className="flex justify-between text-lg font-bold text-white border-t border-slate-800 pt-2 mt-2">
+                        <span>Totaal</span>
+                        <span>€{selectedOrder.totals.grandTotal.toFixed(2)}</span>
+                    </div>
+                </div>
+
                 <div className="flex space-x-2">
                    {selectedOrder.status === 'REQUESTED' && <Button onClick={() => handleUpdateOrderStatus(selectedOrder.id, 'INVOICED')} variant="secondary">Factuur Sturen</Button>}
                    {selectedOrder.status !== 'PAID' && <Button onClick={() => handleMarkPaidAndGenerate(selectedOrder)}>Markeer Betaald & Genereer</Button>}
                 </div>
+                
                 <div className="pt-4 border-t border-slate-800">
                     <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Verzonden Emails</h3>
                     <EmailHistory entityId={selectedOrder.id} />

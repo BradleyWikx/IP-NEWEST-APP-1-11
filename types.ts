@@ -139,7 +139,7 @@ export interface LineItem {
   quantity: number;
   unitPrice: number;
   total: number;
-  category: 'TICKET' | 'ADDON' | 'MERCH' | 'FEE' | 'DISCOUNT' | 'ADJUSTMENT';
+  category: 'TICKET' | 'ADDON' | 'MERCH' | 'FEE' | 'DISCOUNT' | 'ADJUSTMENT' | 'SHIPPING';
 }
 
 export interface ReservationFinancials {

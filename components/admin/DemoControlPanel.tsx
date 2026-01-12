@@ -1,99 +1,119 @@
+
 import React, { useState } from 'react';
-import { RefreshCw, AlertTriangle, PlayCircle, Loader2, Plus, Database } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Database, CheckCircle2, Loader2 } from 'lucide-react';
 import { Card, Button } from '../UI';
-import { seedFullDatabase, addRandomReservations } from '../../utils/seed';
-import { undoManager } from '../../utils/undoManager';
+import { seedFullDatabase } from '../../utils/seed';
+import { DestructiveActionModal } from '../UI/DestructiveActionModal';
 
 export const DemoControlPanel = () => {
   const [isLoading, setIsLoading] = useState(false);
+  const [isDone, setIsDone] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [statusMsg, setStatusMsg] = useState('');
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const handleFullReset = async () => {
-    if (confirm("⚠️ WEET JE HET ZEKER?\n\nAlle huidige data wordt gewist en vervangen door een demo-set. Dit kan niet ongedaan worden gemaakt.")) {
-      setIsLoading(true);
-      
-      // Allow UI to render loading state
-      setTimeout(() => {
-        seedFullDatabase();
-        window.location.reload();
-      }, 500);
+    setShowConfirm(false);
+    setIsLoading(true);
+    setProgress(0);
+    setStatusMsg("Initialiseren...");
+    
+    try {
+        await seedFullDatabase((msg, pct) => {
+            setStatusMsg(msg);
+            setProgress(pct);
+        });
+        
+        setIsDone(true);
+        setStatusMsg("Voltooid! Pagina herladen in 3 seconden...");
+        
+        setTimeout(() => {
+            window.location.reload();
+        }, 3000);
+    } catch (e) {
+        console.error(e);
+        setStatusMsg("Er ging iets mis: " + (e as any).message);
+        setIsLoading(false);
     }
   };
 
-  const handleAddData = () => {
-    setIsLoading(true);
-    setTimeout(() => {
-      const count = addRandomReservations(10);
-      if (count > 0) {
-        undoManager.showSuccess(`${count} boekingen toegevoegd.`);
-      } else {
-        alert("Kan geen data toevoegen. Reset de database eerst.");
-      }
-      setIsLoading(false);
-    }, 500);
-  };
-
   return (
-    <div className="h-full flex flex-col items-center justify-center p-8 max-w-3xl mx-auto">
-      <Card className="w-full bg-slate-900 border border-slate-800 p-8 text-center space-y-8 shadow-2xl relative overflow-hidden">
+    <div className="h-full flex flex-col items-center justify-center p-8 max-w-2xl mx-auto">
+      <Card className="w-full bg-slate-900 border border-slate-800 p-10 text-center space-y-8 shadow-2xl relative overflow-hidden group">
         
-        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-500 via-purple-500 to-red-500" />
+        {/* Animated Gradient Border */}
+        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-red-600 via-amber-500 to-red-600 animate-pulse" />
 
         <div className="mb-8">
-          <div className="w-20 h-20 bg-slate-950 rounded-full flex items-center justify-center mx-auto mb-6 border-4 border-slate-800 shadow-xl">
-            <Database size={40} className={`text-slate-200 ${isLoading ? 'animate-pulse' : ''}`} />
+          <div className="w-24 h-24 bg-slate-950 rounded-full flex items-center justify-center mx-auto mb-6 border-4 border-slate-800 shadow-xl group-hover:border-red-900/50 transition-colors">
+            {isDone ? (
+                <CheckCircle2 size={48} className="text-emerald-500" />
+            ) : isLoading ? (
+                <Loader2 size={40} className="text-amber-500 animate-spin" />
+            ) : (
+                <Database size={40} className="text-slate-200" />
+            )}
           </div>
-          <h2 className="text-3xl font-serif text-white mb-2">Demo Database Beheer</h2>
-          <p className="text-slate-400">
-            Beheer de testdata in uw lokale omgeving.
+          <h2 className="text-4xl font-serif text-white mb-3">Demo Environment</h2>
+          <p className="text-slate-400 max-w-md mx-auto leading-relaxed">
+            Met één klik wordt het volledige systeem gewist en opnieuw opgebouwd met realistische data.
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          
-          {/* Option 1: Incremental Add */}
-          <div className="p-6 bg-slate-950 rounded-xl border border-slate-800 hover:border-emerald-500/50 transition-colors group">
-             <div className="flex justify-center mb-4 text-emerald-500 group-hover:scale-110 transition-transform">
-               <Plus size={32} />
-             </div>
-             <h3 className="text-xl font-bold text-white mb-2">Data Toevoegen</h3>
-             <p className="text-xs text-slate-500 mb-6 min-h-[40px]">
-               Genereer 10 extra reserveringen bovenop de huidige data.
-             </p>
-             <Button 
-               onClick={handleAddData} 
-               disabled={isLoading}
-               className="w-full bg-slate-800 hover:bg-slate-700 border-slate-700"
-             >
-               {isLoading ? 'Bezig...' : '+10 Boekingen'}
-             </Button>
-          </div>
+        {/* Status Bar */}
+        {isLoading && (
+            <div className="w-full max-w-xs mx-auto mb-6">
+                <div className="flex justify-between text-xs text-slate-400 mb-2 font-mono">
+                    <span>{statusMsg}</span>
+                    <span>{progress}%</span>
+                </div>
+                <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                    <div 
+                        className="h-full bg-amber-500 transition-all duration-300 ease-out" 
+                        style={{ width: `${progress}%` }}
+                    />
+                </div>
+            </div>
+        )}
 
-          {/* Option 2: Full Reset */}
-          <div className="p-6 bg-red-950/10 rounded-xl border border-red-900/30 hover:border-red-500/50 transition-colors group">
-             <div className="flex justify-center mb-4 text-red-500 group-hover:scale-110 transition-transform">
-               <RefreshCw size={32} />
+        <div className="p-6 bg-red-950/10 rounded-xl border border-red-900/30">
+             <div className="flex justify-center mb-4 text-red-500">
+               <AlertTriangle size={32} />
              </div>
-             <h3 className="text-xl font-bold text-white mb-2">Harde Reset</h3>
-             <p className="text-xs text-slate-500 mb-6 min-h-[40px]">
-               Wis alles en herstel de database naar de beginstaat. 
+             <h3 className="text-xl font-bold text-white mb-2">Universe Generator</h3>
+             <p className="text-xs text-slate-500 mb-6">
+               Genereert: 200+ Boekingen, 50+ Klanten, Volledige Agenda (-3m/+6m), Vouchers, Taken, Wachtlijsten.
              </p>
+             
              <Button 
-               onClick={handleFullReset} 
-               disabled={isLoading}
-               className="w-full bg-red-900/50 hover:bg-red-900 text-red-200 border-red-800/50"
+               onClick={() => setShowConfirm(true)} 
+               disabled={isLoading || isDone}
+               className="w-full h-14 text-lg bg-red-600 hover:bg-red-700 text-white border-none shadow-[0_0_20px_rgba(220,38,38,0.4)]"
              >
-               {isLoading ? 'Resetten...' : 'Volledige Reset'}
+               {isDone ? 'Voltooid!' : isLoading ? 'Genereren...' : 'INITIALISEER DEMO OMGEVING'}
              </Button>
-          </div>
-
         </div>
 
-        <div className="flex items-center justify-center space-x-2 text-[10px] text-slate-600 bg-black/20 p-2 rounded-lg">
-          <AlertTriangle size={12} />
-          <span>Wijzigingen zijn alleen lokaal in uw browser (localStorage).</span>
-        </div>
+        <p className="text-[10px] text-slate-600">
+          Alle wijzigingen zijn lokaal in uw browser (localStorage).
+        </p>
 
       </Card>
+
+      <DestructiveActionModal
+        isOpen={showConfirm}
+        onClose={() => setShowConfirm(false)}
+        onConfirm={handleFullReset}
+        title="Weet je het zeker?"
+        description={
+            <div className="space-y-4">
+                <p>Dit proces zal <strong>alle huidige data verwijderen</strong> (Boekingen, Klanten, Instellingen) en vervangen door een demo dataset.</p>
+                <p>Dit kan niet ongedaan worden gemaakt.</p>
+            </div>
+        }
+        verificationText="DEMO"
+        confirmButtonText="Start Generatie"
+      />
     </div>
   );
 };

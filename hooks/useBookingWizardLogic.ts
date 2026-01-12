@@ -72,13 +72,13 @@ export const useBookingWizardLogic = () => {
   
   // Real-time Calculation State
   const [pricing, setPricing] = useState<any>(null);
-  const [financials, setFinancials] = useState<any>({ subtotal: 0, amountDue: 0 });
+  const [financials, setFinancials] = useState<any>({ subtotal: 0, amountDue: 0, items: [] });
   const [eventData, setEventData] = useState<{ event: EventDate; show: ShowDefinition } | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState(false);
   
   // Waitlist Logic
   const [isWaitlistMode, setIsWaitlistMode] = useState(false);
-  const [isWaitlistFull, setIsWaitlistFull] = useState(false); // New state to block if waitlist closed
+  const [isWaitlistFull, setIsWaitlistFull] = useState(false); 
 
   // --- Effects ---
 
@@ -99,30 +99,29 @@ export const useBookingWizardLogic = () => {
     if (event && show) {
       setEventData({ event, show });
       
-      // 24H Safety Check (Stop direct links to today's date)
+      // 24H Safety Check
       const now = new Date();
       const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-      const eventDate = new Date(event.date);
-      // We use string comparison for date part safety, but here full timestamp check is fine as event.date is YYYY-MM-DD
-      // Adding time to eventDate to make it end of day? No, safer to just compare string cutoff
       const cutoffStr = cutoff.toISOString().split('T')[0];
       
       if (wizardData.date < cutoffStr) {
          setSubmitError("Online reserveren voor deze datum is gesloten. Neem telefonisch contact op.");
-         setIsWaitlistFull(true); // Effectively blocks the UI
+         setIsWaitlistFull(true); 
          return; 
       }
 
       // Pricing
       const priceConfig = getEffectivePricing(event, show);
       setPricing(priceConfig);
+      
+      // Only calculate totals if NOT in waitlist mode (efficiency)
+      // But we calculate anyway to prevent null reference errors, though it won't be used in Waitlist
       const totals = calculateBookingTotals(wizardData, priceConfig);
       setFinancials(totals);
 
       // Check Status via Smart Logic
       const wlCount = waitlist.filter(w => w.date === wizardData.date && w.status === 'PENDING').length;
       
-      // Use the helper to be consistent with calendar view
       const calculatedStatus = calculateEventStatus(
           event.bookedCount || 0,
           event.capacity || CAPACITY_TARGET,
@@ -130,14 +129,11 @@ export const useBookingWizardLogic = () => {
           event.availability
       );
 
-      // If Status is WAITLIST, enable waitlist mode.
-      // If Status is CLOSED, block (isWaitlistFull)
-      
       if (calculatedStatus === 'WAITLIST') {
           setIsWaitlistMode(true);
           setIsWaitlistFull(false);
       } else if (calculatedStatus === 'CLOSED') {
-          setIsWaitlistMode(true); // Technically in waitlist logic area but full
+          setIsWaitlistMode(true);
           setIsWaitlistFull(true);
       } else {
           setIsWaitlistMode(false);
@@ -182,13 +178,6 @@ export const useBookingWizardLogic = () => {
 
       if (!c.zip) errors.zip = "Postcode is verplicht.";
       if (!c.houseNumber) errors.houseNumber = "Huisnummer is verplicht.";
-
-      if (wizardData.useBillingAddress) {
-        if (!c.billingAddress?.street) errors['billingAddress.street'] = "Straat (factuur) is verplicht.";
-        if (!c.billingAddress?.houseNumber) errors['billingAddress.houseNumber'] = "Huisnummer (factuur) is verplicht.";
-        if (!c.billingAddress?.zip) errors['billingAddress.zip'] = "Postcode (factuur) is verplicht.";
-        if (!c.billingAddress?.city) errors['billingAddress.city'] = "Stad (factuur) is verplicht.";
-      }
     }
 
     return errors;
@@ -201,7 +190,6 @@ export const useBookingWizardLogic = () => {
   // --- Logic Helpers ---
 
   const canProceed = () => {
-    // Block if waitlist full (shouldn't happen if UI behaves, but safety check)
     if (isWaitlistFull) return false;
 
     switch (step) {
@@ -220,7 +208,7 @@ export const useBookingWizardLogic = () => {
       return;
     }
     
-    // WAITLIST FLOW: Skip Package (2), Addons (3), Merch (4) -> Go to Details (5)
+    // WAITLIST FLOW: Skip Package (2), Addons (3), Merch (4) -> Go directly to Details (5)
     if (isWaitlistMode && step === 1) {
       setStep(5);
       return;
@@ -298,12 +286,12 @@ export const useBookingWizardLogic = () => {
 
     // --- ATOMIC CAPACITY CHECK (RACE CONDITION PREVENTION) ---
     // Only strictly enforce this for regular bookings, not waitlist entries.
+    // WAITLIST LITE MODE: Bypass check entirely.
     if (!isWaitlistMode) {
       try {
         const freshEvents = calendarRepo.getAll();
         const targetEvent = freshEvents.find(e => e.date === wizardData.date);
         
-        // If event disappeared or is strictly closed
         if (!targetEvent || targetEvent.bookingEnabled === false) {
            throw new Error("De status van dit event is gewijzigd. Probeer het opnieuw.");
         }
@@ -316,7 +304,7 @@ export const useBookingWizardLogic = () => {
                r.status !== 'CANCELLED' && 
                r.status !== 'ARCHIVED' && 
                r.status !== 'NOSHOW' && 
-               r.status !== 'WAITLIST' // Waitlist doesn't count towards capacity
+               r.status !== 'WAITLIST'
              )
              .reduce((sum, r) => sum + r.partySize, 0);
            
@@ -364,7 +352,6 @@ export const useBookingWizardLogic = () => {
           notificationsRepo.createFromEvent('NEW_WAITLIST', newEntry);
 
           resetWizard();
-          // Pass a flag to confirmation screen to show waitlist message
           navigate('/book/confirmation', { state: { reservation: null, isWaitlist: true, waitlistEntry: newEntry } });
           return;
         }
@@ -435,7 +422,7 @@ export const useBookingWizardLogic = () => {
       eventData,
       duplicateWarning,
       isWaitlistMode, 
-      isWaitlistFull, // New prop to block UI if needed
+      isWaitlistFull, 
       capacityTarget: CAPACITY_TARGET,
       addonThreshold: ADDON_THRESHOLD
     },

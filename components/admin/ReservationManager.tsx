@@ -6,10 +6,10 @@ import {
   Clock, AlertCircle, Calendar, User, Users, DollarSign, 
   Edit3, Utensils, PartyPopper, Star, Tag, 
   Trash2, Phone, Mail, MoreHorizontal, LayoutGrid, List, PieChart,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, X, BarChart3
 } from 'lucide-react';
 import { Button, Card, Badge, ResponsiveDrawer, Input } from '../UI';
-import { Reservation, BookingStatus, AdminPriceOverride } from '../../types';
+import { Reservation, BookingStatus, AdminPriceOverride, CalendarEvent } from '../../types';
 import { bookingRepo, tasksRepo, saveData, STORAGE_KEYS, calendarRepo, showRepo } from '../../utils/storage';
 import { undoManager } from '../../utils/undoManager';
 import { logAuditAction } from '../../utils/auditLogger';
@@ -105,14 +105,16 @@ const ReservationCard: React.FC<{ reservation: Reservation; onClick: () => void 
 };
 
 export const ReservationManager = () => {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [reservations, setReservations] = useState<Reservation[]>([]);
+  const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   // Workflow State
   const [activeTab, setActiveTab] = useState<ViewTab>('OPERATIONS');
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedDateFilter, setSelectedDateFilter] = useState<string>('');
   
   // Pagination State (Grid View Only)
   const [currentPage, setCurrentPage] = useState(1);
@@ -136,11 +138,19 @@ export const ReservationManager = () => {
         let data = bookingRepo.getAll(true);
         // Deep Link Check
         const openId = searchParams.get('open');
+        const dateQuery = searchParams.get('date');
+        
         if (openId && !selectedReservation) {
             const match = data.find(r => r.id === openId);
             if (match) setSelectedReservation(match);
         }
+        
+        if (dateQuery) {
+            setSelectedDateFilter(dateQuery);
+        }
+
         setReservations(data);
+        setAllEvents(calendarRepo.getAll());
     };
     load();
     window.addEventListener('storage-update', load);
@@ -160,7 +170,7 @@ export const ReservationManager = () => {
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeTab, quickFilter, searchTerm]);
+  }, [activeTab, quickFilter, searchTerm, selectedDateFilter]);
 
   // --- FILTER LOGIC ---
   const filteredData = useMemo<Reservation[]>(() => {
@@ -171,11 +181,21 @@ export const ReservationManager = () => {
     tomorrow.setDate(tomorrow.getDate() + 1);
     const tomorrowStr = tomorrow.toISOString().split('T')[0];
 
-    // 1. Tab Filtering
+    // 1. Tab & Date Filtering
     let result = reservations.filter(r => {
+      
+      // If Date Filter is set, it overrides tabs
+      if (selectedDateFilter) {
+          if (r.date !== selectedDateFilter) return false;
+          // In specific date view, we show EVERYTHING for that date except deleted/cancelled/archived unless explicitly asked?
+          // Let's hide CANCELLED/ARCHIVED by default unless searched for
+          if (r.status === 'CANCELLED' || r.status === 'ARCHIVED') return false; 
+          return true;
+      }
+
       // Archive is special: Cancelled OR Past dates (completed)
       if (activeTab === 'ARCHIVE') {
-        return r.status === 'ARCHIVED'; // Strict check for now, can be expanded to old dates if logic changes
+        return r.status === 'ARCHIVED'; 
       }
 
       // Base exclusions for active tabs
@@ -219,7 +239,39 @@ export const ReservationManager = () => {
 
     // 4. Sort
     return result.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [reservations, activeTab, quickFilter, searchTerm]);
+  }, [reservations, activeTab, quickFilter, searchTerm, selectedDateFilter]);
+
+  // --- CAPACITY STATS FOR SELECTED DATE ---
+  const dateCapacityStats = useMemo(() => {
+      if (!selectedDateFilter) return null;
+      
+      const event = allEvents.find(e => e.date === selectedDateFilter && e.type === 'SHOW');
+      if (!event) return null;
+
+      // Calculate strictly from reservations
+      const relevant = reservations.filter(r => 
+          r.date === selectedDateFilter &&
+          r.status !== 'CANCELLED' && 
+          r.status !== 'ARCHIVED' && 
+          r.status !== 'NOSHOW' &&
+          r.status !== 'WAITLIST'
+      );
+
+      const activePax = relevant.filter(r => r.status === 'CONFIRMED' || r.status === 'ARRIVED' || r.status === 'OPTION').reduce((s,r) => s + r.partySize, 0);
+      const pendingPax = relevant.filter(r => r.status === 'REQUEST').reduce((s,r) => s + r.partySize, 0);
+      
+      const totalBooked = activePax + pendingPax;
+      const capacity = (event as any).capacity || 230;
+      const percentage = Math.min(100, (totalBooked / capacity) * 100);
+
+      return {
+          capacity,
+          totalBooked,
+          activePax,
+          pendingPax,
+          percentage
+      };
+  }, [selectedDateFilter, reservations, allEvents]);
 
   // --- PAGINATION LOGIC (Grid Only) ---
   const paginatedData = useMemo(() => {
@@ -338,36 +390,89 @@ export const ReservationManager = () => {
           </div>
         </div>
 
-        {/* Workflow Tabs */}
-        <div className="flex border-b border-slate-800 space-x-1">
-           {[
-             { id: 'OPERATIONS', label: 'Vandaag & Morgen', icon: Clock },
-             { id: 'ATTENTION', label: 'Actie Vereist', icon: AlertCircle },
-             { id: 'PLANNING', label: 'Toekomst', icon: Calendar },
-             { id: 'ARCHIVE', label: 'Archief', icon: CheckCircle2 },
-           ].map(tab => (
-             <button
-               key={tab.id}
-               onClick={() => setActiveTab(tab.id as ViewTab)}
-               className={`
-                 flex items-center px-6 py-3 border-b-2 font-bold text-sm transition-colors
-                 ${activeTab === tab.id 
-                   ? 'border-amber-500 text-white' 
-                   : 'border-transparent text-slate-500 hover:text-slate-300'}
-               `}
-             >
-               <tab.icon size={16} className="mr-2"/> {tab.label}
-             </button>
-           ))}
+        {/* Workflow Tabs & Date Picker */}
+        <div className="flex flex-col md:flex-row md:items-center border-b border-slate-800 gap-4 md:gap-0">
+           <div className="flex space-x-1 flex-grow overflow-x-auto">
+             {[
+               { id: 'OPERATIONS', label: 'Vandaag & Morgen', icon: Clock },
+               { id: 'ATTENTION', label: 'Actie Vereist', icon: AlertCircle },
+               { id: 'PLANNING', label: 'Toekomst', icon: Calendar },
+               { id: 'ARCHIVE', label: 'Archief', icon: CheckCircle2 },
+             ].map(tab => (
+               <button
+                 key={tab.id}
+                 onClick={() => { setActiveTab(tab.id as ViewTab); setSelectedDateFilter(''); }}
+                 className={`
+                   flex items-center px-6 py-3 border-b-2 font-bold text-sm transition-colors whitespace-nowrap
+                   ${activeTab === tab.id && !selectedDateFilter 
+                     ? 'border-amber-500 text-white' 
+                     : 'border-transparent text-slate-500 hover:text-slate-300'}
+                 `}
+               >
+                 <tab.icon size={16} className="mr-2"/> {tab.label}
+               </button>
+             ))}
+           </div>
+
+           {/* Date Filter */}
+           <div className="flex items-center space-x-2 pb-2 md:pb-0 md:border-b-2 md:border-transparent">
+              <div className={`flex items-center bg-slate-900 border ${selectedDateFilter ? 'border-amber-500' : 'border-slate-700'} rounded-lg px-2 py-1`}>
+                 <Calendar size={16} className={selectedDateFilter ? 'text-amber-500' : 'text-slate-500'} />
+                 <input 
+                   type="date"
+                   value={selectedDateFilter}
+                   onChange={(e) => setSelectedDateFilter(e.target.value)}
+                   className="bg-transparent border-none text-xs text-white focus:ring-0 w-28 ml-2"
+                 />
+                 {selectedDateFilter && (
+                   <button onClick={() => setSelectedDateFilter('')} className="ml-2 text-slate-500 hover:text-white"><X size={14}/></button>
+                 )}
+              </div>
+           </div>
         </div>
       </div>
+
+      {/* CAPACITY BAR (If Date Selected) */}
+      {selectedDateFilter && dateCapacityStats && (
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 animate-in fade-in slide-in-from-top-2">
+             <div className="flex justify-between items-end mb-2">
+                <div>
+                   <h3 className="text-white font-bold text-sm flex items-center">
+                     <BarChart3 size={16} className="mr-2 text-amber-500"/>
+                     Capaciteit {new Date(selectedDateFilter).toLocaleDateString()}
+                   </h3>
+                   <div className="flex space-x-3 text-xs mt-1 text-slate-400">
+                      <span>Actief: <strong className="text-white">{dateCapacityStats.activePax}</strong></span>
+                      <span>Pending: <strong className="text-blue-400">{dateCapacityStats.pendingPax}</strong></span>
+                   </div>
+                </div>
+                <div className="text-right">
+                   <span className={`text-xl font-black ${dateCapacityStats.percentage > 100 ? 'text-red-500' : dateCapacityStats.percentage > 90 ? 'text-amber-500' : 'text-emerald-500'}`}>
+                     {dateCapacityStats.totalBooked} <span className="text-sm text-slate-500 font-normal">/ {dateCapacityStats.capacity}</span>
+                   </span>
+                </div>
+             </div>
+             <div className="w-full h-3 bg-slate-950 rounded-full overflow-hidden border border-slate-800 flex">
+                {/* Active Segment */}
+                <div 
+                  className="h-full bg-emerald-600" 
+                  style={{ width: `${Math.min(100, (dateCapacityStats.activePax / dateCapacityStats.capacity) * 100)}%` }}
+                />
+                {/* Pending Segment */}
+                <div 
+                  className="h-full bg-blue-600/60" 
+                  style={{ width: `${Math.min(100, (dateCapacityStats.pendingPax / dateCapacityStats.capacity) * 100)}%` }}
+                />
+             </div>
+          </div>
+      )}
 
       {/* SEARCH BAR (Contextual) */}
       <Card className="p-3 bg-slate-900/50 border-slate-800 flex items-center">
          <Search className="text-slate-500 ml-2" size={18}/>
          <input 
            className="bg-transparent border-none focus:ring-0 text-white w-full ml-3 placeholder:text-slate-600"
-           placeholder={`Zoek in ${activeTab.toLowerCase()}...`}
+           placeholder={`Zoek in ${selectedDateFilter ? 'geselecteerde datum' : activeTab.toLowerCase()}...`}
            value={searchTerm}
            onChange={e => setSearchTerm(e.target.value)}
          />
@@ -377,7 +482,7 @@ export const ReservationManager = () => {
       <div className="flex-grow pb-20">
          
          {/* CARD VIEW (For Operations) */}
-         {activeTab === 'OPERATIONS' && (
+         {activeTab === 'OPERATIONS' && !selectedDateFilter && (
            <div className="flex flex-col space-y-4 h-full">
              
              {/* Cards Grid */}
@@ -424,7 +529,7 @@ export const ReservationManager = () => {
          )}
 
          {/* TABLE VIEW (For Lists) - Now Virtualized via ResponsiveTable */}
-         {activeTab !== 'OPERATIONS' && (
+         {(activeTab !== 'OPERATIONS' || selectedDateFilter) && (
            <div className="animate-in fade-in h-full">
              <ResponsiveTable<Reservation>
                data={filteredData}

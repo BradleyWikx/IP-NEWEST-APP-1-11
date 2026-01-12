@@ -2,8 +2,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Plus, Trash2, ShoppingBag, Utensils, 
-  PartyPopper, Search, Edit3, 
-  Copy, X, Check, Building2, MapPin, Phone, Mail, User, AlertCircle
+  PartyPopper, Search, Edit3, Minus,
+  Copy, X, Check, Building2, MapPin, Phone, Mail, User, AlertCircle, Wine
 } from 'lucide-react';
 import { Button, Input, Card } from '../UI';
 import { Reservation, ShowDefinition, EventDate, BookingStatus, Customer } from '../../types';
@@ -11,6 +11,9 @@ import { bookingRepo, customerRepo } from '../../utils/storage';
 import { calculateBookingTotals, getEffectivePricing } from '../../utils/pricing';
 import { MerchandisePicker, MerchandiseSummaryList } from '../MerchandisePicker';
 import { logAuditAction } from '../../utils/auditLogger';
+import { MOCK_ADDONS } from '../../mock/data';
+
+const DIETARY_OPTIONS = ['Glutenvrij', 'Lactosevrij', 'Notenallergie', 'Vegetarisch', 'Veganistisch', 'Geen Vis', 'Halal'];
 
 interface BulkEditorProps {
   event: EventDate;
@@ -34,10 +37,13 @@ interface DraftReservation {
   // Booking Data
   partySize: number;
   packageType: 'standard' | 'premium';
-  dietary: string;
+  dietary: string; // Human readable summary
+  structuredDietary: Record<string, number>; // Smart counters
+  dietaryComments: string; // "Overig" field
   isCelebrating: boolean;
   celebrationText: string;
   merchandise: { id: string; quantity: number }[];
+  addons: { id: string; quantity: number }[];
   customerId?: string; 
 }
 
@@ -71,15 +77,70 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
         partySize: 2,
         packageType: 'standard',
         dietary: '',
+        structuredDietary: {},
+        dietaryComments: '',
         isCelebrating: false,
         celebrationText: '',
         merchandise: [],
+        addons: []
       }
     ]);
   };
 
   const updateDraft = (id: string, field: keyof DraftReservation, value: any) => {
     setDrafts(prev => prev.map(d => d.tempId === id ? { ...d, [field]: value } : d));
+  };
+
+  // Logic to sync structured counters to readable string
+  const updateDietary = (draftId: string, type: string, delta: number) => {
+    setDrafts(prev => prev.map(d => {
+      if (d.tempId !== draftId) return d;
+
+      const currentCounts = { ...d.structuredDietary };
+      const currentQty = currentCounts[type] || 0;
+      const newQty = Math.max(0, currentQty + delta);
+      
+      if (newQty === 0) delete currentCounts[type];
+      else currentCounts[type] = newQty;
+
+      // Rebuild string
+      const parts = Object.entries(currentCounts).map(([k, v]) => `${v}x ${k}`);
+      if (d.dietaryComments) parts.push(d.dietaryComments);
+      
+      return {
+        ...d,
+        structuredDietary: currentCounts,
+        dietary: parts.join(', ')
+      };
+    }));
+  };
+
+  const updateDietaryComments = (draftId: string, comment: string) => {
+    setDrafts(prev => prev.map(d => {
+        if (d.tempId !== draftId) return d;
+        
+        // Rebuild string
+        const parts = Object.entries(d.structuredDietary).map(([k, v]) => `${v}x ${k}`);
+        if (comment) parts.push(comment);
+
+        return {
+            ...d,
+            dietaryComments: comment,
+            dietary: parts.join(', ')
+        };
+    }));
+  };
+
+  const toggleAddon = (draftId: string, addonId: string, enabled: boolean) => {
+    setDrafts(prev => prev.map(d => {
+        if (d.tempId !== draftId) return d;
+        
+        let newAddons = d.addons.filter(a => a.id !== addonId);
+        if (enabled) {
+            newAddons.push({ id: addonId, quantity: d.partySize });
+        }
+        return { ...d, addons: newAddons };
+    }));
   };
 
   const duplicateDraft = (draft: DraftReservation) => {
@@ -111,7 +172,6 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
         c.email.toLowerCase().includes(lowerQ)
       ).slice(0, 5); 
       
-      // FIX: Always show suggestions dropdown if query > 1, allowing creation of new users even if no match
       setSuggestions({ rowId, matches });
     } else {
       setSuggestions(null);
@@ -152,7 +212,7 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
     const totals = calculateBookingTotals({
         totalGuests: draft.partySize,
         packageType: draft.packageType,
-        addons: [],
+        addons: draft.addons, // Include addons in calculation
         merchandise: draft.merchandise
     }, pricing);
     return totals.amountDue;
@@ -197,7 +257,7 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
       const totals = calculateBookingTotals({
         totalGuests: draft.partySize,
         packageType: draft.packageType,
-        addons: [],
+        addons: draft.addons,
         merchandise: draft.merchandise,
         date: event.date,
         showId: show.id
@@ -213,7 +273,7 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
         status: BookingStatus.CONFIRMED,
         partySize: draft.partySize,
         packageType: draft.packageType,
-        addons: [],
+        addons: draft.addons,
         merchandise: draft.merchandise,
         financials: {
           total: totals.subtotal,
@@ -228,6 +288,8 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
         },
         notes: {
           dietary: draft.dietary,
+          structuredDietary: draft.structuredDietary, // Save smart counts
+          comments: draft.dietaryComments,
           isCelebrating: draft.isCelebrating,
           celebrationText: draft.celebrationText,
           internal: 'Bulk Entry'
@@ -294,7 +356,7 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
           {/* Rows */}
           <div className="space-y-2">
             {drafts.map((draft, idx) => {
-              const hasExtras = draft.merchandise.length > 0 || draft.dietary || draft.isCelebrating;
+              const hasExtras = draft.merchandise.length > 0 || draft.dietary || draft.isCelebrating || draft.addons.length > 0;
               const isSuggesting = suggestions && suggestions.rowId === draft.tempId;
               
               return (
@@ -404,12 +466,13 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
                              : 'bg-black border-slate-700 text-slate-500 hover:text-slate-300 hover:border-slate-500'
                          }`}
                        >
-                         <div className="flex items-center space-x-2">
-                           {draft.merchandise.length > 0 && <span className="flex items-center"><ShoppingBag size={12} className="mr-1"/> {draft.merchandise.reduce((s,i)=>s+i.quantity,0)}</span>}
-                           {draft.dietary && <span className="flex items-center"><Utensils size={12} className="mr-1"/> Dieet</span>}
+                         <div className="flex items-center space-x-2 truncate">
+                           {draft.merchandise.length > 0 && <span className="flex items-center mr-2"><ShoppingBag size={12} className="mr-1"/> {draft.merchandise.reduce((s,i)=>s+i.quantity,0)}</span>}
+                           {draft.addons.length > 0 && <span className="flex items-center mr-2"><Wine size={12} className="mr-1"/> {draft.addons.length}</span>}
+                           {draft.dietary && <span className="flex items-center truncate"><Utensils size={12} className="mr-1"/> {draft.dietary}</span>}
                            {!hasExtras && <span>Extra's & Dieet</span>}
                          </div>
-                         <Edit3 size={12} className="opacity-50" />
+                         <Edit3 size={12} className="opacity-50 shrink-0" />
                        </button>
                     </div>
 
@@ -437,14 +500,14 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
         </div>
       </div>
 
-      {/* 3. MODALS (Same as before but activeDraft check safety) */}
+      {/* 3. MODALS */}
       
       {activeModal?.type === 'EXTRAS' && activeDraft && (
         <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-30 flex items-center justify-center p-4">
-           <Card className="w-full max-w-5xl bg-slate-900 border-slate-800 shadow-2xl relative animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+           <Card className="w-full max-w-6xl bg-slate-900 border-slate-800 shadow-2xl relative animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
               <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-950 rounded-t-xl">
                  <div>
-                   <h3 className="text-xl font-bold text-white">Details & Merchandise</h3>
+                   <h3 className="text-xl font-bold text-white">Details & Extra's</h3>
                    <p className="text-slate-500 text-sm">Voor: {activeDraft.companyName || `${activeDraft.firstName} ${activeDraft.lastName}`}</p>
                  </div>
                  <button onClick={() => setActiveModal(null)} className="p-2 bg-slate-800 rounded-full hover:bg-slate-700 text-slate-400 hover:text-white transition-colors">
@@ -453,19 +516,62 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
               </div>
               
               <div className="flex-grow overflow-hidden grid grid-cols-1 lg:grid-cols-2">
-                 {/* Left: Notes & Dietary */}
+                 {/* Left: Dietary & Notes */}
                  <div className="p-6 space-y-6 border-r border-slate-800 overflow-y-auto custom-scrollbar">
+                    
+                    {/* Add-ons */}
+                    <div className="space-y-3">
+                       <label className="text-xs font-bold text-emerald-500 uppercase tracking-widest mb-2 flex items-center"><Wine size={14} className="mr-2"/> Arrangement Add-ons</label>
+                       {MOCK_ADDONS.map(addon => {
+                         const isChecked = activeDraft.addons.some(a => a.id === addon.id);
+                         return (
+                           <div key={addon.id} className={`flex items-center justify-between p-3 rounded-xl border transition-all ${isChecked ? 'bg-emerald-900/10 border-emerald-500/50' : 'bg-slate-950 border-slate-800'}`}>
+                              <div>
+                                <span className={`text-sm font-bold ${isChecked ? 'text-white' : 'text-slate-400'}`}>{addon.name}</span>
+                                <span className="text-xs text-slate-500 ml-2">€{addon.price} p.p.</span>
+                              </div>
+                              <label className="relative inline-flex items-center cursor-pointer">
+                                <input 
+                                  type="checkbox" 
+                                  className="sr-only peer" 
+                                  checked={isChecked}
+                                  onChange={(e) => toggleAddon(activeDraft.tempId, addon.id, e.target.checked)}
+                                />
+                                <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                              </label>
+                           </div>
+                         );
+                       })}
+                    </div>
+
+                    {/* Smart Dietary */}
                     <div>
-                      <label className="text-xs font-bold text-amber-500 uppercase tracking-widest mb-2 flex items-center"><Utensils size={14} className="mr-2"/> Dieetwensen</label>
+                      <label className="text-xs font-bold text-amber-500 uppercase tracking-widest mb-3 flex items-center"><Utensils size={14} className="mr-2"/> Dieetwensen</label>
+                      <div className="grid grid-cols-2 gap-3 mb-4">
+                        {DIETARY_OPTIONS.map(opt => {
+                          const count = activeDraft.structuredDietary[opt] || 0;
+                          return (
+                            <div key={opt} className={`flex items-center justify-between p-2 rounded-lg border ${count > 0 ? 'bg-amber-900/10 border-amber-500/50' : 'bg-black/30 border-slate-800'}`}>
+                               <span className={`text-xs ${count > 0 ? 'text-white font-bold' : 'text-slate-400'}`}>{opt}</span>
+                               <div className="flex items-center bg-slate-900 rounded p-0.5">
+                                  <button onClick={() => updateDietary(activeDraft.tempId, opt, -1)} className="p-1 text-slate-500 hover:text-white disabled:opacity-30" disabled={count === 0}><Minus size={12}/></button>
+                                  <span className="w-5 text-center text-xs font-bold text-white">{count}</span>
+                                  <button onClick={() => updateDietary(activeDraft.tempId, opt, 1)} className="p-1 text-slate-500 hover:text-amber-500"><Plus size={12}/></button>
+                               </div>
+                            </div>
+                          );
+                        })}
+                      </div>
                       <textarea 
-                        className="w-full h-32 bg-black/40 border border-slate-700 rounded-xl p-4 text-white text-sm focus:border-amber-500 outline-none resize-none placeholder:text-slate-600"
-                        placeholder="Bijv. 1x Notenallergie, 2x Vegetarisch..."
-                        value={activeDraft.dietary}
-                        onChange={(e) => updateDraft(activeDraft.tempId, 'dietary', e.target.value)}
+                        className="w-full h-20 bg-black/40 border border-slate-700 rounded-xl p-3 text-white text-sm focus:border-amber-500 outline-none resize-none placeholder:text-slate-600"
+                        placeholder="Overige opmerkingen..."
+                        value={activeDraft.dietaryComments}
+                        onChange={(e) => updateDietaryComments(activeDraft.tempId, e.target.value)}
                       />
                     </div>
 
-                    <div className="p-5 bg-slate-950 border border-slate-800 rounded-xl space-y-4">
+                    {/* Celebration */}
+                    <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-3">
                        <label className="flex items-center space-x-3 cursor-pointer">
                          <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${activeDraft.isCelebrating ? 'bg-purple-500 border-purple-500' : 'border-slate-600 bg-slate-900'}`}>
                             {activeDraft.isCelebrating && <Check size={14} className="text-white"/>}

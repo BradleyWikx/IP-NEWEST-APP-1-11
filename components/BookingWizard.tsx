@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Users, ShoppingBag, CheckCircle2, 
   ArrowRight, Loader2, Coffee, Wine,
-  AlertTriangle, ChevronUp, ChevronDown, Info, PartyPopper, Star, Clock, Minus, Plus, Lock
+  AlertTriangle, ChevronUp, ChevronDown, Info, PartyPopper, Star, Clock, Minus, Plus, Lock, Receipt, Tag,
+  Utensils
 } from 'lucide-react';
 import { Stepper, Button, Card, Input } from './UI';
 import { MerchandisePicker, MerchandiseSummaryList } from './MerchandisePicker';
@@ -48,13 +49,6 @@ export const BookingWizard = () => {
 
   const { isSubmitting, submitError, canProceed } = status;
   const { getFieldError } = validation;
-
-  // BLOCK: Immediate check for CLOSED status via isWaitlistFull
-  useEffect(() => {
-    if (isWaitlistFull && step === 0) {
-       // Logic handled in render, but side effect could go here if needed
-    }
-  }, [isWaitlistFull, step]);
 
   // Helper to handle dietary count changes
   const handleDietaryChange = (type: string, delta: number) => {
@@ -198,7 +192,7 @@ export const BookingWizard = () => {
         );
 
       case 2: // PACKAGE
-        if (isWaitlistMode) return null; // Should be skipped by logic, but safe render
+        if (isWaitlistMode) return null; // Logic skips this step, but safe return
         return (
           <div className="space-y-6">
             <h2 className="text-3xl font-serif text-white">Kies uw arrangement</h2>
@@ -323,7 +317,6 @@ export const BookingWizard = () => {
 
             <Card className="p-6 md:p-8 bg-slate-900 border-slate-800 space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                {/* Inputs ... (Same as before) */}
                 <div className="md:col-span-1">
                   <label className="text-xs font-bold text-amber-500/80 uppercase tracking-widest font-serif mb-2 block">Aanhef</label>
                   <select 
@@ -367,7 +360,6 @@ export const BookingWizard = () => {
                   />
                 </div>
                 
-                {/* Phone with Country Code */}
                 <div className="md:col-span-2 space-y-2">
                   <label className="text-xs font-bold text-amber-500/80 uppercase tracking-widest font-serif">Telefoon *</label>
                   <div className="flex space-x-3">
@@ -464,7 +456,7 @@ export const BookingWizard = () => {
 
                   {wizardData.useBillingAddress && (
                     <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 space-y-4">
-                      {/* Billing fields ... same as before ... */}
+                      {/* Billing fields ... */}
                       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                         <div className="md:col-span-3">
                           <Input 
@@ -512,7 +504,6 @@ export const BookingWizard = () => {
           <div className="space-y-6">
             <h2 className="text-3xl font-serif text-white">Wensen & Opmerkingen</h2>
             <Card className="p-6 bg-slate-900 border-slate-800 space-y-6">
-              {/* Same as before... */}
               <div>
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4 block">Dieetwensen & Allergieën</label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -554,66 +545,50 @@ export const BookingWizard = () => {
           </div>
         );
 
-      case 7: // REVIEW
-        return (
-          <div className="space-y-6 animate-in fade-in">
-            <h2 className="text-3xl font-serif text-white">Controleer uw aanvraag</h2>
-            
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-2 space-y-6">
-                <Card className="p-6 bg-slate-900 border-slate-800 space-y-6">
-                   {isWaitlistMode && (
-                     <div className="p-4 bg-orange-900/20 border border-orange-500/50 rounded-xl flex items-center mb-4">
-                       <Info size={20} className="text-orange-500 mr-3" />
+      case 7: // REVIEW - Completely Overhauled
+        if (isWaitlistMode) {
+          return (
+            <div className="space-y-6 animate-in fade-in">
+              <h2 className="text-3xl font-serif text-white">Bevestig Inschrijving</h2>
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div className="lg:col-span-2">
+                  <Card className="p-6 bg-slate-900 border-slate-800 space-y-6 relative overflow-hidden">
+                     <div className="absolute top-0 right-0 p-4 opacity-10"><Clock size={100} className="text-orange-500" /></div>
+                     
+                     <div className="p-4 bg-orange-900/20 border border-orange-500/50 rounded-xl flex items-start space-x-3 mb-4 relative z-10">
+                       <Info size={20} className="text-orange-500 shrink-0 mt-0.5" />
                        <div className="text-orange-200 text-sm">
                          <strong>Wachtlijst Inschrijving</strong><br/>
-                         U schrijft zich in voor de wachtlijst. Als er plek vrijkomt, nemen we contact met u op.
+                         U schrijft zich in voor de wachtlijst. Dit is geen definitieve boeking en er zijn geen kosten aan verbonden. Als er plek vrijkomt, nemen we contact met u op.
                        </div>
                      </div>
-                   )}
 
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
-                     <div>
-                       <p className="text-xs text-slate-500 uppercase font-bold">Datum & Tijd</p>
-                       <p className="text-white font-bold text-lg">{new Date(wizardData.date).toLocaleDateString()}</p>
-                       <p className="text-slate-400">
-                         {(eventData?.event as any)?.times?.start || eventData?.event?.startTime || '19:30'} Aanvang
-                       </p>
-                     </div>
-                     <div>
-                       <p className="text-xs text-slate-500 uppercase font-bold">Details</p>
-                       {!isWaitlistMode && <p className="text-white font-bold text-lg capitalize">{wizardData.packageType}</p>}
-                       <p className="text-slate-400">{wizardData.totalGuests} Personen</p>
-                     </div>
-                     <div>
-                       <p className="text-xs text-slate-500 uppercase font-bold">Gegevens</p>
-                       <p className="text-white">{wizardData.customer.salutation} {wizardData.customer.firstName} {wizardData.customer.lastName}</p>
-                       <p className="text-slate-400">{wizardData.customer.email}</p>
-                       <p className="text-slate-400">{wizardData.customer.phoneCode} {wizardData.customer.phone}</p>
-                     </div>
-                     
-                     {/* Hide price for waitlist */}
-                     {!isWaitlistMode && (
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm relative z-10">
                        <div>
-                         <p className="text-xs text-slate-500 uppercase font-bold">Totaal (Indicatie)</p>
-                         <p className="text-emerald-500 font-bold text-lg">€{financials.amountDue.toFixed(2)}</p>
+                         <p className="text-xs text-slate-500 uppercase font-bold mb-1">Datum</p>
+                         <p className="text-white font-bold text-lg">{new Date(wizardData.date).toLocaleDateString()}</p>
                        </div>
-                     )}
-                   </div>
-
-                   {!isWaitlistMode && <MerchandiseSummaryList selections={wizardData.merchandise} />}
-                </Card>
-              </div>
-
-              <div className="space-y-6">
-                <div className="p-5 bg-slate-900 border border-slate-800 rounded-xl space-y-4">
-                  <h4 className="font-bold text-white flex items-center">
-                    <Info size={18} className="mr-2 text-blue-500" />
-                    Belangrijke Informatie
-                  </h4>
-                  
-                  <div className="space-y-3">
-                    {isWaitlistMode ? (
+                       <div>
+                         <p className="text-xs text-slate-500 uppercase font-bold mb-1">Aantal</p>
+                         <p className="text-white font-bold text-lg">{wizardData.totalGuests} Personen</p>
+                       </div>
+                       <div className="md:col-span-2 pt-4 border-t border-slate-800">
+                         <p className="text-xs text-slate-500 uppercase font-bold mb-1">Contactgegevens</p>
+                         <p className="text-white">{wizardData.customer.firstName} {wizardData.customer.lastName}</p>
+                         <p className="text-slate-400">{wizardData.customer.email}</p>
+                         <p className="text-slate-400">{wizardData.customer.phone}</p>
+                       </div>
+                     </div>
+                  </Card>
+                </div>
+                
+                <div className="space-y-6">
+                  <div className="p-5 bg-slate-900 border border-slate-800 rounded-xl space-y-4">
+                    <h4 className="font-bold text-white flex items-center">
+                      <Info size={18} className="mr-2 text-blue-500" />
+                      Proces
+                    </h4>
+                    <div className="space-y-3">
                       <div className="flex items-start space-x-3 text-sm text-slate-400">
                         <Clock size={16} className="mt-0.5 shrink-0 text-orange-500" />
                         <div>
@@ -623,7 +598,125 @@ export const BookingWizard = () => {
                           </p>
                         </div>
                       </div>
-                    ) : (
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        }
+
+        // STANDARD REVIEW (Detailed Invoice Style)
+        return (
+          <div className="space-y-6 animate-in fade-in">
+            <h2 className="text-3xl font-serif text-white">Controleer uw aanvraag</h2>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              {/* Left Column: Detailed Breakdown */}
+              <div className="lg:col-span-2 space-y-6">
+                <Card className="bg-slate-900 border-slate-800 overflow-hidden">
+                   <div className="p-6 border-b border-slate-800 bg-slate-950 flex justify-between items-center">
+                      <div>
+                        <h3 className="text-lg font-bold text-white mb-1">Reserveringsoverzicht</h3>
+                        <p className="text-xs text-slate-500">
+                          {new Date(wizardData.date).toLocaleDateString()} • {eventData?.show.name}
+                        </p>
+                      </div>
+                      <div className="text-right hidden sm:block">
+                        <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">Totaal</p>
+                        <p className="text-xl font-serif text-white">€{financials.amountDue.toFixed(2)}</p>
+                      </div>
+                   </div>
+
+                   <div className="p-0">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-slate-900/50 text-slate-500 text-[10px] uppercase tracking-widest font-bold border-b border-slate-800">
+                          <tr>
+                            <th className="px-6 py-3">Omschrijving</th>
+                            <th className="px-6 py-3 text-center">Aantal</th>
+                            <th className="px-6 py-3 text-right">Prijs p.s.</th>
+                            <th className="px-6 py-3 text-right">Totaal</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800">
+                          {financials.items.map((item: any) => (
+                            <tr key={item.id} className="hover:bg-slate-800/30 transition-colors">
+                              <td className="px-6 py-4">
+                                <span className="font-bold text-slate-200 block">{item.label}</span>
+                                <span className="text-[10px] text-slate-500 uppercase tracking-wider">{item.category}</span>
+                              </td>
+                              <td className="px-6 py-4 text-center text-slate-300">
+                                {item.quantity}
+                              </td>
+                              <td className="px-6 py-4 text-right text-slate-400 font-mono">
+                                €{Math.abs(item.unitPrice).toFixed(2)}
+                              </td>
+                              <td className={`px-6 py-4 text-right font-mono font-bold ${item.total < 0 ? 'text-emerald-500' : 'text-white'}`}>
+                                {item.total < 0 ? '-' : ''}€{Math.abs(item.total).toFixed(2)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot className="bg-slate-950/50 border-t border-slate-800">
+                          <tr>
+                            <td colSpan={3} className="px-6 py-4 text-right text-slate-400 font-bold">Subtotaal</td>
+                            <td className="px-6 py-4 text-right text-slate-300 font-mono">€{financials.subtotal.toFixed(2)}</td>
+                          </tr>
+                          {financials.discountAmount > 0 && (
+                            <tr>
+                              <td colSpan={3} className="px-6 py-2 text-right text-emerald-500 font-bold">Korting</td>
+                              <td className="px-6 py-2 text-right text-emerald-500 font-mono">-€{financials.discountAmount.toFixed(2)}</td>
+                            </tr>
+                          )}
+                          {financials.voucherApplied > 0 && (
+                            <tr>
+                              <td colSpan={3} className="px-6 py-2 text-right text-amber-500 font-bold">Voucher</td>
+                              <td className="px-6 py-2 text-right text-amber-500 font-mono">-€{financials.voucherApplied.toFixed(2)}</td>
+                            </tr>
+                          )}
+                          <tr className="bg-slate-900 border-t border-slate-800">
+                            <td colSpan={3} className="px-6 py-6 text-right text-white font-bold text-lg uppercase tracking-widest">Te Betalen</td>
+                            <td className="px-6 py-6 text-right text-white font-serif text-2xl font-bold">€{financials.amountDue.toFixed(2)}</td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                   </div>
+                </Card>
+
+                {/* Customer Data Review */}
+                <Card className="bg-slate-900 border-slate-800 p-6">
+                   <div className="flex justify-between items-center mb-4">
+                     <h3 className="font-bold text-white text-sm uppercase tracking-widest flex items-center">
+                       <Receipt size={16} className="mr-2 text-slate-500"/> Factuurgegevens
+                     </h3>
+                     <Button variant="ghost" onClick={() => setStep(5)} className="text-xs h-8">Wijzigen</Button>
+                   </div>
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm text-slate-400">
+                      <div>
+                        <p className="text-white font-bold">{wizardData.customer.companyName}</p>
+                        <p>{wizardData.customer.salutation} {wizardData.customer.firstName} {wizardData.customer.lastName}</p>
+                        <p>{wizardData.customer.street} {wizardData.customer.houseNumber}</p>
+                        <p>{wizardData.customer.zip} {wizardData.customer.city}</p>
+                        <p>{wizardData.customer.country}</p>
+                      </div>
+                      <div className="text-right md:text-left">
+                        <p>{wizardData.customer.email}</p>
+                        <p>{wizardData.customer.phoneCode} {wizardData.customer.phone}</p>
+                        {wizardData.notes.dietary && <p className="text-amber-500 mt-2 text-xs"><Utensils size={10} className="inline mr-1"/> {wizardData.notes.dietary}</p>}
+                      </div>
+                   </div>
+                </Card>
+              </div>
+
+              {/* Right Column: Info */}
+              <div className="space-y-6">
+                <div className="p-5 bg-slate-900 border border-slate-800 rounded-xl space-y-4">
+                  <h4 className="font-bold text-white flex items-center">
+                    <Info size={18} className="mr-2 text-blue-500" />
+                    Belangrijke Informatie
+                  </h4>
+                  
+                  <div className="space-y-3">
                       <div className="flex items-start space-x-3 text-sm text-slate-400">
                         <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-emerald-500" />
                         <div>
@@ -633,7 +726,15 @@ export const BookingWizard = () => {
                           </p>
                         </div>
                       </div>
-                    )}
+                      <div className="flex items-start space-x-3 text-sm text-slate-400">
+                        <Tag size={16} className="mt-0.5 shrink-0 text-blue-500" />
+                        <div>
+                          <p className="text-white font-bold mb-0.5">Betaling</p>
+                          <p className="text-xs leading-relaxed">
+                            U ontvangt na bevestiging een factuur. Deze dient uiterlijk 7 dagen voor aanvang voldaan te zijn.
+                          </p>
+                        </div>
+                      </div>
                   </div>
                 </div>
               </div>

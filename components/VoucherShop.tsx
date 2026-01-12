@@ -2,13 +2,15 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Gift, ShoppingBag, ArrowRight, CheckCircle2, Star, 
-  Sparkles, Heart, Mail, Printer, CreditCard, ChevronRight, User, FileText
+  Sparkles, Heart, Mail, Printer, CreditCard, ChevronRight, User, FileText,
+  MapPin, Phone, Truck, Box
 } from 'lucide-react';
 import { Button, Card, Input } from './UI';
 import { settingsRepo, voucherOrderRepo, notificationsRepo } from '../utils/storage';
 import { VoucherSaleConfig, VoucherOrder, VoucherOrderItem } from '../types';
 import { triggerEmail } from '../utils/emailEngine';
 import { VoucherCardPreview } from './VoucherCardPreview';
+import { calculateVoucherTotal, VOUCHER_SHIPPING_FEE } from '../utils/pricing';
 
 // --- Experience Card Component ---
 const ExperienceCard = ({ 
@@ -81,11 +83,17 @@ export const VoucherShop = () => {
   // Form State
   const [formData, setFormData] = useState({
     recipientName: '',
-    senderName: '',
     message: '',
-    deliveryMethod: 'DIRECT' as 'DIRECT' | 'SELF', // Direct email or Self print
-    senderEmail: '',
-    recipientEmail: ''
+    deliveryMethod: 'DIGITAL' as 'DIGITAL' | 'PICKUP' | 'POST',
+    // Detailed Billing Info
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    street: '',
+    houseNumber: '',
+    zip: '',
+    city: ''
   });
 
   const [isProcessing, setIsProcessing] = useState(false);
@@ -95,10 +103,22 @@ export const VoucherShop = () => {
   }, []);
 
   // Calculate current total based on selection
-  const currentAmount = selectedType === 'CUSTOM' ? customAmount : (selectedType === 'DINER' ? 75 : 150);
+  const baseAmount = selectedType === 'CUSTOM' ? customAmount : (selectedType === 'DINER' ? 75 : 150);
+  const { subtotal, shipping, total } = calculateVoucherTotal(baseAmount, formData.deliveryMethod);
 
   const handleCheckout = async () => {
-    if (!formData.senderEmail || !formData.senderName || !formData.recipientName) return;
+    // Validate Required Fields
+    const { firstName, lastName, email, phone, street, houseNumber, zip, city, recipientName } = formData;
+    
+    if (!firstName || !lastName || !email || !phone || !recipientName) {
+      alert("Vul alstublieft alle verplichte velden in.");
+      return;
+    }
+
+    if (!street || !houseNumber || !zip || !city) {
+      alert("Adresgegevens zijn verplicht voor de factuur.");
+      return;
+    }
     
     setIsProcessing(true);
     
@@ -109,22 +129,29 @@ export const VoucherShop = () => {
     const items: VoucherOrderItem[] = [{
       id: selectedType,
       label: selectedType === 'CUSTOM' ? 'Vrij Bedrag' : (selectedType === 'DINER' ? 'Diner Arrangement' : 'Romantisch Duo'),
-      price: currentAmount,
+      price: baseAmount,
       quantity: 1
     }];
+
+    // If shipping cost exists, add as separate item for clarity in order, but logically part of totals
+    // (Storage logic handles totals separately, but let's keep items clean)
 
     const newOrder: VoucherOrder = {
       id: orderId,
       createdAt: new Date().toISOString(),
-      status: 'REQUESTED', // Belangrijk: Status is REQUESTED, nog niet betaald
-      buyer: { firstName: formData.senderName, lastName: '' }, // Simplified for demo
+      status: 'REQUESTED',
+      buyer: { firstName, lastName },
       items,
-      amount: currentAmount,
-      totals: { subtotal: currentAmount, shipping: 0, fee: 0, grandTotal: currentAmount },
-      deliveryMethod: 'DIGITAL', // Both 'DIRECT' and 'SELF' map to DIGITAL delivery
-      recipient: { name: formData.recipientName },
+      amount: baseAmount,
+      totals: { subtotal: baseAmount, shipping, fee: 0, grandTotal: total },
+      deliveryMethod: formData.deliveryMethod,
+      recipient: { 
+        name: recipientName,
+        // Store address in recipient details for shipping reference (even if same as billing)
+        address: { street: `${street} ${houseNumber}`, city, zip } 
+      },
       issuanceMode: 'INDIVIDUAL',
-      customerEmail: formData.senderEmail
+      customerEmail: email
     };
 
     voucherOrderRepo.add(newOrder);
@@ -163,15 +190,12 @@ export const VoucherShop = () => {
   return (
     <div className="min-h-screen bg-black text-slate-200 selection:bg-amber-900 selection:text-white">
       
-      {/* 1. Hero Section (Updated) */}
+      {/* 1. Hero Section */}
       <div className="relative py-24 md:py-32 overflow-hidden border-b border-white/5">
-        {/* Abstract Glow Background */}
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-black to-black" />
         <div className="absolute top-[-20%] left-1/2 -translate-x-1/2 w-[800px] h-[500px] bg-amber-600/10 rounded-full blur-[100px] pointer-events-none" />
         
         <div className="max-w-7xl mx-auto px-6 relative z-10 text-center">
-          
-          {/* Logo Placement */}
           <div className="mb-8 animate-in fade-in slide-in-from-top-4 duration-700">
             <img 
               src="https://irp.cdn-website.com/e8046ea7/dms3rep/multi/logo-ip.png" 
@@ -179,19 +203,13 @@ export const VoucherShop = () => {
               className="h-24 md:h-32 mx-auto drop-shadow-[0_0_25px_rgba(245,158,11,0.3)] opacity-90"
             />
           </div>
-
           <div className="inline-flex items-center space-x-2 px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs font-bold uppercase tracking-widest mb-6 backdrop-blur-md shadow-lg">
             <Sparkles size={14} /> <span>The Gift of Wonder</span>
           </div>
-          
           <h1 className="text-4xl md:text-6xl font-serif text-white leading-tight mb-6">
             Geef een avond <br/>
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-amber-400 to-amber-600">vol verwondering</span> cadeau.
           </h1>
-          
-          <p className="text-lg text-slate-400 max-w-xl mx-auto leading-relaxed">
-            Een onvergetelijke beleving in Inspiration Point. Het perfecte geschenk voor vrienden, familie of zakenrelaties.
-          </p>
         </div>
       </div>
 
@@ -235,29 +253,22 @@ export const VoucherShop = () => {
               </div>
             </section>
 
-            {/* Step 2: Personalize */}
+            {/* Step 2: Recipient */}
             <section className="space-y-6">
               <div className="flex items-center space-x-3 mb-6">
                 <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-white font-bold font-serif border border-slate-700">2</div>
-                <h3 className="text-xl font-serif text-white">Maak het persoonlijk</h3>
+                <h3 className="text-xl font-serif text-white">Voor wie is het?</h3>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 gap-6">
                 <Input 
-                  label="Voor wie is het?" 
-                  placeholder="Naam ontvanger" 
+                  label="Naam Ontvanger" 
+                  placeholder="Wie ga je verrassen?" 
                   value={formData.recipientName}
                   onChange={(e: any) => setFormData({...formData, recipientName: e.target.value})}
                   icon={<User size={16}/>}
                 />
-                <Input 
-                  label="Van wie komt het?" 
-                  placeholder="Uw naam" 
-                  value={formData.senderName}
-                  onChange={(e: any) => setFormData({...formData, senderName: e.target.value})}
-                  icon={<Heart size={16}/>}
-                />
-                <div className="md:col-span-2">
+                <div>
                   <label className="text-xs font-bold text-amber-500/80 uppercase tracking-widest cursor-pointer font-serif mb-2 block">Persoonlijke Boodschap</label>
                   <textarea 
                     className="w-full bg-black/40 border border-slate-800 rounded-xl p-4 text-white placeholder:text-slate-600 focus:border-amber-500 outline-none min-h-[100px] resize-none transition-colors"
@@ -271,58 +282,112 @@ export const VoucherShop = () => {
               </div>
             </section>
 
-            {/* Step 3: Delivery */}
+            {/* Step 3: Billing & Buyer Details */}
             <section className="space-y-6">
               <div className="flex items-center space-x-3 mb-6">
                 <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-white font-bold font-serif border border-slate-700">3</div>
+                <h3 className="text-xl font-serif text-white">Uw Gegevens</h3>
+              </div>
+
+              <div className="p-6 bg-slate-900/50 rounded-xl border border-slate-800/50 space-y-4">
+                 <div className="grid grid-cols-2 gap-4">
+                    <Input 
+                      label="Voornaam *" 
+                      value={formData.firstName}
+                      onChange={(e: any) => setFormData({...formData, firstName: e.target.value})}
+                    />
+                    <Input 
+                      label="Achternaam *" 
+                      value={formData.lastName}
+                      onChange={(e: any) => setFormData({...formData, lastName: e.target.value})}
+                    />
+                 </div>
+                 <div className="grid grid-cols-2 gap-4">
+                    <Input 
+                      label="E-mailadres *" 
+                      type="email"
+                      value={formData.email}
+                      onChange={(e: any) => setFormData({...formData, email: e.target.value})}
+                    />
+                    <Input 
+                      label="Telefoonnummer *" 
+                      type="tel"
+                      value={formData.phone}
+                      onChange={(e: any) => setFormData({...formData, phone: e.target.value})}
+                    />
+                 </div>
+                 
+                 <div className="pt-4 border-t border-slate-800">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 block">Adres (Factuur)</label>
+                    <div className="grid grid-cols-4 gap-4">
+                        <div className="col-span-3">
+                           <Input label="Straat" value={formData.street} onChange={(e: any) => setFormData({...formData, street: e.target.value})} />
+                        </div>
+                        <div className="col-span-1">
+                           <Input label="Nr" value={formData.houseNumber} onChange={(e: any) => setFormData({...formData, houseNumber: e.target.value})} />
+                        </div>
+                        <div className="col-span-1">
+                           <Input label="Postcode" value={formData.zip} onChange={(e: any) => setFormData({...formData, zip: e.target.value})} />
+                        </div>
+                        <div className="col-span-3">
+                           <Input label="Plaats" value={formData.city} onChange={(e: any) => setFormData({...formData, city: e.target.value})} />
+                        </div>
+                    </div>
+                 </div>
+              </div>
+            </section>
+
+            {/* Step 4: Delivery Method */}
+            <section className="space-y-6">
+              <div className="flex items-center space-x-3 mb-6">
+                <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-white font-bold font-serif border border-slate-700">4</div>
                 <h3 className="text-xl font-serif text-white">Verzending</h3>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                  <button 
-                   onClick={() => setFormData({...formData, deliveryMethod: 'DIRECT'})}
-                   className={`p-4 rounded-xl border text-left transition-all ${formData.deliveryMethod === 'DIRECT' ? 'bg-amber-900/20 border-amber-500 ring-1 ring-amber-500' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}
+                   onClick={() => setFormData({...formData, deliveryMethod: 'DIGITAL'})}
+                   className={`p-4 rounded-xl border text-left transition-all ${formData.deliveryMethod === 'DIGITAL' ? 'bg-amber-900/20 border-amber-500 ring-1 ring-amber-500' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}
                  >
                    <div className="flex items-center space-x-2 mb-2">
-                     <Mail size={18} className={formData.deliveryMethod === 'DIRECT' ? 'text-amber-500' : 'text-slate-400'} />
-                     <span className="font-bold text-white text-sm">Direct naar ontvanger</span>
+                     <Mail size={18} className={formData.deliveryMethod === 'DIGITAL' ? 'text-amber-500' : 'text-slate-400'} />
+                     <span className="font-bold text-white text-sm">Digitaal</span>
                    </div>
-                   <p className="text-xs text-slate-400">Wij mailen de voucher direct.</p>
+                   <p className="text-xs text-slate-400 mb-2">Direct per e-mail naar u.</p>
+                   <span className="text-[10px] font-bold text-emerald-500 bg-emerald-900/20 px-2 py-1 rounded">Gratis</span>
                  </button>
 
                  <button 
-                   onClick={() => setFormData({...formData, deliveryMethod: 'SELF'})}
-                   className={`p-4 rounded-xl border text-left transition-all ${formData.deliveryMethod === 'SELF' ? 'bg-amber-900/20 border-amber-500 ring-1 ring-amber-500' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}
+                   onClick={() => setFormData({...formData, deliveryMethod: 'PICKUP'})}
+                   className={`p-4 rounded-xl border text-left transition-all ${formData.deliveryMethod === 'PICKUP' ? 'bg-amber-900/20 border-amber-500 ring-1 ring-amber-500' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}
                  >
                    <div className="flex items-center space-x-2 mb-2">
-                     <Printer size={18} className={formData.deliveryMethod === 'SELF' ? 'text-amber-500' : 'text-slate-400'} />
-                     <span className="font-bold text-white text-sm">Naar mijzelf</span>
+                     <ShoppingBag size={18} className={formData.deliveryMethod === 'PICKUP' ? 'text-amber-500' : 'text-slate-400'} />
+                     <span className="font-bold text-white text-sm">Ophalen</span>
                    </div>
-                   <p className="text-xs text-slate-400">Ontvang PDF om zelf te geven.</p>
+                   <p className="text-xs text-slate-400 mb-2">Bij de kassa (tijdens shows).</p>
+                   <span className="text-[10px] font-bold text-emerald-500 bg-emerald-900/20 px-2 py-1 rounded">Gratis</span>
+                 </button>
+
+                 <button 
+                   onClick={() => setFormData({...formData, deliveryMethod: 'POST'})}
+                   className={`p-4 rounded-xl border text-left transition-all ${formData.deliveryMethod === 'POST' ? 'bg-amber-900/20 border-amber-500 ring-1 ring-amber-500' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}
+                 >
+                   <div className="flex items-center space-x-2 mb-2">
+                     <Truck size={18} className={formData.deliveryMethod === 'POST' ? 'text-amber-500' : 'text-slate-400'} />
+                     <span className="font-bold text-white text-sm">Per Post</span>
+                   </div>
+                   <p className="text-xs text-slate-400 mb-2">Luxe verpakking, verzonden.</p>
+                   <span className="text-[10px] font-bold text-amber-500 bg-amber-900/20 px-2 py-1 rounded">+ €{VOUCHER_SHIPPING_FEE.toFixed(2)}</span>
                  </button>
               </div>
-
-              <div className="space-y-4 bg-slate-900/50 p-6 rounded-xl border border-slate-800/50">
-                 <Input 
-                   label="Uw E-mailadres (voor factuur)" 
-                   type="email"
-                   value={formData.senderEmail}
-                   onChange={(e: any) => setFormData({...formData, senderEmail: e.target.value})}
-                   placeholder="uw@email.nl"
-                 />
-                 
-                 {formData.deliveryMethod === 'DIRECT' && (
-                   <div className="animate-in fade-in slide-in-from-top-2">
-                     <Input 
-                       label="E-mailadres Ontvanger" 
-                       type="email"
-                       value={formData.recipientEmail}
-                       onChange={(e: any) => setFormData({...formData, recipientEmail: e.target.value})}
-                       placeholder="ontvanger@email.nl"
-                     />
-                   </div>
-                 )}
-              </div>
+              
+              {formData.deliveryMethod === 'POST' && (
+                  <div className="p-4 bg-blue-900/10 border border-blue-900/30 rounded-xl text-xs text-blue-300 flex items-start">
+                      <Box size={16} className="mr-2 mt-0.5 shrink-0" />
+                      We verzenden de voucher naar het opgegeven adres ({formData.street} {formData.houseNumber}, {formData.city}).
+                  </div>
+              )}
             </section>
 
           </div>
@@ -339,25 +404,34 @@ export const VoucherShop = () => {
                 
                 {/* THE CARD */}
                 <VoucherCardPreview 
-                  amount={currentAmount}
+                  amount={baseAmount}
                   recipientName={formData.recipientName}
-                  senderName={formData.senderName}
+                  senderName={`${formData.firstName} ${formData.lastName}`}
                   message={formData.message}
                 />
               </div>
 
               <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
-                 <div className="flex justify-between items-end mb-6 pb-6 border-b border-slate-800">
-                    <div>
-                      <p className="text-xs text-slate-400 mb-1">Totaal te betalen</p>
-                      <p className="text-sm text-emerald-500 font-bold flex items-center"><CheckCircle2 size={12} className="mr-1"/> Inclusief BTW</p>
+                 <div className="space-y-2 mb-6 pb-6 border-b border-slate-800">
+                    <div className="flex justify-between text-sm text-slate-300">
+                       <span>Voucher Waarde</span>
+                       <span>€{baseAmount.toFixed(2)}</span>
                     </div>
-                    <div className="text-4xl font-serif text-white">€{currentAmount}</div>
+                    {shipping > 0 && (
+                        <div className="flex justify-between text-sm text-slate-300">
+                           <span>Verzendkosten</span>
+                           <span>€{shipping.toFixed(2)}</span>
+                        </div>
+                    )}
+                    <div className="flex justify-between items-end pt-2">
+                        <p className="text-sm text-slate-400">Totaal te betalen</p>
+                        <div className="text-4xl font-serif text-white">€{total.toFixed(2)}</div>
+                    </div>
                  </div>
 
                  <Button 
                    onClick={handleCheckout}
-                   disabled={isProcessing || !formData.senderName || !formData.recipientName || !formData.senderEmail}
+                   disabled={isProcessing}
                    className="w-full h-14 text-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black border-none shadow-[0_0_20px_rgba(245,158,11,0.3)] font-bold tracking-wide"
                  >
                    {isProcessing ? 'Verwerken...' : 'Bestelling Plaatsen'} <ArrowRight className="ml-2" />
