@@ -5,7 +5,8 @@ import {
   Ticket, Search, Filter, CheckCircle2, XCircle,
   Clock, AlertCircle, Calendar, User, Users, DollarSign, 
   Edit3, Utensils, PartyPopper, Star, Tag, 
-  Trash2, Phone, Mail, MoreHorizontal, LayoutGrid, List
+  Trash2, Phone, Mail, MoreHorizontal, LayoutGrid, List, PieChart,
+  ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { Button, Card, Badge, ResponsiveDrawer, Input } from '../UI';
 import { Reservation, BookingStatus, AdminPriceOverride } from '../../types';
@@ -19,16 +20,23 @@ import { PriceOverridePanel } from './PriceOverridePanel';
 import { recalculateReservationFinancials } from '../../utils/pricing';
 import { AuditTimeline } from './AuditTimeline';
 import { EditReservationModal } from './EditReservationModal';
+import { DestructiveActionModal } from '../UI/DestructiveActionModal';
 
 // --- TYPES ---
 
 type ViewTab = 'OPERATIONS' | 'ATTENTION' | 'PLANNING' | 'ARCHIVE';
 type QuickFilter = 'ALL' | 'UNPAID' | 'VIP' | 'LARGE_GROUP';
 
+const PAGE_SIZE = 24; // Items per page for Grid View
+
 // --- SUB-COMPONENTS ---
 
 const ReservationCard: React.FC<{ reservation: Reservation; onClick: () => void }> = ({ reservation, onClick }) => {
   const isPaid = reservation.financials.isPaid;
+  const paidAmount = reservation.financials.paid || 0;
+  const totalAmount = reservation.financials.finalTotal || 0;
+  const isPartial = !isPaid && paidAmount > 0;
+  
   const hasNotes = reservation.notes.dietary || reservation.notes.internal;
   const isPremium = reservation.packageType === 'premium';
   
@@ -40,7 +48,7 @@ const ReservationCard: React.FC<{ reservation: Reservation; onClick: () => void 
     borderColor = 'border-emerald-900/50';
     glow = 'hover:shadow-[0_0_20px_rgba(16,185,129,0.1)]';
   } else if (!isPaid && reservation.status !== 'CANCELLED') {
-    borderColor = 'border-orange-900/50';
+    borderColor = isPartial ? 'border-orange-500/50' : 'border-red-900/50';
   }
   
   if (hasNotes) borderColor = 'border-red-900/50'; // Notes take priority visually
@@ -85,8 +93,10 @@ const ReservationCard: React.FC<{ reservation: Reservation; onClick: () => void 
       <div className="mt-4 pt-3 border-t border-slate-800 flex justify-between items-center text-xs">
         {isPaid ? (
           <span className="text-emerald-500 flex items-center font-bold"><CheckCircle2 size={12} className="mr-1"/> Betaald</span>
+        ) : isPartial ? (
+          <span className="text-orange-500 flex items-center font-bold"><PieChart size={12} className="mr-1"/> Rest: €{(totalAmount - paidAmount).toFixed(0)}</span>
         ) : (
-          <span className="text-orange-500 flex items-center font-bold"><DollarSign size={12} className="mr-1"/> €{reservation.financials.finalTotal.toFixed(0)} Open</span>
+          <span className="text-red-500 flex items-center font-bold"><DollarSign size={12} className="mr-1"/> €{totalAmount.toFixed(0)} Open</span>
         )}
         <span className="text-slate-500 font-mono">{new Date(reservation.date).toLocaleDateString('nl-NL', {day: 'numeric', month:'short'})}</span>
       </div>
@@ -103,6 +113,9 @@ export const ReservationManager = () => {
   const [activeTab, setActiveTab] = useState<ViewTab>('OPERATIONS');
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('ALL');
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Pagination State (Grid View Only)
+  const [currentPage, setCurrentPage] = useState(1);
 
   // Selection & Modals
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
@@ -110,12 +123,17 @@ export const ReservationManager = () => {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showFullEditModal, setShowFullEditModal] = useState(false);
   const [isEditingPrice, setIsEditingPrice] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  
+  // Payment Logic State
   const [paymentMethod, setPaymentMethod] = useState('FACTUUR');
+  const [paymentAmount, setPaymentAmount] = useState<number>(0);
 
   // --- DATA LOADING ---
   useEffect(() => {
     const load = () => {
-        let data = bookingRepo.getAll();
+        // Fetch ALL data including archives, so we can filter locally for the 'Archive' tab
+        let data = bookingRepo.getAll(true);
         // Deep Link Check
         const openId = searchParams.get('open');
         if (openId && !selectedReservation) {
@@ -129,7 +147,20 @@ export const ReservationManager = () => {
     return () => window.removeEventListener('storage-update', load);
   }, [refreshTrigger, searchParams]);
 
+  // Init Payment Amount when modal opens
+  useEffect(() => {
+    if (selectedReservation && showPaymentModal) {
+      const remaining = selectedReservation.financials.finalTotal - (selectedReservation.financials.paid || 0);
+      setPaymentAmount(remaining > 0 ? remaining : 0);
+    }
+  }, [selectedReservation, showPaymentModal]);
+
   const refreshData = () => setRefreshTrigger(p => p + 1);
+
+  // Reset page when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab, quickFilter, searchTerm]);
 
   // --- FILTER LOGIC ---
   const filteredData = useMemo<Reservation[]>(() => {
@@ -144,7 +175,7 @@ export const ReservationManager = () => {
     let result = reservations.filter(r => {
       // Archive is special: Cancelled OR Past dates (completed)
       if (activeTab === 'ARCHIVE') {
-        return r.status === 'CANCELLED' || r.status === 'ARCHIVED' || (r.date < todayStr && r.status !== 'REQUEST'); // Keep requests visible
+        return r.status === 'ARCHIVED'; // Strict check for now, can be expanded to old dates if logic changes
       }
 
       // Base exclusions for active tabs
@@ -190,6 +221,14 @@ export const ReservationManager = () => {
     return result.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
   }, [reservations, activeTab, quickFilter, searchTerm]);
 
+  // --- PAGINATION LOGIC (Grid Only) ---
+  const paginatedData = useMemo(() => {
+    const startIndex = (currentPage - 1) * PAGE_SIZE;
+    return filteredData.slice(startIndex, startIndex + PAGE_SIZE);
+  }, [filteredData, currentPage]);
+
+  const totalPages = Math.ceil(filteredData.length / PAGE_SIZE);
+
 
   // --- ACTIONS ---
   const updateStatus = (id: string, status: BookingStatus) => {
@@ -212,19 +251,32 @@ export const ReservationManager = () => {
   };
 
   const handlePayment = () => {
-    if (!selectedReservation) return;
+    if (!selectedReservation || paymentAmount <= 0) return;
+
+    const currentPaid = selectedReservation.financials.paid || 0;
+    const newTotalPaid = currentPaid + paymentAmount;
+    const totalCost = selectedReservation.financials.finalTotal;
+    
+    // Check if fully paid (allow small float error margin)
+    const isFullyPaid = newTotalPaid >= (totalCost - 0.01);
+
     const updates = {
       financials: {
         ...selectedReservation.financials,
-        isPaid: true,
-        paidAt: new Date().toISOString(),
-        paid: selectedReservation.financials.finalTotal,
+        isPaid: isFullyPaid,
+        paidAt: new Date().toISOString(), // Updates last payment date
+        paid: newTotalPaid,
         paymentMethod
       }
     };
+
     bookingRepo.update(selectedReservation.id, r => ({ ...r, ...updates }));
-    logAuditAction('REGISTER_PAYMENT', 'RESERVATION', selectedReservation.id, { description: `Paid via ${paymentMethod}` });
-    undoManager.showSuccess('Betaling geregistreerd');
+    
+    logAuditAction('REGISTER_PAYMENT', 'RESERVATION', selectedReservation.id, { 
+      description: `Payment of €${paymentAmount.toFixed(2)} registered via ${paymentMethod}. New Total Paid: €${newTotalPaid.toFixed(2)}` 
+    });
+    
+    undoManager.showSuccess(isFullyPaid ? 'Volledige betaling geregistreerd' : 'Deelbetaling geregistreerd');
     setShowPaymentModal(false);
     refreshData();
   };
@@ -241,13 +293,13 @@ export const ReservationManager = () => {
     refreshData();
   };
 
-  const handleDelete = () => {
-    if(!selectedReservation) return;
-    if(confirm('Verplaatsen naar prullenbak?')) {
-        bookingRepo.delete(selectedReservation.id);
-        setSelectedReservation(null);
-        refreshData();
-    }
+  const executeDelete = () => {
+    if (!selectedReservation) return;
+    bookingRepo.delete(selectedReservation.id);
+    setSelectedReservation(null);
+    setShowDeleteModal(false);
+    refreshData();
+    undoManager.showSuccess('Item verplaatst naar prullenbak');
   };
 
   // --- RENDER HELPERS ---
@@ -326,39 +378,73 @@ export const ReservationManager = () => {
          
          {/* CARD VIEW (For Operations) */}
          {activeTab === 'OPERATIONS' && (
-           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-in fade-in">
-              {filteredData.length === 0 && (
-                <div className="col-span-full text-center p-12 border-2 border-dashed border-slate-800 rounded-xl text-slate-500">
-                  Geen boekingen voor de komende 48 uur.
-                </div>
-              )}
-              {filteredData.map(res => (
-                <ReservationCard 
-                  key={res.id} 
-                  reservation={res} 
-                  onClick={() => setSelectedReservation(res)} 
-                />
-              ))}
+           <div className="flex flex-col space-y-4 h-full">
+             
+             {/* Cards Grid */}
+             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 animate-in fade-in">
+                {paginatedData.length === 0 && (
+                  <div className="col-span-full text-center p-12 border-2 border-dashed border-slate-800 rounded-xl text-slate-500">
+                    Geen boekingen gevonden.
+                  </div>
+                )}
+                {paginatedData.map(res => (
+                  <ReservationCard 
+                    key={res.id} 
+                    reservation={res} 
+                    onClick={() => setSelectedReservation(res)} 
+                  />
+                ))}
+             </div>
+
+             {/* Pagination Control (Only for Grid) */}
+             {totalPages > 1 && (
+               <div className="flex justify-center items-center space-x-4 pt-4 border-t border-slate-800">
+                 <Button 
+                   variant="ghost" 
+                   onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                   disabled={currentPage === 1}
+                   className="text-xs"
+                 >
+                   <ChevronLeft size={16} className="mr-1" /> Vorige
+                 </Button>
+                 <span className="text-xs text-slate-400 font-bold">
+                   Pagina {currentPage} van {totalPages}
+                 </span>
+                 <Button 
+                   variant="ghost" 
+                   onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                   disabled={currentPage === totalPages}
+                   className="text-xs"
+                 >
+                   Volgende <ChevronRight size={16} className="ml-1" />
+                 </Button>
+               </div>
+             )}
            </div>
          )}
 
-         {/* TABLE VIEW (For Lists) */}
+         {/* TABLE VIEW (For Lists) - Now Virtualized via ResponsiveTable */}
          {activeTab !== 'OPERATIONS' && (
-           <div className="animate-in fade-in">
+           <div className="animate-in fade-in h-full">
              <ResponsiveTable<Reservation>
                data={filteredData}
                keyExtractor={r => r.id}
                onRowClick={setSelectedReservation}
+               isVirtual={true} // ENABLE VIRTUALIZATION
+               virtualHeight="calc(100vh - 300px)" // Adjust based on header height
                columns={[
-                 { header: 'Datum', accessor: r => <span className="font-mono text-slate-300">{new Date(r.date).toLocaleDateString()}</span> },
-                 { header: 'Naam', accessor: r => <span className="font-bold text-white">{r.customer.lastName}, {r.customer.firstName}</span> },
+                 { header: 'Datum', accessor: r => <span className={`font-mono ${r.status === 'ARCHIVED' ? 'text-slate-500' : 'text-slate-300'}`}>{new Date(r.date).toLocaleDateString()}</span> },
+                 { header: 'Naam', accessor: r => <span className={`font-bold ${r.status === 'ARCHIVED' ? 'text-slate-400' : 'text-white'}`}>{r.customer.lastName}, {r.customer.firstName}</span> },
                  { header: 'Pax', accessor: r => r.partySize },
                  { header: 'Status', accessor: r => <Badge status={r.status}>{r.status}</Badge> },
-                 { header: 'Actie', accessor: r => {
+                 { header: 'Betaling', accessor: r => {
                     const status = getPaymentStatus(r);
                     if (status === 'OVERDUE') return <span className="text-red-500 font-bold text-xs uppercase">Te Laat</span>;
+                    if (status === 'PARTIAL') return <span className="text-orange-500 font-bold text-xs uppercase">Deelbetaald</span>;
+                    if (status === 'PAID') return <span className="text-emerald-500 font-bold text-xs uppercase">Voldaan</span>;
                     if (r.status === 'REQUEST') return <span className="text-blue-500 font-bold text-xs uppercase">Nieuw</span>;
-                    return <span className="text-slate-600">-</span>;
+                    if (r.status === 'ARCHIVED') return <span className="text-slate-600 font-bold text-xs uppercase">Archief</span>;
+                    return <span className="text-slate-600">Open</span>;
                  }}
                ]}
              />
@@ -443,6 +529,10 @@ export const ReservationManager = () => {
                            <span className="text-xs text-emerald-500 font-bold mt-1">
                              Betaald via {selectedReservation.financials.paymentMethod || 'Onbekend'}
                            </span>
+                        ) : selectedReservation.financials.paid > 0 ? (
+                           <span className="text-xs text-orange-500 font-bold mt-1">
+                             Reeds voldaan: €{selectedReservation.financials.paid.toFixed(2)}
+                           </span>
                         ) : (
                            <span className="text-xs text-red-500 font-bold mt-1">Nog te betalen</span>
                         )}
@@ -488,7 +578,7 @@ export const ReservationManager = () => {
                  <div className="pt-4 border-t border-slate-800">
                     <Button 
                       variant="ghost" 
-                      onClick={handleDelete} 
+                      onClick={() => setShowDeleteModal(true)} 
                       className="w-full text-red-500 hover:bg-red-900/20 hover:text-red-400"
                     >
                       <Trash2 size={16} className="mr-2" /> Verplaats naar Prullenbak
@@ -511,8 +601,20 @@ export const ReservationManager = () => {
              
              <div className="space-y-4">
                <div>
-                 <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 block">Bedrag</label>
-                 <p className="text-2xl font-mono text-white">€{selectedReservation.financials.finalTotal.toFixed(2)}</p>
+                 <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 block">Te Betalen Totaal</label>
+                 <p className="text-xl font-mono text-white">€{selectedReservation.financials.finalTotal.toFixed(2)}</p>
+                 {selectedReservation.financials.paid > 0 && (
+                    <p className="text-xs text-emerald-500 mt-1">Reeds voldaan: €{selectedReservation.financials.paid.toFixed(2)}</p>
+                 )}
+               </div>
+
+               <div>
+                 <Input 
+                    label="Bedrag (€)"
+                    type="number"
+                    value={paymentAmount}
+                    onChange={(e: any) => setPaymentAmount(parseFloat(e.target.value))}
+                 />
                </div>
 
                <div>
@@ -544,6 +646,24 @@ export const ReservationManager = () => {
           reservation={selectedReservation} 
           onClose={() => setShowFullEditModal(false)} 
           onSave={refreshData}
+        />
+      )}
+
+      {/* DELETE CONFIRMATION MODAL */}
+      {showDeleteModal && selectedReservation && (
+        <DestructiveActionModal 
+          isOpen={showDeleteModal}
+          onClose={() => setShowDeleteModal(false)}
+          onConfirm={executeDelete}
+          title="Verplaats naar Prullenbak"
+          description={
+            <p>
+              Weet je zeker dat je de reservering van <strong>{selectedReservation.customer.lastName}</strong> wilt verwijderen?
+              <br/>Het item wordt verplaatst naar de prullenbak en kan binnen 30 dagen worden hersteld.
+            </p>
+          }
+          verificationText="VERWIJDER"
+          confirmButtonText="Verwijderen"
         />
       )}
     </div>

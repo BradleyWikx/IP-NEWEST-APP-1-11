@@ -5,7 +5,7 @@ import {
   ChevronRight, Save, Eye, Trash2, Send,
   FileText, Info, CheckCircle2, AlertCircle, X,
   ArrowLeft, Copy, Clock, Filter, User, RefreshCw,
-  LayoutTemplate
+  LayoutTemplate, AlertTriangle
 } from 'lucide-react';
 import { Button, Input, Card, Badge, ResponsiveDrawer } from '../UI';
 import { 
@@ -17,6 +17,7 @@ import {
 import { 
   renderTemplate, simulateSendEmail, getAvailableVariables, triggerEmail 
 } from '../../utils/emailEngine';
+import { undoManager } from '../../utils/undoManager';
 
 export const EmailCenter = () => {
   const [activeTab, setActiveTab] = useState<'TEMPLATES' | 'LOGS'>('TEMPLATES');
@@ -35,6 +36,9 @@ export const EmailCenter = () => {
   const [logFilter, setLogFilter] = useState('ALL');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedLog, setSelectedLog] = useState<EmailLog | null>(null);
+  
+  // DLQ State
+  const [isRetrying, setIsRetrying] = useState(false);
 
   useEffect(() => {
     refreshData();
@@ -89,8 +93,6 @@ export const EmailCenter = () => {
 
   const insertVariable = (variable: string) => {
     if (!editingTemplate) return;
-    // Simple append for now. 
-    // In a real app, we'd use a ref to the textarea to insert at cursor position.
     setEditingTemplate({
         ...editingTemplate,
         bodyHtml: editingTemplate.bodyHtml + ` ${variable} `
@@ -101,7 +103,7 @@ export const EmailCenter = () => {
 
   const handleResend = async (log: EmailLog) => {
     if (confirm(`Opnieuw versturen naar ${log.to}?`)) {
-      // Create a copy log
+      // Create a copy log for retry
       const newLog: EmailLog = {
         ...log,
         id: `RETRY-${Date.now()}`,
@@ -112,9 +114,45 @@ export const EmailCenter = () => {
       };
       emailLogRepo.add(newLog);
       refreshData();
+      undoManager.showSuccess('Herkansing gestart...');
       await simulateSendEmail(newLog.id);
       refreshData();
     }
+  };
+
+  const handleBulkRetry = async () => {
+    const failedLogs = logs.filter(l => l.status === 'FAILED');
+    if (failedLogs.length === 0) return;
+
+    if (!confirm(`Wil je ${failedLogs.length} mislukte e-mails opnieuw proberen te versturen?`)) return;
+
+    setIsRetrying(true);
+    let successCount = 0;
+
+    // Process sequentially to simulate load
+    for (const log of failedLogs) {
+        // Update specific log to QUEUED again (In place retry) OR Create new log
+        // For DLQ, usually we create a new entry so history is kept
+        const newLog: EmailLog = {
+            ...log,
+            id: `DLQ-RETRY-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+            status: 'QUEUED',
+            createdAt: new Date().toISOString(),
+            sentAt: undefined,
+            error: undefined
+        };
+        emailLogRepo.add(newLog);
+        
+        // Mark old one as processed/archived? Or just leave as FAILED.
+        // Let's leave as FAILED so history shows it failed.
+        
+        await simulateSendEmail(newLog.id);
+        successCount++;
+    }
+
+    setIsRetrying(false);
+    undoManager.showSuccess(`${successCount} e-mails opnieuw in de wachtrij geplaatst.`);
+    refreshData();
   };
 
   // --- Renderers ---
@@ -280,8 +318,39 @@ export const EmailCenter = () => {
       (l.to.toLowerCase().includes(searchTerm.toLowerCase()) || l.subject.toLowerCase().includes(searchTerm.toLowerCase()))
     );
 
+    const failedCount = logs.filter(l => l.status === 'FAILED').length;
+
     return (
       <div className="space-y-4">
+        {/* DEAD LETTER QUEUE WARNING */}
+        {failedCount > 0 && (
+          <div className="bg-red-900/10 border border-red-900/50 rounded-xl p-4 flex justify-between items-center animate-in slide-in-from-top-2">
+             <div className="flex items-center space-x-3">
+               <AlertTriangle className="text-red-500 animate-pulse" size={24} />
+               <div>
+                 <h4 className="text-red-400 font-bold text-sm">Problemen Gedetecteerd</h4>
+                 <p className="text-xs text-red-300/70">{failedCount} e-mails zijn niet verzonden.</p>
+               </div>
+             </div>
+             <div className="flex space-x-3">
+                <Button 
+                  variant="ghost" 
+                  onClick={() => setLogFilter('FAILED')} 
+                  className="text-red-400 hover:text-white hover:bg-red-900/20 text-xs"
+                >
+                  Bekijk Lijst
+                </Button>
+                <Button 
+                  onClick={handleBulkRetry} 
+                  disabled={isRetrying}
+                  className="bg-red-600 hover:bg-red-700 text-white border-none shadow-[0_0_15px_rgba(220,38,38,0.4)] text-xs h-9"
+                >
+                  {isRetrying ? 'Bezig...' : 'Probeer Alles Opnieuw'}
+                </Button>
+             </div>
+          </div>
+        )}
+
         {/* Filters */}
         <Card className="p-4 bg-slate-900/50 flex flex-col md:flex-row gap-4 items-center">
            <div className="relative flex-grow w-full md:w-auto">
@@ -300,7 +369,7 @@ export const EmailCenter = () => {
                  onClick={() => setLogFilter(s)}
                  className={`px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${logFilter === s ? 'bg-amber-500 text-black' : 'bg-slate-950 border border-slate-800 text-slate-500'}`}
                >
-                 {s}
+                 {s} {s === 'FAILED' && failedCount > 0 && <span className="ml-1 px-1 bg-red-500 text-white rounded-full text-[9px]">{failedCount}</span>}
                </button>
              ))}
            </div>
@@ -418,6 +487,16 @@ export const EmailCenter = () => {
                  <p className="text-white font-mono text-xs">{selectedLog.templateKey}</p>
                </div>
             </div>
+
+            {selectedLog.error && (
+                <div className="p-4 bg-red-900/20 border border-red-900/50 rounded-xl flex items-start space-x-3 text-red-300">
+                    <AlertTriangle size={20} className="shrink-0 text-red-500" />
+                    <div>
+                        <p className="font-bold text-sm">Foutmelding</p>
+                        <p className="text-xs">{selectedLog.error}</p>
+                    </div>
+                </div>
+            )}
 
             <div className="space-y-2">
               <p className="text-xs text-slate-500 uppercase font-bold">Onderwerp</p>

@@ -142,12 +142,18 @@ export const triggerEmail = (
   };
 
   emailLogRepo.add(log);
+  
+  // In a real system, this would be a background job.
+  // For demo: trigger simulation immediately
+  simulateSendEmail(log.id); 
+  
   console.log(`[EmailEngine] Created log ${log.id} for ${toEmail} (${key})`);
   return log;
 };
 
 /**
  * Simulates sending an email by updating the log status.
+ * Now includes a random failure chance to demonstrate Dead Letter Queue.
  */
 export const simulateSendEmail = (logId: string) => {
   const log = emailLogRepo.getById(logId);
@@ -156,12 +162,25 @@ export const simulateSendEmail = (logId: string) => {
   // Simulate network delay
   return new Promise<void>((resolve) => {
     setTimeout(() => {
-      emailLogRepo.update(logId, (prev) => ({
-        ...prev,
-        status: 'SENT',
-        sentAt: new Date().toISOString()
-      }));
-      logAuditAction('SEND_EMAIL', 'SYSTEM', logId, { description: `Email sent to ${log.to}` });
+      // SIMULATE FAILURE: 10% chance of failure
+      const shouldFail = Math.random() < 0.10; 
+
+      if (shouldFail) {
+        emailLogRepo.update(logId, (prev) => ({
+          ...prev,
+          status: 'FAILED',
+          error: 'SMTP Timeout: Connection refused by remote host (Simulated)'
+        }));
+        logAuditAction('EMAIL_FAILED', 'SYSTEM', logId, { description: `Delivery failed for ${log.to}` });
+      } else {
+        emailLogRepo.update(logId, (prev) => ({
+          ...prev,
+          status: 'SENT',
+          sentAt: new Date().toISOString(),
+          error: undefined // Clear previous errors if retrying
+        }));
+        logAuditAction('SEND_EMAIL', 'SYSTEM', logId, { description: `Email sent to ${log.to}` });
+      }
       resolve();
     }, 800);
   });

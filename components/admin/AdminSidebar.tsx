@@ -56,7 +56,7 @@ const MENU_STRUCTURE: NavGroup[] = [
       { label: 'Planning & Print', icon: Printer, path: '/admin/planning', roles: ['ADMIN', 'EDITOR', 'HOST'] },
       { label: 'Reserveringen', icon: Ticket, path: '/admin/reservations', roles: ['ADMIN', 'EDITOR'] },
       { label: 'Wachtlijst', icon: Clock, path: '/admin/waitlist', roles: ['ADMIN', 'EDITOR'] },
-      { label: 'Host View', icon: UserCheck, path: '/admin/host', roles: ['ADMIN', 'EDITOR', 'HOST'] },
+      { label: 'Host Mode', icon: UserCheck, path: '/host', roles: ['ADMIN', 'EDITOR', 'HOST'] }, // Changed to /host
       { label: 'Keuken & Bar', icon: ChefHat, path: '/admin/kitchen', roles: ['ADMIN', 'EDITOR', 'HOST'] },
     ]
   },

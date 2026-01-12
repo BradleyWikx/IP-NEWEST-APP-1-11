@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Users, Utensils, AlertCircle, CheckCircle2, 
   Search, Package, Star, Clock, Scan, X,
-  ChevronRight, PartyPopper
+  ChevronRight, PartyPopper, LayoutDashboard, Lock, Unlock, Delete
 } from 'lucide-react';
 import { Button, Card, Input, Badge } from '../UI';
 import { BookingStatus, Reservation } from '../../types';
@@ -117,6 +117,11 @@ export const HostView = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showScanner, setShowScanner] = useState(false);
   const [selectedGuest, setSelectedGuest] = useState<HostReservation | null>(null);
+  
+  // LOCK SCREEN STATE
+  const [isLocked, setIsLocked] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState(false);
 
   // --- DATA LOADING ---
   const loadData = () => {
@@ -189,6 +194,40 @@ export const HostView = () => {
     setShowScanner(false);
   };
 
+  // --- LOCK SCREEN LOGIC ---
+  
+  const handleLock = () => {
+    setPinInput('');
+    setPinError(false);
+    setIsLocked(true);
+  };
+
+  const handlePinEntry = (num: string) => {
+    if (pinError) return;
+    
+    const nextPin = pinInput + num;
+    setPinInput(nextPin);
+
+    if (nextPin.length === 4) {
+      if (nextPin === '0000') {
+        // SUCCESS
+        setIsLocked(false);
+        setPinInput('');
+      } else {
+        // ERROR
+        setPinError(true);
+        setTimeout(() => {
+          setPinInput('');
+          setPinError(false);
+        }, 600);
+      }
+    }
+  };
+
+  const handleBackspace = () => {
+    setPinInput(prev => prev.slice(0, -1));
+  };
+
   return (
     <div className="fixed inset-0 bg-black z-[100] flex flex-col font-sans overflow-hidden">
       
@@ -202,17 +241,24 @@ export const HostView = () => {
             
             <div className="flex items-center space-x-3">
               <button 
+                onClick={handleLock}
+                className="w-10 h-10 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition-colors"
+                title="Vergrendel Scherm"
+              >
+                <Lock size={18} />
+              </button>
+              <button 
                 onClick={() => setShowScanner(true)}
                 className="w-10 h-10 rounded-full bg-amber-500 text-black flex items-center justify-center shadow-lg active:scale-90 transition-transform"
               >
                 <Scan size={20} />
               </button>
               <button 
-                onClick={() => navigate('/admin')}
-                className="w-10 h-10 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition-colors"
-                title="Sluit Host Mode"
+                onClick={() => navigate('/admin', { replace: true })}
+                className="h-10 px-4 rounded-full bg-slate-800 text-slate-400 hover:text-white flex items-center justify-center transition-colors font-bold text-xs uppercase tracking-wider"
+                title="Sluit Host Mode en ga naar Dashboard"
               >
-                <X size={20} />
+                <LayoutDashboard size={16} className="mr-2" /> Admin
               </button>
             </div>
          </div>
@@ -327,6 +373,65 @@ export const HostView = () => {
 
       {/* SCANNER */}
       {showScanner && <ScannerModal onClose={() => setShowScanner(false)} onCheckIn={handleScanSuccess} />}
+
+      {/* LOCK SCREEN OVERLAY */}
+      {isLocked && (
+        <div className="fixed inset-0 bg-black/95 z-[200] flex flex-col items-center justify-center backdrop-blur-xl animate-in fade-in duration-300">
+           <div className="mb-8 flex flex-col items-center">
+              <div className="w-20 h-20 bg-slate-900 rounded-full flex items-center justify-center border-2 border-slate-800 shadow-2xl mb-4">
+                 <Lock size={32} className="text-slate-400" />
+              </div>
+              <h2 className="text-2xl font-serif text-white mb-2">Host View Vergrendeld</h2>
+              <p className="text-slate-500 text-sm uppercase tracking-widest">Voer pincode in om verder te gaan</p>
+           </div>
+
+           <div className="space-y-8 w-full max-w-xs">
+              {/* Dot Indicators */}
+              <div className="flex justify-center space-x-4 mb-4 h-4">
+                 {[0, 1, 2, 3].map(idx => (
+                   <div 
+                     key={idx} 
+                     className={`w-3 h-3 rounded-full transition-all duration-300 ${
+                       idx < pinInput.length 
+                         ? (pinError ? 'bg-red-500 scale-125' : 'bg-amber-500 scale-110') 
+                         : 'bg-slate-800'
+                     }`} 
+                   />
+                 ))}
+              </div>
+
+              {/* Keypad */}
+              <div className="grid grid-cols-3 gap-4">
+                 {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+                   <button 
+                     key={num} 
+                     onClick={() => handlePinEntry(num.toString())}
+                     className="h-16 w-16 rounded-full bg-slate-900 border border-slate-800 text-white text-2xl font-bold hover:bg-slate-800 hover:border-slate-600 hover:scale-105 active:scale-95 transition-all mx-auto flex items-center justify-center shadow-lg"
+                   >
+                     {num}
+                   </button>
+                 ))}
+                 <div /> {/* Spacer */}
+                 <button 
+                   onClick={() => handlePinEntry('0')}
+                   className="h-16 w-16 rounded-full bg-slate-900 border border-slate-800 text-white text-2xl font-bold hover:bg-slate-800 hover:border-slate-600 hover:scale-105 active:scale-95 transition-all mx-auto flex items-center justify-center shadow-lg"
+                   >
+                   0
+                 </button>
+                 <button 
+                   onClick={handleBackspace}
+                   className="h-16 w-16 rounded-full bg-transparent text-slate-500 hover:text-white flex items-center justify-center transition-colors mx-auto"
+                 >
+                   <Delete size={24} />
+                 </button>
+              </div>
+              
+              <div className="text-center pt-8">
+                 <p className="text-slate-600 text-xs">Standaard PIN: 0000</p>
+              </div>
+           </div>
+        </div>
+      )}
     </div>
   );
 };

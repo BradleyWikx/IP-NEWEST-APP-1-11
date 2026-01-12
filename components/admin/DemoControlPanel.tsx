@@ -1,118 +1,99 @@
-
 import React, { useState } from 'react';
-import { 
-  Database, RefreshCw, Plus, ShieldCheck, 
-  ChevronRight, Calendar, Ticket, UserCheck, 
-  FileText, Play
-} from 'lucide-react';
-import { Button, Card } from '../UI';
-import { Link } from 'react-router-dom';
-import { 
-  seedDemoData, resetDemoData, generateRandomBookings, 
-  generateRandomWaitlist, generateRandomVouchers, runSmokeTest 
-} from '../../utils/seed';
+import { RefreshCw, AlertTriangle, PlayCircle, Loader2, Plus, Database } from 'lucide-react';
+import { Card, Button } from '../UI';
+import { seedFullDatabase, addRandomReservations } from '../../utils/seed';
+import { undoManager } from '../../utils/undoManager';
 
 export const DemoControlPanel = () => {
-  const [logs, setLogs] = useState<string[]>([]);
-  const [testResult, setTestResult] = useState<'IDLE' | 'PASS' | 'FAIL'>('IDLE');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleAction = (action: () => void, label: string) => {
-    if (confirm(`Bevestig actie: ${label}?`)) {
-      action();
-      window.location.reload(); // Refresh to reflect changes immediately
-    }
-  };
-
-  const handleSeedData = () => {
-    if (confirm("⚠️ LET OP: Alle bestaande data wordt gewist!\n\nEr wordt een demo-set geladen voor Januari & Februari 2026.")) {
-        seedDemoData();
-        // Force reload to ensure clean state
+  const handleFullReset = async () => {
+    if (confirm("⚠️ WEET JE HET ZEKER?\n\nAlle huidige data wordt gewist en vervangen door een demo-set. Dit kan niet ongedaan worden gemaakt.")) {
+      setIsLoading(true);
+      
+      // Allow UI to render loading state
+      setTimeout(() => {
+        seedFullDatabase();
         window.location.reload();
+      }, 500);
     }
   };
 
-  const handleSmokeTest = () => {
-    setLogs(['Running diagnostics...']);
+  const handleAddData = () => {
+    setIsLoading(true);
     setTimeout(() => {
-      const result = runSmokeTest();
-      setLogs(result.logs);
-      setTestResult(result.passed ? 'PASS' : 'FAIL');
+      const count = addRandomReservations(10);
+      if (count > 0) {
+        undoManager.showSuccess(`${count} boekingen toegevoegd.`);
+      } else {
+        alert("Kan geen data toevoegen. Reset de database eerst.");
+      }
+      setIsLoading(false);
     }, 500);
   };
 
   return (
-    <Card className="bg-slate-900 border border-slate-800 p-6 space-y-6">
-      <div className="flex items-center space-x-3 mb-4">
-        <div className="p-2 bg-purple-900/20 rounded-lg text-purple-500 border border-purple-900/50">
-          <Database size={24} />
-        </div>
-        <div>
-          <h3 className="text-lg font-bold text-white">Demo & Debug Panel</h3>
-          <p className="text-xs text-slate-500">Admin-only tools voor testen en verificatie.</p>
-        </div>
-      </div>
+    <div className="h-full flex flex-col items-center justify-center p-8 max-w-3xl mx-auto">
+      <Card className="w-full bg-slate-900 border border-slate-800 p-8 text-center space-y-8 shadow-2xl relative overflow-hidden">
+        
+        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-500 via-purple-500 to-red-500" />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Actions */}
-        <div className="space-y-3">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Data Management</p>
-          <div className="grid grid-cols-2 gap-2">
-            <Button variant="secondary" onClick={handleSeedData} className="text-xs bg-red-900/10 border-red-900/30 text-red-400 hover:bg-red-900/30 col-span-2">
-              <RefreshCw size={14} className="mr-2"/> 🔄 Reset & Genereer Demo Data 2026
-            </Button>
-            
-            <Button variant="ghost" onClick={() => handleAction(() => generateRandomBookings(20), '+20 Bookings')} className="text-xs border border-slate-800">
-              <Plus size={14} className="mr-2"/> +20 Bookings
-            </Button>
-            <Button variant="ghost" onClick={() => handleAction(() => generateRandomWaitlist(10), '+10 Waitlist')} className="text-xs border border-slate-800">
-              <Plus size={14} className="mr-2"/> +10 Waitlist
-            </Button>
-            <Button variant="ghost" onClick={() => handleAction(() => generateRandomVouchers(5), '+5 Vouchers')} className="text-xs border border-slate-800 md:col-span-2">
-              <Plus size={14} className="mr-2"/> +5 Active Vouchers
-            </Button>
+        <div className="mb-8">
+          <div className="w-20 h-20 bg-slate-950 rounded-full flex items-center justify-center mx-auto mb-6 border-4 border-slate-800 shadow-xl">
+            <Database size={40} className={`text-slate-200 ${isLoading ? 'animate-pulse' : ''}`} />
           </div>
+          <h2 className="text-3xl font-serif text-white mb-2">Demo Database Beheer</h2>
+          <p className="text-slate-400">
+            Beheer de testdata in uw lokale omgeving.
+          </p>
         </div>
 
-        {/* Smoke Test */}
-        <div className="space-y-3 flex flex-col">
-          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">System Integrity</p>
-          <div className="flex-grow bg-black rounded-xl border border-slate-800 p-4 font-mono text-[10px] overflow-y-auto max-h-40">
-            {logs.length === 0 ? (
-              <span className="text-slate-600 italic">Ready to run diagnostics...</span>
-            ) : (
-              <ul className="space-y-1">
-                {logs.map((log, i) => (
-                  <li key={i} className={log.includes('❌') ? 'text-red-400' : 'text-emerald-400'}>{log}</li>
-                ))}
-              </ul>
-            )}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          
+          {/* Option 1: Incremental Add */}
+          <div className="p-6 bg-slate-950 rounded-xl border border-slate-800 hover:border-emerald-500/50 transition-colors group">
+             <div className="flex justify-center mb-4 text-emerald-500 group-hover:scale-110 transition-transform">
+               <Plus size={32} />
+             </div>
+             <h3 className="text-xl font-bold text-white mb-2">Data Toevoegen</h3>
+             <p className="text-xs text-slate-500 mb-6 min-h-[40px]">
+               Genereer 10 extra reserveringen bovenop de huidige data.
+             </p>
+             <Button 
+               onClick={handleAddData} 
+               disabled={isLoading}
+               className="w-full bg-slate-800 hover:bg-slate-700 border-slate-700"
+             >
+               {isLoading ? 'Bezig...' : '+10 Boekingen'}
+             </Button>
           </div>
-          <Button 
-            onClick={handleSmokeTest} 
-            className={`w-full flex items-center justify-center ${testResult === 'FAIL' ? 'bg-red-900/20 text-red-500 border-red-900' : 'bg-slate-800'}`}
-          >
-            <Play size={14} className="mr-2" /> Run Smoke Test
-          </Button>
-        </div>
-      </div>
 
-      <div className="pt-4 border-t border-slate-800">
-        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Quick Navigation</p>
-        <div className="flex flex-wrap gap-2">
-          <Link to="/admin/calendar" className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 hover:text-white hover:border-slate-600 flex items-center">
-            <Calendar size={14} className="mr-2" /> Calendar
-          </Link>
-          <Link to="/admin/reservations" className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 hover:text-white hover:border-slate-600 flex items-center">
-            <Ticket size={14} className="mr-2" /> Reservations
-          </Link>
-          <Link to="/admin/reports" className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 hover:text-white hover:border-slate-600 flex items-center">
-            <FileText size={14} className="mr-2" /> Reports
-          </Link>
-          <Link to="/admin/host" className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-800 text-xs text-slate-300 hover:text-white hover:border-slate-600 flex items-center">
-            <UserCheck size={14} className="mr-2" /> Host View
-          </Link>
+          {/* Option 2: Full Reset */}
+          <div className="p-6 bg-red-950/10 rounded-xl border border-red-900/30 hover:border-red-500/50 transition-colors group">
+             <div className="flex justify-center mb-4 text-red-500 group-hover:scale-110 transition-transform">
+               <RefreshCw size={32} />
+             </div>
+             <h3 className="text-xl font-bold text-white mb-2">Harde Reset</h3>
+             <p className="text-xs text-slate-500 mb-6 min-h-[40px]">
+               Wis alles en herstel de database naar de beginstaat. 
+             </p>
+             <Button 
+               onClick={handleFullReset} 
+               disabled={isLoading}
+               className="w-full bg-red-900/50 hover:bg-red-900 text-red-200 border-red-800/50"
+             >
+               {isLoading ? 'Resetten...' : 'Volledige Reset'}
+             </Button>
+          </div>
+
         </div>
-      </div>
-    </Card>
+
+        <div className="flex items-center justify-center space-x-2 text-[10px] text-slate-600 bg-black/20 p-2 rounded-lg">
+          <AlertTriangle size={12} />
+          <span>Wijzigingen zijn alleen lokaal in uw browser (localStorage).</span>
+        </div>
+
+      </Card>
+    </div>
   );
 };

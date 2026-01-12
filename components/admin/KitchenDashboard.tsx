@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Users, Utensils, Wine, Clock, RefreshCw, 
-  ChefHat, AlertTriangle
+  ChefHat, AlertTriangle, ClipboardList, StickyNote
 } from 'lucide-react';
 import { Card } from '../UI';
 import { bookingRepo } from '../../utils/storage';
@@ -18,7 +18,8 @@ export const KitchenDashboard = () => {
     totalGuests: 0,
     standardCount: 0,
     premiumCount: 0,
-    dietary: [] as { name: string; count: number }[],
+    productionCounts: [] as { name: string; count: number }[], // Blok A: Aggregated
+    serviceTickets: [] as { id: string; name: string; table?: string; details: string; type: 'DIET' | 'COMMENT' }[], // Blok B: Specifics
     addons: [] as { name: string; count: number }[],
     reservationsCount: 0
   });
@@ -42,26 +43,43 @@ export const KitchenDashboard = () => {
     const standardCount = relevant.filter(r => r.packageType === 'standard').reduce((sum, r) => sum + r.partySize, 0);
     const premiumCount = relevant.filter(r => r.packageType === 'premium').reduce((sum, r) => sum + r.partySize, 0);
 
-    // 2. Aggregate Dietary
-    // Use structured data if available, fallback to manual string parsing if needed (simple aggregation here)
-    const dietaryMap = new Map<string, number>();
-    
+    // 2. Dietary & Notes Processing
+    const productionMap = new Map<string, number>();
+    const tickets: typeof stats.serviceTickets = [];
+
     relevant.forEach(r => {
-      // Priority: Structured Data
+      // --- BLOCK A: PRODUCTION (Mise-en-place) ---
+      // Only count structured data here for bulk cooking
       if (r.notes.structuredDietary) {
         Object.entries(r.notes.structuredDietary).forEach(([key, count]) => {
-          dietaryMap.set(key, (dietaryMap.get(key) || 0) + count);
+          if (count > 0) {
+            productionMap.set(key, (productionMap.get(key) || 0) + count);
+          }
         });
-      } 
-      // Fallback or additional: Free text notes if present and NOT covered by structured
-      // This is tricky, for now we list distinct free-text notes as individual lines if no structured data exists
-      else if (r.notes.dietary) {
-        const key = r.notes.dietary.trim(); // Simplified grouping by exact string match
-        dietaryMap.set(key, (dietaryMap.get(key) || 0) + 1); // Count occurrences of the NOTE, not guests (as string might say "2x Vegan")
+      }
+
+      // --- BLOCK B: SERVICE (Tickets) ---
+      // Any specific comment OR dietary note needs a ticket
+      // We combine specific comments and dietary strings into a readable ticket
+      const hasComments = !!r.notes.comments;
+      const hasDietary = !!r.notes.dietary;
+      
+      if (hasComments || hasDietary) {
+        let details = '';
+        if (hasDietary) details += r.notes.dietary;
+        if (hasComments) details += (details ? ' | ' : '') + `"${r.notes.comments}"`;
+
+        tickets.push({
+          id: r.id,
+          name: `${r.customer.firstName} ${r.customer.lastName}`,
+          table: (r as any).tableNumber, // Cast as any since tableNumber might be injected by HostView logic
+          details: details,
+          type: hasComments ? 'COMMENT' : 'DIET'
+        });
       }
     });
 
-    const dietaryList = Array.from(dietaryMap.entries()).map(([name, count]) => ({ name, count }));
+    const productionList = Array.from(productionMap.entries()).map(([name, count]) => ({ name, count }));
 
     // 3. Aggregate Addons
     const addonMap = new Map<string, number>();
@@ -79,7 +97,8 @@ export const KitchenDashboard = () => {
       totalGuests,
       standardCount,
       premiumCount,
-      dietary: dietaryList,
+      productionCounts: productionList,
+      serviceTickets: tickets,
       addons: addonList,
       reservationsCount: relevant.length
     });
@@ -128,9 +147,9 @@ export const KitchenDashboard = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 h-full">
         
-        {/* Column 1: Main Covers */}
+        {/* COL 1: ALGEMEEN (Covers) */}
         <div className="space-y-6">
            <Card className="p-8 bg-slate-900 border-slate-800 flex flex-col items-center justify-center text-center h-64">
               <p className="text-slate-500 uppercase font-bold tracking-widest text-sm mb-2">Totaal Covers</p>
@@ -151,46 +170,93 @@ export const KitchenDashboard = () => {
            </div>
         </div>
 
-        {/* Column 2: Dietary */}
-        <Card className="lg:col-span-1 bg-red-950/20 border-red-900/30 border p-0 overflow-hidden flex flex-col">
-           <div className="p-6 border-b border-red-900/30 bg-red-900/10 flex items-center space-x-3">
-             <Utensils size={24} className="text-red-500" />
-             <h2 className="text-xl font-bold text-red-100 uppercase tracking-wide">Dieetwensen</h2>
-           </div>
-           <div className="flex-grow p-6 overflow-y-auto max-h-[600px]">
-             {stats.dietary.length === 0 ? (
-               <div className="h-full flex items-center justify-center text-red-800 italic">Geen bijzonderheden.</div>
-             ) : (
-               <div className="space-y-3">
-                 {stats.dietary.map((item, idx) => (
-                   <div key={idx} className="flex justify-between items-center text-lg p-3 rounded-lg bg-red-900/10 border border-red-900/20">
-                      <span className="font-bold text-red-200">{item.name}</span>
-                      <span className="font-black text-2xl text-red-500 bg-black/30 px-3 py-1 rounded-lg min-w-[3rem] text-center">{item.count}</span>
-                   </div>
-                 ))}
+        {/* COL 2: PRODUCTIE & MISE-EN-PLACE (Block A + Addons) */}
+        <div className="space-y-6 flex flex-col">
+           {/* BLOCK A: Aggregated Dietary */}
+           <Card className="bg-slate-900 border-slate-800 p-0 overflow-hidden flex-1">
+             <div className="p-4 border-b border-slate-800 bg-slate-950 flex items-center justify-between">
+               <div className="flex items-center space-x-3">
+                 <ClipboardList size={20} className="text-emerald-500" />
+                 <h2 className="text-lg font-bold text-white uppercase tracking-wide">Mise-en-place</h2>
                </div>
-             )}
-           </div>
-        </Card>
+               <span className="text-[10px] bg-emerald-900/20 text-emerald-500 px-2 py-1 rounded font-bold uppercase">Productie</span>
+             </div>
+             
+             <div className="p-4 space-y-3">
+               {stats.productionCounts.length === 0 ? (
+                 <div className="p-4 text-center text-slate-500 italic">Geen bijzonderheden.</div>
+               ) : (
+                 stats.productionCounts.map((item, idx) => (
+                   <div key={idx} className="flex justify-between items-center p-3 rounded-xl bg-slate-800/50 border border-slate-700">
+                      <span className="font-bold text-slate-200 text-lg">{item.name}</span>
+                      <span className="font-black text-2xl text-emerald-400">{item.count}x</span>
+                   </div>
+                 ))
+               )}
+             </div>
+           </Card>
 
-        {/* Column 3: Add-ons */}
-        <Card className="lg:col-span-1 bg-blue-950/20 border-blue-900/30 border p-0 overflow-hidden flex flex-col">
-           <div className="p-6 border-b border-blue-900/30 bg-blue-900/10 flex items-center space-x-3">
-             <Wine size={24} className="text-blue-500" />
-             <h2 className="text-xl font-bold text-blue-100 uppercase tracking-wide">Add-ons & Dranken</h2>
-           </div>
-           <div className="flex-grow p-6 overflow-y-auto max-h-[600px]">
-             {stats.addons.length === 0 ? (
-               <div className="h-full flex items-center justify-center text-blue-800 italic">Geen extra's geboekt.</div>
-             ) : (
-               <div className="space-y-3">
-                 {stats.addons.map((item, idx) => (
-                   <div key={idx} className="flex justify-between items-center text-lg p-3 rounded-lg bg-blue-900/10 border border-blue-900/20">
-                      <span className="font-bold text-blue-200">{item.name}</span>
-                      <span className="font-black text-2xl text-blue-500 bg-black/30 px-3 py-1 rounded-lg min-w-[3rem] text-center">{item.count}</span>
+           {/* Add-ons */}
+           <Card className="bg-blue-950/10 border-blue-900/30 border p-0 overflow-hidden flex-1">
+             <div className="p-4 border-b border-blue-900/30 bg-blue-900/10 flex items-center space-x-3">
+               <Wine size={20} className="text-blue-500" />
+               <h2 className="text-lg font-bold text-blue-100 uppercase tracking-wide">Drank & Extra</h2>
+             </div>
+             <div className="p-4 space-y-3">
+               {stats.addons.length === 0 ? (
+                 <div className="p-4 text-center text-blue-800 italic">Geen extra's.</div>
+               ) : (
+                 stats.addons.map((item, idx) => (
+                   <div key={idx} className="flex justify-between items-center text-sm font-bold text-blue-200 border-b border-blue-900/20 pb-2 last:border-0">
+                      <span>{item.name}</span>
+                      <span className="text-lg text-blue-400">{item.count}</span>
                    </div>
-                 ))}
+                 ))
+               )}
+             </div>
+           </Card>
+        </div>
+
+        {/* COL 3: SERVICE / SPECIALS (Block B) */}
+        <Card className="lg:col-span-1 bg-amber-950/10 border-amber-900/30 border p-0 overflow-hidden flex flex-col h-full">
+           <div className="p-4 border-b border-amber-900/30 bg-amber-900/10 flex items-center justify-between">
+             <div className="flex items-center space-x-3">
+               <StickyNote size={20} className="text-amber-500" />
+               <h2 className="text-lg font-bold text-amber-100 uppercase tracking-wide">Speciale Verzoeken</h2>
+             </div>
+             <span className="text-[10px] bg-amber-900/20 text-amber-500 px-2 py-1 rounded font-bold uppercase">Service</span>
+           </div>
+           
+           <div className="flex-grow p-4 overflow-y-auto custom-scrollbar space-y-3 bg-black/20">
+             {stats.serviceTickets.length === 0 ? (
+               <div className="h-full flex flex-col items-center justify-center text-amber-800/50 italic min-h-[200px]">
+                 <AlertTriangle size={32} className="mb-2"/>
+                 <p>Geen tickets voor de pas.</p>
                </div>
+             ) : (
+               stats.serviceTickets.map((ticket, idx) => (
+                 <div key={idx} className="bg-amber-100 text-black p-4 rounded-lg shadow-lg relative overflow-hidden group">
+                    {/* Tape visual */}
+                    <div className="absolute top-0 left-1/2 -translate-x-1/2 w-12 h-3 bg-white/30 backdrop-blur-sm -mt-1.5 rotate-2"></div>
+                    
+                    <div className="flex justify-between items-start mb-2 border-b border-amber-900/10 pb-2">
+                       <span className="font-black text-lg uppercase tracking-tight truncate max-w-[150px]">
+                         {ticket.table ? `TAFEL ${ticket.table}` : 'GEEN TAFEL'}
+                       </span>
+                       <span className="text-[10px] font-bold bg-black/10 px-1.5 py-0.5 rounded">
+                         {ticket.type === 'COMMENT' ? 'OPM' : 'DIEET'}
+                       </span>
+                    </div>
+                    
+                    <p className="font-serif font-bold text-xl leading-tight mb-2">
+                      {ticket.details}
+                    </p>
+                    
+                    <div className="text-xs font-mono text-amber-900/70 uppercase">
+                      Gast: {ticket.name}
+                    </div>
+                 </div>
+               ))
              )}
            </div>
         </Card>

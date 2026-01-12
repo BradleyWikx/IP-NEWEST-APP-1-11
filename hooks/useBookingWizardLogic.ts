@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useWizardPersistence } from './useWizardPersistence';
-import { bookingRepo, notificationsRepo, getEvents, getShowDefinitions, customerRepo, requestRepo, waitlistRepo } from '../utils/storage';
+import { bookingRepo, notificationsRepo, getEvents, getShowDefinitions, customerRepo, requestRepo, waitlistRepo, calendarRepo } from '../utils/storage';
 import { triggerEmail } from '../utils/emailEngine';
 import { logAuditAction } from '../utils/auditLogger';
 import { Reservation, BookingStatus, EventDate, ShowDefinition, WaitlistEntry } from '../types';
@@ -99,6 +99,20 @@ export const useBookingWizardLogic = () => {
     if (event && show) {
       setEventData({ event, show });
       
+      // 24H Safety Check (Stop direct links to today's date)
+      const now = new Date();
+      const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      const eventDate = new Date(event.date);
+      // We use string comparison for date part safety, but here full timestamp check is fine as event.date is YYYY-MM-DD
+      // Adding time to eventDate to make it end of day? No, safer to just compare string cutoff
+      const cutoffStr = cutoff.toISOString().split('T')[0];
+      
+      if (wizardData.date < cutoffStr) {
+         setSubmitError("Online reserveren voor deze datum is gesloten. Neem telefonisch contact op.");
+         setIsWaitlistFull(true); // Effectively blocks the UI
+         return; 
+      }
+
       // Pricing
       const priceConfig = getEffectivePricing(event, show);
       setPricing(priceConfig);
@@ -273,7 +287,7 @@ export const useBookingWizardLogic = () => {
 
   const submitBooking = async () => {
     if (isWaitlistFull) {
-        setSubmitError("De wachtlijst voor deze datum is helaas vol.");
+        setSubmitError("Online reserveren is gesloten.");
         return;
     }
 
@@ -281,6 +295,46 @@ export const useBookingWizardLogic = () => {
     setIsSubmitting(true);
     
     await new Promise(resolve => setTimeout(resolve, 1500));
+
+    // --- ATOMIC CAPACITY CHECK (RACE CONDITION PREVENTION) ---
+    // Only strictly enforce this for regular bookings, not waitlist entries.
+    if (!isWaitlistMode) {
+      try {
+        const freshEvents = calendarRepo.getAll();
+        const targetEvent = freshEvents.find(e => e.date === wizardData.date);
+        
+        // If event disappeared or is strictly closed
+        if (!targetEvent || targetEvent.bookingEnabled === false) {
+           throw new Error("De status van dit event is gewijzigd. Probeer het opnieuw.");
+        }
+
+        if (targetEvent.type === 'SHOW') {
+           const freshReservations = bookingRepo.getAll();
+           const currentBookedCount = freshReservations
+             .filter(r => 
+               r.date === wizardData.date && 
+               r.status !== 'CANCELLED' && 
+               r.status !== 'ARCHIVED' && 
+               r.status !== 'NOSHOW' && 
+               r.status !== 'WAITLIST' // Waitlist doesn't count towards capacity
+             )
+             .reduce((sum, r) => sum + r.partySize, 0);
+           
+           const maxCapacity = targetEvent.capacity || CAPACITY_TARGET;
+           
+           if (currentBookedCount + wizardData.totalGuests > maxCapacity) {
+              setSubmitError("Helaas, in de tussentijd is de capaciteit overschreden. Er zijn niet genoeg plaatsen meer.");
+              setIsSubmitting(false);
+              return; // STOP
+           }
+        }
+      } catch (err: any) {
+         setSubmitError(err.message || "Er is een fout opgetreden bij de capaciteitscontrole.");
+         setIsSubmitting(false);
+         return;
+      }
+    }
+    // --- END ATOMIC CHECK ---
 
     try {
         const fullPhone = `${wizardData.customer.phoneCode} ${wizardData.customer.phone}`;

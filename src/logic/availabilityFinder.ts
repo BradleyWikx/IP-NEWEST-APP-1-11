@@ -71,8 +71,11 @@ export const findAvailableShowDates = (query: AvailabilityQuery): RankedSlot[] =
   const shows = query.data?.shows || getShowDefinitions();
 
   const { start, end } = query.dateRange;
-  const startDate = new Date(start);
-  const endDate = new Date(end);
+  
+  // 24H LOCK: Filter out dates closer than 24h from now unless includeClosed (admin override) is true
+  const now = new Date();
+  const cutoffDate = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  const cutoffStr = cutoffDate.toISOString().split('T')[0];
 
   // 2. Filter Candidate Events
   const candidates = events.filter(e => {
@@ -81,6 +84,11 @@ export const findAvailableShowDates = (query: AvailabilityQuery): RankedSlot[] =
     
     // Date Range
     if (e.date < start || e.date > end) return false;
+    
+    // 24H Rule Check (Online Booking Block)
+    if (!query.includeClosed && e.date < cutoffStr) {
+      return false; 
+    }
     
     // Weekday Filter
     if (query.weekdays && query.weekdays.length > 0) {

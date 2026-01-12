@@ -1,6 +1,6 @@
 
 import { 
-  getReservations, 
+  bookingRepo,
   getCustomers, 
   getVouchers, 
   getWaitlist, 
@@ -26,17 +26,19 @@ export const buildSearchIndex = (): SearchItem[] => {
   const index: SearchItem[] = [];
   
   try {
-    // 1. Reservations
-    const reservations = getReservations();
+    // 1. Reservations (Fetch ALL including ARCHIVED)
+    const reservations = bookingRepo.getAll(true);
     const shows = getShowDefinitions();
     
     reservations.forEach(res => {
       const show = shows.find(s => s.id === res.showId);
+      const isArchived = res.status === BookingStatus.ARCHIVED;
+      
       index.push({
         id: `res-${res.id}`,
         category: 'RESERVATION',
         title: `${res.customer.firstName} ${res.customer.lastName}`,
-        subtitle: `${new Date(res.date).toLocaleDateString()} • ${res.id} • ${res.partySize}p`,
+        subtitle: `${new Date(res.date).toLocaleDateString()} • ${res.id} • ${res.partySize}p ${isArchived ? '(Archief)' : ''}`,
         keywords: [
           res.id, 
           res.customer.firstName, 

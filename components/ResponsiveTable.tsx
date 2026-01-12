@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { Card } from './UI';
 
 interface Column<T> {
@@ -15,8 +15,9 @@ interface ResponsiveTableProps<T> {
   onRowClick?: (item: T) => void;
   emptyMessage?: string;
   isLoading?: boolean;
-  // Optional: Custom mobile renderer if the auto-card isn't enough
   renderMobileItem?: (item: T) => React.ReactNode;
+  isVirtual?: boolean; // NEW: Enable virtualization
+  virtualHeight?: string; // Height of the scroll container (default 600px)
 }
 
 export const ResponsiveTable = <T extends any>({
@@ -26,8 +27,61 @@ export const ResponsiveTable = <T extends any>({
   onRowClick,
   emptyMessage = "Geen data gevonden.",
   isLoading = false,
-  renderMobileItem
+  renderMobileItem,
+  isVirtual = false,
+  virtualHeight = "600px"
 }: ResponsiveTableProps<T>) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
+
+  // Constants for row heights (Approximations)
+  const ROW_HEIGHT_DESKTOP = 60; 
+  const ROW_HEIGHT_MOBILE = 180; // Estimate for cards
+
+  useEffect(() => {
+    if (containerRef.current) {
+      setContainerHeight(containerRef.current.clientHeight);
+      
+      const handleScroll = (e: Event) => {
+        setScrollTop((e.target as HTMLDivElement).scrollTop);
+      };
+      
+      const el = containerRef.current;
+      el.addEventListener('scroll', handleScroll);
+      return () => el.removeEventListener('scroll', handleScroll);
+    }
+  }, [isLoading, isVirtual]);
+
+  // Virtualization Logic
+  const { virtualItems, totalHeight, paddingTop, paddingBottom, isDesktop } = useMemo(() => {
+    if (!isVirtual || data.length === 0) {
+      return { virtualItems: data, totalHeight: 0, paddingTop: 0, paddingBottom: 0, isDesktop: true };
+    }
+
+    // Determine simplified breakpoint (In real app, use useMediaQuery hook)
+    const isDesk = window.innerWidth >= 768; 
+    const itemHeight = isDesk ? ROW_HEIGHT_DESKTOP : ROW_HEIGHT_MOBILE;
+    
+    const totalH = data.length * itemHeight;
+    const startIndex = Math.floor(scrollTop / itemHeight);
+    // Buffer: Render 5 extra items above and below
+    const effectiveStart = Math.max(0, startIndex - 5);
+    const visibleCount = Math.ceil(containerHeight / itemHeight);
+    const effectiveEnd = Math.min(data.length, startIndex + visibleCount + 5);
+
+    const items = data.slice(effectiveStart, effectiveEnd);
+    const topPad = effectiveStart * itemHeight;
+    const bottomPad = (data.length - effectiveEnd) * itemHeight;
+
+    return { 
+      virtualItems: items, 
+      totalHeight: totalH, 
+      paddingTop: topPad, 
+      paddingBottom: bottomPad,
+      isDesktop: isDesk
+    };
+  }, [data, scrollTop, containerHeight, isVirtual]);
 
   if (isLoading) {
     return <div className="p-12 text-center text-slate-500">Laden...</div>;
@@ -41,27 +95,38 @@ export const ResponsiveTable = <T extends any>({
     );
   }
 
+  const Container = isVirtual ? 'div' : React.Fragment;
+  const containerProps = isVirtual ? {
+    ref: containerRef,
+    className: "overflow-y-auto custom-scrollbar border border-slate-800 rounded-2xl bg-slate-900",
+    style: { height: virtualHeight }
+  } : {};
+
   return (
-    <>
+    <Container {...containerProps}>
       {/* Desktop Table View */}
-      <div className="hidden md:block bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-        <div className="overflow-x-auto">
+      <div className="hidden md:block bg-slate-900 border-b border-slate-800 rounded-t-2xl overflow-hidden relative">
+        <div className={!isVirtual ? "overflow-x-auto rounded-2xl border border-slate-800" : ""}>
           <table className="w-full text-left border-collapse">
-            <thead className="bg-slate-950 text-slate-500 text-[10px] uppercase tracking-widest font-bold">
+            <thead className="bg-slate-950 text-slate-500 text-[10px] uppercase tracking-widest font-bold sticky top-0 z-10 shadow-sm">
               <tr>
                 {columns.map((col, idx) => (
-                  <th key={idx} className={`p-4 border-b border-slate-800 ${col.className || ''}`}>
+                  <th key={idx} className={`p-4 border-b border-slate-800 bg-slate-950 ${col.className || ''}`}>
                     {col.header}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800 text-sm">
-              {data.map((item) => (
+              {isVirtual && paddingTop > 0 && (
+                <tr><td colSpan={columns.length} style={{ height: paddingTop }} /></tr>
+              )}
+              
+              {virtualItems.map((item) => (
                 <tr 
                   key={keyExtractor(item)} 
                   onClick={() => onRowClick && onRowClick(item)}
-                  className={`group transition-colors ${onRowClick ? 'cursor-pointer hover:bg-slate-800/50' : ''}`}
+                  className={`group transition-colors h-[60px] ${onRowClick ? 'cursor-pointer hover:bg-slate-800/50' : ''}`}
                 >
                   {columns.map((col, idx) => (
                     <td key={idx} className={`p-4 ${col.className || ''}`}>
@@ -70,14 +135,20 @@ export const ResponsiveTable = <T extends any>({
                   ))}
                 </tr>
               ))}
+
+              {isVirtual && paddingBottom > 0 && (
+                <tr><td colSpan={columns.length} style={{ height: paddingBottom }} /></tr>
+              )}
             </tbody>
           </table>
         </div>
       </div>
 
       {/* Mobile Card View */}
-      <div className="md:hidden space-y-4">
-        {data.map((item) => (
+      <div className="md:hidden space-y-4 p-1">
+        {isVirtual && <div style={{ height: paddingTop }} />}
+        
+        {virtualItems.map((item) => (
           <Card 
             key={keyExtractor(item)} 
             onClick={() => onRowClick && onRowClick(item)}
@@ -100,7 +171,9 @@ export const ResponsiveTable = <T extends any>({
             )}
           </Card>
         ))}
+
+        {isVirtual && <div style={{ height: paddingBottom }} />}
       </div>
-    </>
+    </Container>
   );
 };

@@ -5,7 +5,8 @@ import {
   ChangeRequest, Subscriber, AuditLogEntry, VoucherSaleConfig,
   CalendarEvent, ShowEvent, EmailTemplate, EmailLog,
   AdminNotification, NotificationType, NotificationSeverity,
-  Task, TaskType, TaskStatus, PromoCodeRule, AdminNote
+  Task, TaskType, TaskStatus, PromoCodeRule, AdminNote,
+  BookingStatus
 } from '../types';
 import { logAuditAction } from './auditLogger';
 
@@ -84,12 +85,45 @@ class Repository<T extends { id?: string } | any> {
 class BookingRepository extends Repository<Reservation> {
   constructor() {
     super(KEYS.RESERVATIONS);
+    this.archivePastReservations();
   }
 
-  // OVERRIDE: Only return active items (not deleted)
-  getAll(): Reservation[] {
+  // "De Nachtwacht": Auto-archive old reservations
+  private archivePastReservations() {
     const all = super.getAll();
-    return all.filter(r => !r.deletedAt);
+    const today = new Date().toISOString().split('T')[0];
+    let changed = false;
+
+    const updated = all.map(r => {
+      // Logic: Date < Today AND Status is a final state (Confirmed/NoShow/Cancelled)
+      // We do NOT archive 'OPEN' payments that are confirmed unless we want to force cleanup.
+      // Assuming CONFIRMED is done. REQUEST/OPTION should expire via Tasks, not archive.
+      if (r.date < today && 
+         (r.status === BookingStatus.CONFIRMED || r.status === BookingStatus.NOSHOW || r.status === BookingStatus.CANCELLED)
+      ) {
+        changed = true;
+        return { ...r, status: BookingStatus.ARCHIVED };
+      }
+      return r;
+    });
+
+    if (changed) {
+      console.log('🌙 De Nachtwacht: Cleaning up past reservations...');
+      this.saveAll(updated);
+    }
+  }
+
+  // OVERRIDE: Default excludes ARCHIVED for performance
+  getAll(includeArchived: boolean = false): Reservation[] {
+    const all = super.getAll();
+    // 1. Filter out soft-deleted items (Trash)
+    const active = all.filter(r => !r.deletedAt);
+    
+    // 2. Filter out ARCHIVED unless requested
+    if (includeArchived) {
+      return active;
+    }
+    return active.filter(r => r.status !== BookingStatus.ARCHIVED);
   }
 
   // NEW: Get soft deleted items
@@ -155,7 +189,7 @@ class BookingRepository extends Repository<Reservation> {
 
   findByIdempotencyKey(key: string): Reservation | undefined {
     if (!key) return undefined;
-    return this.getAll().find(r => r.idempotencyKey === key);
+    return this.getAll(true).find(r => r.idempotencyKey === key); // Check archives too for idempotency
   }
 
   findRecentDuplicates(email: string, date: string, minutes: number = 30): Reservation | undefined {
@@ -163,9 +197,9 @@ class BookingRepository extends Repository<Reservation> {
     const threshold = minutes * 60 * 1000;
     const normalizedEmail = email.trim().toLowerCase();
     
-    return this.getAll().find(r => 
+    // Check all records including archived just in case
+    return this.getAll(true).find(r => 
       r.status !== 'CANCELLED' && 
-      r.status !== 'ARCHIVED' &&
       r.customer.email.trim().toLowerCase() === normalizedEmail &&
       r.date === date &&
       (now - new Date(r.createdAt).getTime()) < threshold

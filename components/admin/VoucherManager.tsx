@@ -11,6 +11,48 @@ import { triggerEmail } from '../../utils/emailEngine';
 import { EmailHistory } from './EmailHistory';
 import { toCSV, downloadCSV } from '../../utils/csvExport';
 
+// --- SECURE CODE GENERATOR ---
+
+const VOUCHER_CHARSET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // Excludes I, 1, O, 0 to avoid confusion
+
+const generateSecureVoucherCode = (prefix: string, existingCodes: Set<string>): string => {
+  let code = '';
+  let isUnique = false;
+  
+  // Retry loop for collision avoidance
+  while (!isUnique) {
+    // 1. Generate 8 random bytes for the payload
+    const randomValues = new Uint8Array(8);
+    window.crypto.getRandomValues(randomValues);
+    
+    let payload = '';
+    let weightSum = 0;
+
+    // 2. Map random bytes to Charset & Calculate Checksum
+    for (let i = 0; i < 8; i++) {
+      const index = randomValues[i] % VOUCHER_CHARSET.length;
+      const char = VOUCHER_CHARSET[index];
+      payload += char;
+      
+      // Weighted Sum for Check Digit (Weight = Position + 1)
+      weightSum += index * (i + 1);
+    }
+
+    // 3. Calculate Check Digit (Modulo 32)
+    const checkDigitIndex = weightSum % VOUCHER_CHARSET.length;
+    const checkDigit = VOUCHER_CHARSET[checkDigitIndex];
+
+    // 4. Format: PREFIX-XXXX-XXXX-C
+    code = `${prefix}-${payload.slice(0, 4)}-${payload.slice(4)}-${checkDigit}`;
+
+    // 5. Uniqueness Check
+    if (!existingCodes.has(code)) {
+      isUnique = true;
+    }
+  }
+  return code;
+};
+
 export const VoucherManager = () => {
   const [activeTab, setActiveTab] = useState<'ORDERS' | 'VOUCHERS'>('ORDERS');
   const [orders, setOrders] = useState<VoucherOrder[]>([]);
@@ -60,10 +102,16 @@ export const VoucherManager = () => {
     const newVouchers: Voucher[] = [];
     const generatedCodes: string[] = [];
     const sideEffects: any[] = [];
+    
+    // Create Set of existing codes for fast collision lookup
+    const existingCodes = new Set<string>(vouchers.map(v => v.code));
 
     order.items.forEach(item => {
         for (let i = 0; i < item.quantity; i++) {
-            const code = `GS-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+            // SECURE GENERATION
+            const code = generateSecureVoucherCode('GS', existingCodes);
+            existingCodes.add(code); // Add to local set to prevent collisions within this batch
+
             newVouchers.push({
                 code,
                 originalBalance: item.price,
@@ -125,9 +173,14 @@ export const VoucherManager = () => {
 
     const newVouchers: Voucher[] = [];
     const exportRows: any[] = [];
+    const existingCodes = new Set<string>(vouchers.map(v => v.code));
+    const prefix = bulkConfig.prefix.trim().toUpperCase() || 'BULK';
 
     for(let i=0; i<bulkConfig.count; i++) {
-        const code = `${bulkConfig.prefix}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+        // SECURE GENERATION
+        const code = generateSecureVoucherCode(prefix, existingCodes);
+        existingCodes.add(code);
+
         newVouchers.push({
             code,
             originalBalance: bulkConfig.amount,

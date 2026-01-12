@@ -1,18 +1,23 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   ShieldAlert, Search, Filter, Clock, User, 
-  FileJson, ChevronRight, Download, Activity 
+  FileJson, ChevronRight, Download, Activity, Calendar, X 
 } from 'lucide-react';
-import { Button, Card, Input, Badge } from '../UI';
+import { Button, Card, Badge } from '../UI';
 import { getAuditLogs, AuditLogEntry } from '../../utils/auditLogger';
 
 export const AuditLogViewer = () => {
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [filteredLogs, setFilteredLogs] = useState<AuditLogEntry[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterType, setFilterType] = useState<string>('ALL');
   const [selectedLog, setSelectedLog] = useState<AuditLogEntry | null>(null);
+
+  // Filters State
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterEntityType, setFilterEntityType] = useState<string>('ALL');
+  const [filterUser, setFilterUser] = useState<string>('ALL');
+  const [filterAction, setFilterAction] = useState<string>('ALL');
+  const [dateRange, setDateRange] = useState({ start: '', end: '' });
 
   useEffect(() => {
     const data = getAuditLogs();
@@ -20,25 +25,66 @@ export const AuditLogViewer = () => {
     setFilteredLogs(data);
   }, []);
 
+  // Compute unique options for dropdowns based on actual data
+  const uniqueUsers = useMemo(() => {
+    const users = new Set(logs.map(l => l.user.name));
+    return Array.from(users).sort();
+  }, [logs]);
+
+  const uniqueActions = useMemo(() => {
+    const actions = new Set(logs.map(l => l.action));
+    return Array.from(actions).sort();
+  }, [logs]);
+
+  // Apply Filters
   useEffect(() => {
     let result = logs;
 
+    // 1. Text Search
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       result = result.filter(log => 
-        log.action.toLowerCase().includes(term) ||
         log.entityId.toLowerCase().includes(term) ||
-        log.user.name.toLowerCase().includes(term) ||
         (log.changes?.description || '').toLowerCase().includes(term)
       );
     }
 
-    if (filterType !== 'ALL') {
-      result = result.filter(log => log.entityType === filterType);
+    // 2. Entity Type
+    if (filterEntityType !== 'ALL') {
+      result = result.filter(log => log.entityType === filterEntityType);
+    }
+
+    // 3. User
+    if (filterUser !== 'ALL') {
+      result = result.filter(log => log.user.name === filterUser);
+    }
+
+    // 4. Action
+    if (filterAction !== 'ALL') {
+      result = result.filter(log => log.action === filterAction);
+    }
+
+    // 5. Date Range
+    if (dateRange.start) {
+      result = result.filter(log => log.timestamp >= dateRange.start);
+    }
+    if (dateRange.end) {
+      // Add time to end date to include the full day
+      const endDate = new Date(dateRange.end);
+      endDate.setHours(23, 59, 59, 999);
+      result = result.filter(log => new Date(log.timestamp) <= endDate);
     }
 
     setFilteredLogs(result);
-  }, [searchTerm, filterType, logs]);
+  }, [searchTerm, filterEntityType, filterUser, filterAction, dateRange, logs]);
+
+  const resetFilters = () => {
+    setSearchTerm('');
+    setFilterEntityType('ALL');
+    setFilterUser('ALL');
+    setFilterAction('ALL');
+    setDateRange({ start: '', end: '' });
+  };
 
   const exportCSV = () => {
     const headers = ['Timestamp', 'User', 'Role', 'Action', 'Entity Type', 'Entity ID', 'Description'];
@@ -77,34 +123,76 @@ export const AuditLogViewer = () => {
         </Button>
       </div>
 
-      {/* Filters */}
-      <Card className="p-4 bg-slate-900/50">
-        <div className="flex flex-col md:flex-row gap-4 items-center">
-          <div className="flex-grow w-full md:w-auto relative">
+      {/* Advanced Filters */}
+      <Card className="p-4 bg-slate-900/50 space-y-4">
+        {/* Top Row: Search & Reset */}
+        <div className="flex gap-4">
+          <div className="relative flex-grow">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
             <input 
               className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500 transition-colors"
-              placeholder="Zoek op actie, gebruiker of ID..."
+              placeholder="Zoek op ID of omschrijving..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
             />
           </div>
-          
-          <div className="flex items-center space-x-2">
-            <Filter size={18} className="text-slate-500" />
-            <select 
-              className="bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-amber-500"
-              value={filterType}
-              onChange={(e) => setFilterType(e.target.value)}
+          <Button variant="ghost" onClick={resetFilters} className="text-slate-400 hover:text-white border-slate-800">
+            <X size={16} className="mr-2" /> Reset Filters
+          </Button>
+        </div>
+
+        {/* Bottom Row: Specific Filters */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+           <select 
+              className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-amber-500"
+              value={filterEntityType}
+              onChange={(e) => setFilterEntityType(e.target.value)}
             >
-              <option value="ALL">Alle Categorieën</option>
+              <option value="ALL">Alle Entiteiten</option>
               <option value="RESERVATION">Reserveringen</option>
               <option value="CALENDAR">Kalender</option>
               <option value="SYSTEM">Systeem</option>
               <option value="CUSTOMER">Klanten</option>
               <option value="WAITLIST">Wachtlijst</option>
-            </select>
-          </div>
+           </select>
+
+           <select 
+              className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-amber-500"
+              value={filterUser}
+              onChange={(e) => setFilterUser(e.target.value)}
+            >
+              <option value="ALL">Alle Gebruikers</option>
+              {uniqueUsers.map(u => <option key={u} value={u}>{u}</option>)}
+           </select>
+
+           <select 
+              className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-amber-500"
+              value={filterAction}
+              onChange={(e) => setFilterAction(e.target.value)}
+            >
+              <option value="ALL">Alle Acties</option>
+              {uniqueActions.map(a => <option key={a} value={a}>{a}</option>)}
+           </select>
+
+           <div className="relative">
+             <input 
+               type="date" 
+               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-amber-500"
+               value={dateRange.start}
+               onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
+               placeholder="Van"
+             />
+           </div>
+           
+           <div className="relative">
+             <input 
+               type="date" 
+               className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-amber-500"
+               value={dateRange.end}
+               onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
+               placeholder="Tot"
+             />
+           </div>
         </div>
       </Card>
 
@@ -126,7 +214,7 @@ export const AuditLogViewer = () => {
                 <tr>
                   <td colSpan={5} className="p-12 text-center text-slate-500">
                     <Activity size={32} className="mx-auto mb-4 opacity-50"/>
-                    Geen activiteit gevonden.
+                    Geen activiteit gevonden met deze filters.
                   </td>
                 </tr>
               ) : (
@@ -218,13 +306,13 @@ export const AuditLogViewer = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                  <div className="space-y-2">
                    <p className="text-xs font-bold text-red-500 uppercase tracking-widest flex items-center"><FileJson size={14} className="mr-2"/> Voor Wijziging</p>
-                   <pre className="bg-black p-4 rounded-xl border border-red-900/30 text-[10px] font-mono text-slate-400 overflow-x-auto whitespace-pre-wrap">
+                   <pre className="bg-black p-4 rounded-xl border border-red-900/30 text-[10px] font-mono text-slate-400 overflow-x-auto whitespace-pre-wrap h-64 custom-scrollbar">
                      {selectedLog.changes?.before ? JSON.stringify(selectedLog.changes.before, null, 2) : 'N/A'}
                    </pre>
                  </div>
                  <div className="space-y-2">
                    <p className="text-xs font-bold text-emerald-500 uppercase tracking-widest flex items-center"><FileJson size={14} className="mr-2"/> Na Wijziging</p>
-                   <pre className="bg-black p-4 rounded-xl border border-emerald-900/30 text-[10px] font-mono text-slate-400 overflow-x-auto whitespace-pre-wrap">
+                   <pre className="bg-black p-4 rounded-xl border border-emerald-900/30 text-[10px] font-mono text-slate-400 overflow-x-auto whitespace-pre-wrap h-64 custom-scrollbar">
                      {selectedLog.changes?.after ? JSON.stringify(selectedLog.changes.after, null, 2) : 'N/A'}
                    </pre>
                  </div>
