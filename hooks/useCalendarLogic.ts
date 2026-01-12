@@ -72,14 +72,13 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
           r.date === event.date && 
           r.status !== 'CANCELLED' && 
           r.status !== 'ARCHIVED' &&
-          r.status !== 'NOSHOW' && // Exclude NoShows from capacity? Usually yes, seat is gone, but for planning maybe free up. Let's keep them counted as "seats used" historically, but for future booking, seats are gone.
-          r.status !== 'WAITLIST' // Don't count waitlist as booked seats
+          r.status !== 'NOSHOW' && 
+          r.status !== 'WAITLIST'
         );
         
         // Sum total people
         const realBookedCount = bookingsForDate.reduce((sum, r) => sum + r.partySize, 0);
         
-        // Update the event object locally with real-time data
         return { 
           ...event, 
           bookedCount: realBookedCount
@@ -105,10 +104,8 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
     // Filter Events based on Mode
     const visibleEvents = allEvents.filter(e => {
       if (mode === 'ADMIN') return true;
-      // Customer: Only Public Shows
       if (e.type !== 'SHOW') return false;
       if (e.visibility !== 'PUBLIC') return false;
-      // Admin might hide specific events
       return true;
     });
 
@@ -117,19 +114,16 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
     const startDay = firstDay.getDay(); 
     const europeanStartDay = (startDay + 6) % 7;
     
-    // Previous Month Padding
     for (let i = 0; i < europeanStartDay; i++) {
       const d = new Date(year, month, -(europeanStartDay - 1 - i));
       days.push(createDayData(d, false, visibleEvents, shows, waitlistCounts));
     }
     
-    // Current Month
     for (let d = 1; d <= lastDay.getDate(); d++) {
       const date = new Date(year, month, d);
       days.push(createDayData(date, true, visibleEvents, shows, waitlistCounts));
     }
     
-    // Next Month Padding
     const endDay = lastDay.getDay();
     const europeanEndDay = (endDay + 6) % 7;
     const padEnd = 6 - europeanEndDay;
@@ -177,12 +171,12 @@ const createDayData = (
       show = shows.find(s => s.id === showEvent.showId);
       const profile = show?.profiles.find(p => p.id === showEvent.profileId) || show?.profiles[0];
       
-      // --- SMART STATUS CALCULATION ---
+      // STRICT STATUS CALCULATION
       status = calculateEventStatus(
         showEvent.bookedCount, 
         showEvent.capacity, 
         wlCount, 
-        showEvent.status // Pass manual status to allow hard override
+        showEvent.status
       );
       
       if (profile) {

@@ -2,132 +2,158 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Gift, ShoppingBag, ArrowRight, CheckCircle2, Star, 
-  Sparkles, ShieldCheck, Mail, Clock, CreditCard 
+  Sparkles, Heart, Mail, Printer, CreditCard, ChevronRight, User, FileText
 } from 'lucide-react';
 import { Button, Card, Input } from './UI';
 import { settingsRepo, voucherOrderRepo, notificationsRepo } from '../utils/storage';
 import { VoucherSaleConfig, VoucherOrder, VoucherOrderItem } from '../types';
 import { triggerEmail } from '../utils/emailEngine';
+import { VoucherCardPreview } from './VoucherCardPreview';
 
-const BenefitItem = ({ icon: Icon, title, desc }: any) => (
-  <div className="flex items-start space-x-3">
-    <div className="p-2 bg-amber-500/10 rounded-lg text-amber-500 shrink-0 border border-amber-500/20">
-      <Icon size={18} />
+// --- Experience Card Component ---
+const ExperienceCard = ({ 
+  title, 
+  price, 
+  description, 
+  isSelected, 
+  onSelect,
+  customAmount,
+  onCustomAmountChange,
+  isCustom = false
+}: any) => (
+  <div 
+    onClick={onSelect}
+    className={`
+      relative p-6 rounded-2xl border transition-all duration-300 cursor-pointer group flex flex-col h-full
+      ${isSelected 
+        ? 'bg-slate-900 border-amber-500 shadow-[0_0_30px_rgba(245,158,11,0.15)] scale-[1.02]' 
+        : 'bg-slate-900/40 border-slate-800 hover:border-slate-600 hover:bg-slate-900/60'}
+    `}
+  >
+    {isSelected && (
+      <div className="absolute top-3 right-3 text-amber-500 animate-in fade-in zoom-in">
+        <CheckCircle2 size={20} fill="currentColor" className="text-black" />
+      </div>
+    )}
+    
+    <div className={`p-3 rounded-xl w-fit mb-4 transition-colors ${isSelected ? 'bg-amber-500 text-black' : 'bg-slate-800 text-slate-400 group-hover:text-white'}`}>
+      {isCustom ? <CreditCard size={24} /> : <Star size={24} />}
     </div>
-    <div>
-      <h4 className="text-white font-bold text-sm">{title}</h4>
-      <p className="text-slate-500 text-xs leading-relaxed">{desc}</p>
+
+    <h3 className={`text-lg font-bold mb-2 ${isSelected ? 'text-white' : 'text-slate-200'}`}>{title}</h3>
+    <p className="text-xs text-slate-400 mb-6 leading-relaxed flex-grow">{description}</p>
+
+    <div className="mt-auto">
+      {isCustom ? (
+        <div className="relative">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">€</span>
+          <input 
+            type="number" 
+            min="10" 
+            max="500"
+            value={customAmount || ''}
+            onChange={(e) => onCustomAmountChange(parseInt(e.target.value) || 0)}
+            placeholder="50"
+            className={`
+              w-full bg-black border rounded-xl py-2 pl-8 pr-4 text-white font-mono font-bold focus:outline-none focus:border-amber-500 transition-all
+              ${isSelected ? 'border-amber-500/50' : 'border-slate-700'}
+            `}
+            onClick={(e) => e.stopPropagation()} 
+          />
+        </div>
+      ) : (
+        <p className={`text-xl font-serif font-bold ${isSelected ? 'text-amber-500' : 'text-white'}`}>
+          €{price}
+        </p>
+      )}
     </div>
   </div>
 );
 
 export const VoucherShop = () => {
   const [config, setConfig] = useState<VoucherSaleConfig | null>(null);
-  const [cart, setCart] = useState<VoucherOrderItem[]>([]);
-  const [step, setStep] = useState<'SHOP' | 'CHECKOUT' | 'SUCCESS'>('SHOP');
-  const [customer, setCustomer] = useState({ firstName: '', lastName: '', email: '' });
-  const [lastOrder, setLastOrder] = useState<VoucherOrder | null>(null);
+  const [step, setStep] = useState<'SHOP' | 'SUCCESS'>('SHOP');
+  
+  // Selection State
+  const [selectedType, setSelectedType] = useState<'CUSTOM' | 'DINER' | 'DUO'>('DINER');
+  const [customAmount, setCustomAmount] = useState<number>(50);
+  
+  // Form State
+  const [formData, setFormData] = useState({
+    recipientName: '',
+    senderName: '',
+    message: '',
+    deliveryMethod: 'DIRECT' as 'DIRECT' | 'SELF', // Direct email or Self print
+    senderEmail: '',
+    recipientEmail: ''
+  });
+
+  const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
     setConfig(settingsRepo.getVoucherSaleConfig());
   }, []);
 
-  const addToCart = (product: any) => {
-    const existing = cart.find(i => i.id === product.id);
-    if (existing) {
-      setCart(cart.map(i => i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i));
-    } else {
-      setCart([...cart, { id: product.id, label: product.label, price: product.price, quantity: 1 }]);
-    }
-  };
-
-  const removeFromCart = (productId: string) => {
-    const existing = cart.find(i => i.id === productId);
-    if (existing && existing.quantity > 1) {
-      setCart(cart.map(i => i.id === productId ? { ...i, quantity: i.quantity - 1 } : i));
-    } else {
-      setCart(cart.filter(i => i.id !== productId));
-    }
-  };
+  // Calculate current total based on selection
+  const currentAmount = selectedType === 'CUSTOM' ? customAmount : (selectedType === 'DINER' ? 75 : 150);
 
   const handleCheckout = async () => {
-    if (!customer.email || !customer.firstName || !customer.lastName) return;
+    if (!formData.senderEmail || !formData.senderName || !formData.recipientName) return;
     
+    setIsProcessing(true);
+    
+    // Simulate API
+    await new Promise(r => setTimeout(r, 1500));
+
     const orderId = `ORD-${Date.now()}`;
-    const subtotal = cart.reduce((sum, i) => sum + (i.price * i.quantity), 0);
-    
+    const items: VoucherOrderItem[] = [{
+      id: selectedType,
+      label: selectedType === 'CUSTOM' ? 'Vrij Bedrag' : (selectedType === 'DINER' ? 'Diner Arrangement' : 'Romantisch Duo'),
+      price: currentAmount,
+      quantity: 1
+    }];
+
     const newOrder: VoucherOrder = {
       id: orderId,
       createdAt: new Date().toISOString(),
-      status: 'REQUESTED',
-      buyer: customer,
-      items: cart,
-      amount: subtotal,
-      totals: {
-        subtotal,
-        shipping: 0,
-        fee: 0,
-        grandTotal: subtotal
-      },
-      deliveryMethod: 'DIGITAL',
-      recipient: { name: customer.firstName }, // Self by default for demo
-      issuanceMode: 'INDIVIDUAL'
+      status: 'REQUESTED', // Belangrijk: Status is REQUESTED, nog niet betaald
+      buyer: { firstName: formData.senderName, lastName: '' }, // Simplified for demo
+      items,
+      amount: currentAmount,
+      totals: { subtotal: currentAmount, shipping: 0, fee: 0, grandTotal: currentAmount },
+      deliveryMethod: 'DIGITAL', // Both 'DIRECT' and 'SELF' map to DIGITAL delivery
+      recipient: { name: formData.recipientName },
+      issuanceMode: 'INDIVIDUAL',
+      customerEmail: formData.senderEmail
     };
 
     voucherOrderRepo.add(newOrder);
-    
-    // --- EMAIL TRIGGER ---
     triggerEmail('VOUCHER_ORDER_REQUEST_RECEIVED', { type: 'VOUCHER_ORDER', id: orderId, data: newOrder });
-    
-    // --- NOTIFICATION TRIGGER ---
     notificationsRepo.createFromEvent('NEW_VOUCHER_ORDER', newOrder);
 
-    setLastOrder(newOrder);
     setStep('SUCCESS');
+    setIsProcessing(false);
   };
 
-  if (!config || !config.isEnabled) return (
-    <div className="min-h-screen bg-black flex items-center justify-center">
-      <div className="text-center p-8 border border-slate-800 rounded-2xl bg-slate-900">
-        <Gift size={48} className="mx-auto text-slate-600 mb-4"/>
-        <h2 className="text-xl text-white font-serif">De shop is momenteel gesloten.</h2>
-      </div>
-    </div>
-  );
+  if (!config || !config.isEnabled) return null; // Or Loading
 
   if (step === 'SUCCESS') {
     return (
       <div className="min-h-screen bg-black flex items-center justify-center p-4 relative overflow-hidden">
-        {/* Confetti Background Effect */}
-        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20 animate-pulse pointer-events-none" />
+        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/stardust.png')] opacity-20 pointer-events-none" />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
 
         <Card className="text-center max-w-lg w-full p-10 bg-slate-900/80 backdrop-blur-xl border-amber-500/30 shadow-2xl relative z-10 animate-in zoom-in-95 duration-500">
           <div className="w-20 h-20 bg-gradient-to-br from-amber-400 to-amber-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg shadow-amber-500/20">
             <CheckCircle2 size={40} className="text-black" strokeWidth={3} />
           </div>
-          <h2 className="text-4xl font-serif text-white mb-2">Bedankt, {customer.firstName}!</h2>
+          <h2 className="text-4xl font-serif text-white mb-2">Aanvraag Ontvangen!</h2>
           <p className="text-slate-300 mb-8 text-lg">
-            Uw bestelling <span className="font-mono text-amber-500">#{lastOrder?.id}</span> is ontvangen.
+            Bedankt voor uw bestelling. We sturen u <strong>binnen 3 werkdagen</strong> de factuur per e-mail.<br/><br/>
+            <span className="text-sm text-slate-400">Na ontvangst van de betaling wordt de voucher direct verzonden.</span>
           </p>
-          
-          <div className="bg-slate-950 p-6 rounded-xl border border-slate-800 mb-8 text-left space-y-3">
-            <div className="flex items-start space-x-3">
-              <Mail className="text-blue-400 mt-1 shrink-0" size={18} />
-              <p className="text-sm text-slate-400">
-                U ontvangt binnen enkele minuten een <strong>betaallink</strong> op <em>{customer.email}</em>.
-              </p>
-            </div>
-            <div className="flex items-start space-x-3">
-              <Gift className="text-emerald-400 mt-1 shrink-0" size={18} />
-              <p className="text-sm text-slate-400">
-                Na betaling worden de vouchers direct digitaal verstuurd.
-              </p>
-            </div>
-          </div>
-
           <Button onClick={() => window.location.reload()} variant="secondary" className="w-full">
-            Terug naar de Shop
+            Nog een cadeau bestellen
           </Button>
         </Card>
       </div>
@@ -135,200 +161,217 @@ export const VoucherShop = () => {
   }
 
   return (
-    <div className="min-h-screen bg-black text-slate-200">
+    <div className="min-h-screen bg-black text-slate-200 selection:bg-amber-900 selection:text-white">
       
-      {/* Hero Section - Seamless Black */}
-      <div className="relative overflow-hidden border-b border-white/5">
-        {/* Background Image with Deep Fade */}
-        <div className="absolute inset-0 z-0">
-            <img 
-              src="https://images.unsplash.com/photo-1514306191717-45224512c2d2?q=80&w=2070&auto=format&fit=crop" 
-              className="w-full h-full object-cover opacity-20 grayscale-[50%]"
-              alt="Theater Ambience"
-            />
-            {/* Gradients to fade into black body */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black via-black/80 to-transparent" />
-            <div className="absolute inset-0 bg-gradient-to-r from-black via-black/60 to-transparent" />
-        </div>
+      {/* 1. Hero Section (Updated) */}
+      <div className="relative py-24 md:py-32 overflow-hidden border-b border-white/5">
+        {/* Abstract Glow Background */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-900 via-black to-black" />
+        <div className="absolute top-[-20%] left-1/2 -translate-x-1/2 w-[800px] h-[500px] bg-amber-600/10 rounded-full blur-[100px] pointer-events-none" />
         
-        <div className="max-w-7xl mx-auto px-6 py-20 relative z-10 grid grid-cols-1 md:grid-cols-2 gap-12 items-center">
-          <div className="space-y-6">
-            <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs font-bold uppercase tracking-widest">
-              <Sparkles size={14} /> <span>Het perfecte cadeau</span>
-            </div>
-            <h1 className="text-5xl md:text-6xl font-serif text-white leading-tight drop-shadow-2xl">
-              Geef een avond <br/>
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-200 to-amber-500">pure magie</span>.
-            </h1>
-            <p className="text-lg text-slate-400 max-w-md leading-relaxed">
-              Verras vrienden of familie met een diner-theater ervaring. 
-              Onze vouchers zijn geldig voor alle shows en arrangementen.
-            </p>
+        <div className="max-w-7xl mx-auto px-6 relative z-10 text-center">
+          
+          {/* Logo Placement */}
+          <div className="mb-8 animate-in fade-in slide-in-from-top-4 duration-700">
+            <img 
+              src="https://irp.cdn-website.com/e8046ea7/dms3rep/multi/logo-ip.png" 
+              alt="Inspiration Point Logo" 
+              className="h-24 md:h-32 mx-auto drop-shadow-[0_0_25px_rgba(245,158,11,0.3)] opacity-90"
+            />
+          </div>
+
+          <div className="inline-flex items-center space-x-2 px-4 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-500 text-xs font-bold uppercase tracking-widest mb-6 backdrop-blur-md shadow-lg">
+            <Sparkles size={14} /> <span>The Gift of Wonder</span>
           </div>
           
-          {/* Benefits Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-             <div className="p-4 bg-slate-950/40 backdrop-blur-md border border-white/5 rounded-xl hover:bg-slate-950/60 transition-colors group">
-               <BenefitItem icon={Clock} title="2 Jaar Geldig" desc="Ruim de tijd om een perfect moment te kiezen." />
-             </div>
-             <div className="p-4 bg-slate-950/40 backdrop-blur-md border border-white/5 rounded-xl hover:bg-slate-950/60 transition-colors group">
-               <BenefitItem icon={Mail} title="Direct in Huis" desc="Digitale verzending direct na betaling." />
-             </div>
-             <div className="p-4 bg-slate-950/40 backdrop-blur-md border border-white/5 rounded-xl hover:bg-slate-950/60 transition-colors group">
-               <BenefitItem icon={ShieldCheck} title="Veilig Betalen" desc="Betaal veilig via iDeal of Creditcard." />
-             </div>
-             <div className="p-4 bg-slate-950/40 backdrop-blur-md border border-white/5 rounded-xl hover:bg-slate-950/60 transition-colors group">
-               <BenefitItem icon={Star} title="Premium Ervaring" desc="Geldig voor show, diner en drankjes." />
-             </div>
-          </div>
+          <h1 className="text-4xl md:text-6xl font-serif text-white leading-tight mb-6">
+            Geef een avond <br/>
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-amber-200 via-amber-400 to-amber-600">vol verwondering</span> cadeau.
+          </h1>
+          
+          <p className="text-lg text-slate-400 max-w-xl mx-auto leading-relaxed">
+            Een onvergetelijke beleving in Inspiration Point. Het perfecte geschenk voor vrienden, familie of zakenrelaties.
+          </p>
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto p-6 md:p-12">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-12">
+      <div className="max-w-7xl mx-auto px-6 py-12 md:py-20">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-24">
           
-          {/* Product Grid */}
-          <div className="lg:col-span-2 space-y-10">
-            <div>
-              <h2 className="text-2xl font-serif text-white mb-6 flex items-center">
-                <Gift className="mr-3 text-amber-500" /> Kies uw Voucher
-              </h2>
+          {/* LEFT COLUMN: Configuration */}
+          <div className="lg:col-span-7 space-y-12">
+            
+            {/* Step 1: Choose Product */}
+            <section className="space-y-6">
+              <div className="flex items-center space-x-3 mb-6">
+                <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-white font-bold font-serif border border-slate-700">1</div>
+                <h3 className="text-xl font-serif text-white">Kies uw ervaring</h3>
+              </div>
               
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <ExperienceCard 
+                  title="Vrij Bedrag" 
+                  description="Bepaal zelf de waarde (min. €10)." 
+                  isCustom 
+                  isSelected={selectedType === 'CUSTOM'}
+                  onSelect={() => setSelectedType('CUSTOM')}
+                  customAmount={customAmount}
+                  onCustomAmountChange={setCustomAmount}
+                />
+                <ExperienceCard 
+                  title="Diner Arrangement" 
+                  description="Show + 3-gangen diner voor 1 persoon."
+                  price={75}
+                  isSelected={selectedType === 'DINER'}
+                  onSelect={() => setSelectedType('DINER')}
+                />
+                <ExperienceCard 
+                  title="Romantisch Duo" 
+                  description="Compleet avondje uit voor twee personen."
+                  price={150}
+                  isSelected={selectedType === 'DUO'}
+                  onSelect={() => setSelectedType('DUO')}
+                />
+              </div>
+            </section>
+
+            {/* Step 2: Personalize */}
+            <section className="space-y-6">
+              <div className="flex items-center space-x-3 mb-6">
+                <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-white font-bold font-serif border border-slate-700">2</div>
+                <h3 className="text-xl font-serif text-white">Maak het persoonlijk</h3>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {config.products.map(p => (
-                  <div 
-                    key={p.id} 
-                    className="group relative bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden hover:border-amber-500/50 transition-all duration-300 cursor-pointer shadow-lg hover:shadow-amber-900/10 flex flex-col"
-                    onClick={() => addToCart(p)}
-                  >
-                    {/* Subtle Glow Effect on Hover */}
-                    <div className="absolute -inset-0.5 bg-gradient-to-r from-amber-500/20 to-amber-900/20 rounded-2xl opacity-0 group-hover:opacity-100 blur transition duration-500" />
-                    
-                    <div className="relative p-6 flex flex-col h-full bg-slate-900 rounded-2xl">
-                      <div className="flex justify-between items-start mb-4">
-                        <div className="p-3 bg-black rounded-xl border border-slate-800 text-amber-500 shadow-inner group-hover:text-amber-400 transition-colors">
-                          <Star size={24} fill="currentColor" className="opacity-80" />
-                        </div>
-                        <span className="font-serif text-2xl text-white font-bold group-hover:text-amber-500 transition-colors">€{p.price}</span>
-                      </div>
-                      
-                      <h3 className="text-xl font-bold text-white mb-2 group-hover:text-amber-500 transition-colors">{p.label}</h3>
-                      <p className="text-sm text-slate-400 mb-6 flex-grow">{p.description}</p>
-                      
-                      <Button variant="secondary" className="w-full bg-black border-slate-800 group-hover:bg-amber-500 group-hover:text-black group-hover:border-amber-500 transition-all">
-                        In Winkelmand
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-                
-                {/* Custom Amount Mock */}
-                <div className="relative bg-black/40 border border-slate-800 border-dashed rounded-2xl p-6 flex flex-col justify-center items-center text-center opacity-50 hover:opacity-100 transition-opacity cursor-not-allowed">
-                   <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 text-slate-500 mb-4">
-                      <CreditCard size={24} />
-                   </div>
-                   <h3 className="text-lg font-bold text-white mb-1">Eigen Bedrag</h3>
-                   <p className="text-xs text-slate-500 mb-4">Kies zelf een waarde tussen €10 - €500</p>
-                   <span className="text-[10px] font-bold uppercase tracking-widest text-slate-600 bg-slate-900 px-2 py-1 rounded">Binnenkort</span>
+                <Input 
+                  label="Voor wie is het?" 
+                  placeholder="Naam ontvanger" 
+                  value={formData.recipientName}
+                  onChange={(e: any) => setFormData({...formData, recipientName: e.target.value})}
+                  icon={<User size={16}/>}
+                />
+                <Input 
+                  label="Van wie komt het?" 
+                  placeholder="Uw naam" 
+                  value={formData.senderName}
+                  onChange={(e: any) => setFormData({...formData, senderName: e.target.value})}
+                  icon={<Heart size={16}/>}
+                />
+                <div className="md:col-span-2">
+                  <label className="text-xs font-bold text-amber-500/80 uppercase tracking-widest cursor-pointer font-serif mb-2 block">Persoonlijke Boodschap</label>
+                  <textarea 
+                    className="w-full bg-black/40 border border-slate-800 rounded-xl p-4 text-white placeholder:text-slate-600 focus:border-amber-500 outline-none min-h-[100px] resize-none transition-colors"
+                    placeholder="Schrijf hier uw wens..."
+                    value={formData.message}
+                    onChange={(e) => setFormData({...formData, message: e.target.value})}
+                    maxLength={150}
+                  />
+                  <div className="text-right text-[10px] text-slate-500 mt-1">{formData.message.length}/150</div>
                 </div>
               </div>
-            </div>
+            </section>
+
+            {/* Step 3: Delivery */}
+            <section className="space-y-6">
+              <div className="flex items-center space-x-3 mb-6">
+                <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-white font-bold font-serif border border-slate-700">3</div>
+                <h3 className="text-xl font-serif text-white">Verzending</h3>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                 <button 
+                   onClick={() => setFormData({...formData, deliveryMethod: 'DIRECT'})}
+                   className={`p-4 rounded-xl border text-left transition-all ${formData.deliveryMethod === 'DIRECT' ? 'bg-amber-900/20 border-amber-500 ring-1 ring-amber-500' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}
+                 >
+                   <div className="flex items-center space-x-2 mb-2">
+                     <Mail size={18} className={formData.deliveryMethod === 'DIRECT' ? 'text-amber-500' : 'text-slate-400'} />
+                     <span className="font-bold text-white text-sm">Direct naar ontvanger</span>
+                   </div>
+                   <p className="text-xs text-slate-400">Wij mailen de voucher direct.</p>
+                 </button>
+
+                 <button 
+                   onClick={() => setFormData({...formData, deliveryMethod: 'SELF'})}
+                   className={`p-4 rounded-xl border text-left transition-all ${formData.deliveryMethod === 'SELF' ? 'bg-amber-900/20 border-amber-500 ring-1 ring-amber-500' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}
+                 >
+                   <div className="flex items-center space-x-2 mb-2">
+                     <Printer size={18} className={formData.deliveryMethod === 'SELF' ? 'text-amber-500' : 'text-slate-400'} />
+                     <span className="font-bold text-white text-sm">Naar mijzelf</span>
+                   </div>
+                   <p className="text-xs text-slate-400">Ontvang PDF om zelf te geven.</p>
+                 </button>
+              </div>
+
+              <div className="space-y-4 bg-slate-900/50 p-6 rounded-xl border border-slate-800/50">
+                 <Input 
+                   label="Uw E-mailadres (voor factuur)" 
+                   type="email"
+                   value={formData.senderEmail}
+                   onChange={(e: any) => setFormData({...formData, senderEmail: e.target.value})}
+                   placeholder="uw@email.nl"
+                 />
+                 
+                 {formData.deliveryMethod === 'DIRECT' && (
+                   <div className="animate-in fade-in slide-in-from-top-2">
+                     <Input 
+                       label="E-mailadres Ontvanger" 
+                       type="email"
+                       value={formData.recipientEmail}
+                       onChange={(e: any) => setFormData({...formData, recipientEmail: e.target.value})}
+                       placeholder="ontvanger@email.nl"
+                     />
+                   </div>
+                 )}
+              </div>
+            </section>
+
           </div>
 
-          {/* Cart & Checkout Sidebar */}
-          <div className="lg:col-span-1">
-            <div className="sticky top-8 space-y-6">
+          {/* RIGHT COLUMN: Live Preview & Action (Sticky) */}
+          <div className="lg:col-span-5">
+            <div className="sticky top-8 space-y-8">
               
-              <Card className="bg-slate-900 border border-slate-800 overflow-hidden shadow-2xl">
-                <div className="p-6 border-b border-slate-800 bg-black/20">
-                  <h3 className="text-lg font-serif text-white flex items-center">
-                    <ShoppingBag className="mr-2 text-amber-500" size={20}/> Uw Bestelling
-                  </h3>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Live Voorbeeld</h4>
+                  <span className="text-[10px] bg-amber-500/10 text-amber-500 px-2 py-1 rounded border border-amber-500/20 font-bold uppercase">Gold Edition</span>
                 </div>
                 
-                <div className="p-6">
-                  {cart.length === 0 ? (
-                    <div className="text-center py-8 text-slate-500">
-                      <p className="text-sm italic">Nog geen items geselecteerd.</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      {cart.map(item => (
-                        <div key={item.id} className="flex justify-between items-center group">
-                          <div className="flex items-center">
-                            <div className="flex items-center space-x-2 bg-black rounded-lg px-2 py-1 border border-slate-800 mr-3">
-                               <button onClick={() => removeFromCart(item.id)} className="text-slate-500 hover:text-white transition-colors">-</button>
-                               <span className="text-xs font-bold text-white w-4 text-center">{item.quantity}</span>
-                               <button onClick={() => addToCart(item)} className="text-slate-500 hover:text-white transition-colors">+</button>
-                            </div>
-                            <span className="text-sm text-slate-300 font-medium">{item.label}</span>
-                          </div>
-                          <span className="text-sm font-mono text-white">€{(item.price * item.quantity).toFixed(2)}</span>
-                        </div>
-                      ))}
-                      
-                      <div className="h-px bg-slate-800 my-4" />
-                      
-                      <div className="flex justify-between items-center mb-6">
-                        <span className="text-slate-400 uppercase text-xs font-bold tracking-widest">Totaal</span>
-                        <span className="text-2xl font-serif text-amber-500">
-                          €{cart.reduce((s,i) => s + i.price * i.quantity, 0).toFixed(2)}
-                        </span>
-                      </div>
+                {/* THE CARD */}
+                <VoucherCardPreview 
+                  amount={currentAmount}
+                  recipientName={formData.recipientName}
+                  senderName={formData.senderName}
+                  message={formData.message}
+                />
+              </div>
 
-                      {step === 'SHOP' ? (
-                        <Button onClick={() => setStep('CHECKOUT')} className="w-full bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-900/20">
-                          Bestellen <ArrowRight size={16} className="ml-2"/>
-                        </Button>
-                      ) : (
-                        <div className="space-y-4 animate-in slide-in-from-bottom-2 fade-in">
-                          <div className="bg-black/40 p-4 rounded-xl border border-slate-800 space-y-3">
-                            <h4 className="text-xs font-bold text-white uppercase tracking-widest mb-2">Uw Gegevens</h4>
-                            <div className="grid grid-cols-2 gap-3">
-                              <Input 
-                                placeholder="Voornaam" 
-                                value={customer.firstName} 
-                                onChange={(e: any) => setCustomer({...customer, firstName: e.target.value})} 
-                                className="bg-slate-950 border-slate-700 text-sm h-10"
-                              />
-                              <Input 
-                                placeholder="Achternaam" 
-                                value={customer.lastName} 
-                                onChange={(e: any) => setCustomer({...customer, lastName: e.target.value})} 
-                                className="bg-slate-950 border-slate-700 text-sm h-10"
-                              />
-                            </div>
-                            <Input 
-                              type="email"
-                              placeholder="E-mailadres" 
-                              value={customer.email} 
-                              onChange={(e: any) => setCustomer({...customer, email: e.target.value})} 
-                              className="bg-slate-950 border-slate-700 text-sm h-10"
-                            />
-                          </div>
-                          <div className="flex gap-2">
-                            <Button variant="ghost" onClick={() => setStep('SHOP')} className="flex-1">Terug</Button>
-                            <Button onClick={handleCheckout} disabled={!customer.email} className="flex-1 bg-emerald-600 hover:bg-emerald-700">
-                              Afrekenen
-                            </Button>
-                          </div>
-                        </div>
-                      )}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
+                 <div className="flex justify-between items-end mb-6 pb-6 border-b border-slate-800">
+                    <div>
+                      <p className="text-xs text-slate-400 mb-1">Totaal te betalen</p>
+                      <p className="text-sm text-emerald-500 font-bold flex items-center"><CheckCircle2 size={12} className="mr-1"/> Inclusief BTW</p>
                     </div>
-                  )}
-                </div>
-                
-                {/* Security Badge */}
-                <div className="bg-black/20 p-3 text-center border-t border-slate-800">
-                  <p className="text-[10px] text-slate-500 flex items-center justify-center uppercase tracking-wider font-bold">
-                    <ShieldCheck size={12} className="mr-1.5 text-emerald-500" /> Veilig Betalen & Privacy Garantie
-                  </p>
-                </div>
-              </Card>
+                    <div className="text-4xl font-serif text-white">€{currentAmount}</div>
+                 </div>
 
-              {/* Support Info */}
-              <div className="text-center">
-                 <p className="text-xs text-slate-500">Vragen? Bel ons op <span className="text-slate-400 font-bold">020-12345678</span></p>
+                 <Button 
+                   onClick={handleCheckout}
+                   disabled={isProcessing || !formData.senderName || !formData.recipientName || !formData.senderEmail}
+                   className="w-full h-14 text-lg bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-black border-none shadow-[0_0_20px_rgba(245,158,11,0.3)] font-bold tracking-wide"
+                 >
+                   {isProcessing ? 'Verwerken...' : 'Bestelling Plaatsen'} <ArrowRight className="ml-2" />
+                 </Button>
+                 
+                 <div className="mt-4 text-center space-y-2">
+                   <p className="text-[10px] text-slate-400">
+                     <span className="text-amber-500 font-bold flex items-center justify-center mb-1"><FileText size={12} className="mr-1"/> Op Factuur</span>
+                     U ontvangt <strong>binnen 3 dagen</strong> de factuur per mail.
+                   </p>
+                   <p className="text-[10px] text-slate-500 italic">
+                     Voucher wordt pas verzonden na ontvangst van betaling.
+                   </p>
+                 </div>
               </div>
 
             </div>

@@ -23,6 +23,14 @@ export const DemoControlPanel = () => {
     }
   };
 
+  const handleSeedData = () => {
+    if (confirm("⚠️ LET OP: Alle bestaande data wordt gewist!\n\nEr wordt een demo-set geladen voor Januari & Februari 2026.")) {
+        seedDemoData();
+        // Force reload to ensure clean state
+        window.location.reload();
+    }
+  };
+
   const handleSmokeTest = () => {
     setLogs(['Running diagnostics...']);
     setTimeout(() => {
@@ -49,12 +57,10 @@ export const DemoControlPanel = () => {
         <div className="space-y-3">
           <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Data Management</p>
           <div className="grid grid-cols-2 gap-2">
-            <Button variant="secondary" onClick={() => handleAction(seedDemoData, 'Seed Base Data')} className="text-xs">
-              <RefreshCw size={14} className="mr-2"/> Seed Base
+            <Button variant="secondary" onClick={handleSeedData} className="text-xs bg-red-900/10 border-red-900/30 text-red-400 hover:bg-red-900/30 col-span-2">
+              <RefreshCw size={14} className="mr-2"/> 🔄 Reset & Genereer Demo Data 2026
             </Button>
-            <Button variant="secondary" onClick={() => handleAction(resetDemoData, 'Reset All Data')} className="text-xs text-red-400 hover:text-red-300">
-              <RefreshCw size={14} className="mr-2"/> Full Reset
-            </Button>
+            
             <Button variant="ghost" onClick={() => handleAction(() => generateRandomBookings(20), '+20 Bookings')} className="text-xs border border-slate-800">
               <Plus size={14} className="mr-2"/> +20 Bookings
             </Button>

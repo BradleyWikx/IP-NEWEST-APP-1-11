@@ -122,7 +122,8 @@ class BookingRepository extends Repository<Reservation> {
 
   // NEW: Hard Delete
   hardDelete(id: string): void {
-    super.delete(id); // Call parent which actually filters it out
+    const items = super.getAll();
+    this.saveAll(items.filter((i: any) => i.id !== id));
     logAuditAction('HARD_DELETE', 'RESERVATION', id, { 
       description: 'Item permanently deleted'
     });

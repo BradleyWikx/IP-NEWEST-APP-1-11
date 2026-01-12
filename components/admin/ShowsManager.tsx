@@ -3,12 +3,13 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plus, Edit3, Trash2, Save, X, ChevronRight, 
   Search, Calendar, Clock, DollarSign, Tag, Image as ImageIcon,
-  MoreHorizontal, CheckCircle2, AlertCircle, Copy
+  MoreHorizontal, CheckCircle2, AlertCircle, Copy, Info
 } from 'lucide-react';
 import { Button, Input, Card, Badge } from '../UI';
 import { ShowDefinition, ShowProfile } from '../../types';
 import { getShowDefinitions, saveData, STORAGE_KEYS } from '../../utils/storage';
 import { logAuditAction } from '../../utils/auditLogger';
+import { undoManager } from '../../utils/undoManager';
 
 // --- Price Profile Editor Component ---
 
@@ -107,11 +108,11 @@ const INITIAL_PROFILE: ShowProfile = {
 
 const ShowEditorDrawer = ({ show, onSave, onClose }: ShowEditorProps) => {
   const [formData, setFormData] = useState<ShowDefinition>(
-    show || {
+    show ? JSON.parse(JSON.stringify(show)) : {
       id: '',
       name: '',
       description: '',
-      activeFrom: '',
+      activeFrom: new Date().toISOString().split('T')[0],
       activeTo: '',
       isActive: true,
       tags: [],
@@ -154,10 +155,12 @@ const ShowEditorDrawer = ({ show, onSave, onClose }: ShowEditorProps) => {
   };
 
   const deleteProfile = (index: number) => {
-    setFormData({
-      ...formData,
-      profiles: formData.profiles.filter((_, i) => i !== index)
-    });
+    if (confirm('Profiel verwijderen?')) {
+        setFormData({
+        ...formData,
+        profiles: formData.profiles.filter((_, i) => i !== index)
+        });
+    }
   };
 
   return (
@@ -208,9 +211,16 @@ const ShowEditorDrawer = ({ show, onSave, onClose }: ShowEditorProps) => {
                       onChange={(e: any) => setFormData({...formData, posterImage: e.target.value})} 
                       placeholder="https://..." 
                     />
-                    <p className="text-[10px] text-slate-500 mt-2">
-                      Plak hier een directe link naar de afbeelding. Deze wordt getoond in de agenda.
-                    </p>
+                    <div className="mt-3 flex items-start space-x-2 text-slate-500">
+                      <Info size={14} className="mt-0.5 shrink-0 text-slate-400" />
+                      <div className="text-[10px] leading-relaxed">
+                        <p className="mb-1">Plak hier een directe link naar de afbeelding.</p>
+                        <p>
+                          <span className="text-amber-500 font-bold uppercase">Aanbevolen formaat:</span> 
+                          <span className="text-slate-300 ml-1">1920x1080px (16:9)</span> of minimaal <span className="text-slate-300">1200px breed</span>.
+                        </p>
+                      </div>
+                    </div>
                  </div>
 
                  <Input type="date" label="Actief Vanaf *" value={formData.activeFrom} onChange={(e: any) => setFormData({...formData, activeFrom: e.target.value})} />
@@ -314,6 +324,7 @@ export const ShowsManager = () => {
       description: `Saved show definition: ${toSave.name}`,
       after: toSave
     });
+    undoManager.showSuccess("Show opgeslagen.");
   };
 
   const handleDeleteShow = (id: string) => {
@@ -322,6 +333,7 @@ export const ShowsManager = () => {
       saveData(STORAGE_KEYS.SHOWS, updatedList);
       setShows(updatedList);
       logAuditAction('DELETE_SHOW', 'SYSTEM', id, { description: 'Deleted show definition' });
+      undoManager.showSuccess("Show verwijderd.");
     }
   };
 

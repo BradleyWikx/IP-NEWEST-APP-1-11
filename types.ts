@@ -5,6 +5,7 @@ export enum BookingStatus {
   REQUEST = 'REQUEST',
   OPTION = 'OPTION',
   CONFIRMED = 'CONFIRMED',
+  ARRIVED = 'ARRIVED', // NEW: Guest is physically in the building
   CANCELLED = 'CANCELLED',
   WAITLIST = 'WAITLIST',
   INVITED = 'INVITED',

@@ -17,6 +17,7 @@ import { logAuditAction } from '../../utils/auditLogger';
 import { PreferencesForm } from './PreferencesForm';
 import { BulkReservationEditor } from './BulkReservationEditor';
 import { toLocalISOString } from '../../utils/dateHelpers';
+import { undoManager } from '../../utils/undoManager';
 
 // --- Types & Constants ---
 
@@ -132,6 +133,7 @@ export const CalendarManager = () => {
       after: editFormData
     });
     
+    undoManager.showSuccess("Event opgeslagen.");
     refreshData();
     setIsEditingEvent(false);
     setSelectedDay(null);
@@ -152,6 +154,8 @@ export const CalendarManager = () => {
       logAuditAction('DELETE_EVENT', 'CALENDAR', idToDelete, {
         description: `Deleted event ${idToDelete}`
       });
+      
+      undoManager.showSuccess("Event verwijderd.");
       
       // Reset states
       setIsEditingEvent(false);
@@ -338,6 +342,7 @@ export const CalendarManager = () => {
       after: { dates: sortedTargetDates } 
     });
 
+    undoManager.showSuccess("Bulk actie voltooid.");
     refreshData();
     setIsBulkWizardOpen(false);
     setIsSelectMode(false);
@@ -695,11 +700,6 @@ export const CalendarManager = () => {
         </div>
       </ResponsiveDrawer>
 
-      {/* ... (Single Edit Drawer Remains Unchanged) ... */}
-      {/* ... (Bulk Reservation Editor Overlay Remains Unchanged) ... */}
-      {/* To avoid huge XML, assuming the rest of the file stays same, but in real deploy, full file would be here */}
-      
-      {/* Re-including single edit drawer for completeness if requested, or relying on user context */}
       <ResponsiveDrawer
         isOpen={!!selectedDay}
         onClose={() => { setSelectedDay(null); setIsEditingEvent(false); }}
@@ -782,7 +782,7 @@ export const CalendarManager = () => {
                    </div>
 
                    <div className="grid grid-cols-2 gap-4">
-                      <Input label="Capaciteit" type="number" value={editFormData.capacity} onChange={(e: any) => setEditFormData({...editFormData, capacity: parseInt(e.target.value)})} />
+                      <Input label="Capaciteit (Override)" type="number" value={editFormData.capacity} onChange={(e: any) => setEditFormData({...editFormData, capacity: parseInt(e.target.value)})} />
                       <div className="space-y-1.5">
                         <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Status</label>
                         <select 

@@ -5,7 +5,7 @@ import {
   Users, Search, Mail, Phone, Calendar, 
   ChevronRight, Star, AlertCircle, ShoppingBag, 
   ArrowUpRight, Ticket, X, Edit3, Save, MapPin, 
-  Merge, RefreshCw, AlertTriangle, CheckCircle2
+  Merge, RefreshCw, AlertTriangle, CheckCircle2, Trash2
 } from 'lucide-react';
 import { Button, Input, Card, Badge } from '../UI';
 import { Customer, Reservation, BookingStatus } from '../../types';
@@ -150,6 +150,23 @@ export const CustomerDatabase = () => {
     refreshData();
     const updatedProfile = { ...selectedCustomer, ...editForm };
     setSelectedCustomer(updatedProfile);
+    undoManager.showSuccess("Klantgegevens bijgewerkt.");
+  };
+
+  const handleDeleteCustomer = () => {
+    if (!selectedCustomer) return;
+    
+    if (confirm(`Weet je zeker dat je ${selectedCustomer.firstName} ${selectedCustomer.lastName} wilt verwijderen?`)) {
+      customerRepo.delete(selectedCustomer.id);
+      
+      logAuditAction('DELETE_CUSTOMER', 'CUSTOMER', selectedCustomer.id, {
+        description: 'Customer soft deleted'
+      });
+      
+      undoManager.showSuccess("Klant verwijderd.");
+      setSelectedCustomer(null);
+      refreshData();
+    }
   };
 
   const filteredCustomers = customers.filter(c => 
@@ -377,9 +394,14 @@ export const CustomerDatabase = () => {
                </div>
                <div className="flex items-center space-x-2">
                  {!isEditing ? (
-                   <Button onClick={() => { setEditForm(selectedCustomer); setIsEditing(true); }} variant="secondary" className="h-8 text-xs">
-                     <Edit3 size={14} className="mr-2"/> Bewerken
-                   </Button>
+                   <>
+                     <Button onClick={() => { setEditForm(selectedCustomer); setIsEditing(true); }} variant="secondary" className="h-8 text-xs">
+                       <Edit3 size={14} className="mr-2"/> Bewerken
+                     </Button>
+                     <Button onClick={handleDeleteCustomer} variant="ghost" className="h-8 text-xs text-red-500 hover:bg-red-900/20 hover:text-red-400 px-2">
+                       <Trash2 size={14} />
+                     </Button>
+                   </>
                  ) : (
                    <Button onClick={handleSaveCustomer} className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 border-none">
                      <Save size={14} className="mr-2"/> Opslaan

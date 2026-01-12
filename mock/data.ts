@@ -1,6 +1,8 @@
 
 import { ShowType, BookingStatus, Addon, MerchandiseItem } from '../types';
 
+// --- CONFIGURATION DATA (KEPT) ---
+
 export const MOCK_SHOW_TYPES: Record<string, ShowType> = {
   'matinee': { id: 'matinee', name: 'Zondag Matinee', color: 'pink', basePrice: 70, premiumPrice: 85, startTime: '14:00' },
   'weekday': { id: 'weekday', name: 'Alles in Wonderland (Week)', color: 'purple', basePrice: 70, premiumPrice: 85, startTime: '19:30' },
@@ -10,15 +12,10 @@ export const MOCK_SHOW_TYPES: Record<string, ShowType> = {
 
 export const MOCK_PROMO_CODES: Record<string, { discount: number, type: 'PERCENT' | 'FIXED' }> = {
   'EARLYBIRD': { discount: 10, type: 'PERCENT' },
-  'THEATER25': { discount: 25, type: 'FIXED' },
 };
 
 export const MOCK_VOUCHERS: Record<string, { balance: number, isActive: boolean }> = {
-  'GS-V100': { balance: 100, isActive: true },
-  'GS-V250': { balance: 250, isActive: true },
-  'GS-V50': { balance: 50, isActive: true },
-  'GS-GOLD': { balance: 500, isActive: true }, 
-  'GS-USED': { balance: 100, isActive: false }, 
+  // Empty default vouchers
 };
 
 export const MOCK_ADDONS: Addon[] = [
@@ -77,33 +74,16 @@ export const MOCK_MERCHANDISE: (MerchandiseItem & { description: string, active:
   }
 ];
 
+// --- TRANSACTIONAL MOCK DATA (REMOVED) ---
+
 export type Availability = 'OPEN' | 'CLOSED' | 'WAITLIST';
 
 export interface EventDate {
-  date: string; // ISO format YYYY-MM-DD
+  date: string; 
   showId: string;
   availability: Availability;
   doorTime: string;
 }
 
-// Minimal mock needed for unit tests, actual calendar is generated in seed.ts
-export const MOCK_EVENT_DATES: EventDate[] = [
-  { date: '2025-05-01', showId: 'weekday', availability: 'OPEN', doorTime: '18:30' },
-  { date: '2025-05-02', showId: 'weekend', availability: 'OPEN', doorTime: '18:00' }
-];
-
-export const MOCK_RESERVATIONS = [
-  {
-    id: 'RES-8821',
-    lastName: 'Hampton',
-    firstName: 'David',
-    status: BookingStatus.CONFIRMED,
-    date: '2025-05-12',
-    showId: 'weekday',
-    partySize: 4,
-    packageId: 'premium',
-    totalAmount: 340,
-    paid: true,
-    tableNumber: '12'
-  }
-];
+export const MOCK_EVENT_DATES: EventDate[] = [];
+export const MOCK_RESERVATIONS = [];

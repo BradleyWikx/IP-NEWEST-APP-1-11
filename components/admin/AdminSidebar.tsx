@@ -24,7 +24,8 @@ import {
   Tag,
   UploadCloud,
   ChefHat,
-  Trash2
+  Trash2,
+  Database
 } from 'lucide-react';
 import { AdminRole } from '../../types';
 
@@ -86,6 +87,7 @@ const MENU_STRUCTURE: NavGroup[] = [
       { label: 'Embed Center', icon: Code, path: '/admin/embed', roles: ['ADMIN'] },
       { label: 'Instellingen', icon: Settings, path: '/admin/settings', roles: ['ADMIN'] },
       { label: 'Prullenbak', icon: Trash2, path: '/admin/trash', roles: ['ADMIN'] },
+      { label: 'Demo & Debug', icon: Database, path: '/admin/demo', roles: ['ADMIN'] },
     ]
   }
 ];
@@ -95,10 +97,14 @@ export const AdminSidebar = ({ currentRole }: { currentRole: AdminRole }) => {
 
   return (
     <aside className="w-72 bg-black border-r border-slate-900 flex flex-col h-full shrink-0 transition-all duration-300">
-      {/* Brand Header */}
-      <div className="p-8 pb-4 border-b border-slate-900/50">
-        <h1 className="text-3xl font-serif text-white tracking-tighter italic">Inspiration Point</h1>
-        <p className="text-slate-500 text-sm mt-1 uppercase tracking-widest font-bold">Dinner Theater</p>
+      {/* Brand Header with Logo */}
+      <div className="p-6 border-b border-slate-900/50 flex flex-col items-center">
+        <img 
+          src="https://irp.cdn-website.com/e8046ea7/dms3rep/multi/logo-ip.png" 
+          alt="Inspiration Point" 
+          className="w-32 mb-4 opacity-90 hover:opacity-100 transition-opacity"
+        />
+        <p className="text-slate-600 text-[10px] uppercase tracking-[0.2em] font-bold">Admin Panel</p>
       </div>
 
       {/* Navigation */}

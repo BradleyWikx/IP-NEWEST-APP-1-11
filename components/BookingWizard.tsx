@@ -37,7 +37,7 @@ export const BookingWizard = () => {
   
   const { 
     wizardData, step, steps, pricing, financials, 
-    eventData, duplicateWarning, isWaitlistMode, isWaitlistFull, // New prop to block UI if needed
+    eventData, duplicateWarning, isWaitlistMode, isWaitlistFull,
     capacityTarget, addonThreshold 
   } = data;
   
@@ -49,10 +49,10 @@ export const BookingWizard = () => {
   const { isSubmitting, submitError, canProceed } = status;
   const { getFieldError } = validation;
 
-  // Safety Redirect: If user lands here on a CLOSED date (bypassed calendar), block them.
+  // BLOCK: Immediate check for CLOSED status via isWaitlistFull
   useEffect(() => {
     if (isWaitlistFull && step === 0) {
-       // Ideally we'd show a "Closed" screen, but rendering the "Waitlist Full" alert in renderStepContent handles this
+       // Logic handled in render, but side effect could go here if needed
     }
   }, [isWaitlistFull, step]);
 
