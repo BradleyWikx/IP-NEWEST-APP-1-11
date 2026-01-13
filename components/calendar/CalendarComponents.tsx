@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { ChevronLeft, ChevronRight, List, Grid, Clock, Users, Maximize2, Minimize2, CheckCircle2, Lock, Mic, Briefcase, Calendar, AlertCircle, Hourglass } from 'lucide-react';
+import { ChevronLeft, ChevronRight, List, Grid, Clock, Users, Maximize2, Minimize2, CheckCircle2, Lock, Mic, Briefcase, Calendar, AlertCircle, Hourglass, Flame } from 'lucide-react';
 import { Badge } from '../UI';
 import { ShowEvent } from '../../types';
 
@@ -74,6 +74,7 @@ export const CalendarLegend = () => (
     <div className="flex items-center"><div className="w-2 h-2 rounded-full bg-emerald-500 mr-2"/> Beschikbaar</div>
     <div className="flex items-center"><div className="w-2 h-2 rounded-full bg-orange-500 mr-2"/> Wachtlijst</div>
     <div className="flex items-center"><div className="w-2 h-2 rounded-full bg-red-500 mr-2"/> Vol</div>
+    <div className="flex items-center"><span className="text-amber-500 mr-1">🔥</span> Laatste Plekken</div>
   </div>
 );
 
@@ -85,9 +86,30 @@ export const DateTile: React.FC<CalendarDayProps> = ({ day, onClick, isAdmin, is
   const isShow = event?.type === 'SHOW';
   
   const heightClass = isDense ? 'min-h-[70px] md:min-h-[90px]' : 'min-h-[80px] md:min-h-[120px]';
-  const baseBg = isToday ? 'bg-slate-900 ring-1 ring-amber-500 z-10' : (isWeekend && !isToday ? 'bg-black/40' : 'bg-slate-900/30');
-  const hoverClass = !isBulkMode ? (event || isAdmin ? 'cursor-pointer hover:bg-slate-800 transition-colors' : 'cursor-default') : '';
-  const finalBg = isBulkMode ? (isSelected ? 'bg-amber-900/30' : 'bg-slate-950/80') : baseBg;
+  const hoverClass = !isBulkMode ? (event || isAdmin ? 'cursor-pointer hover:border-slate-500 transition-all' : 'cursor-default') : '';
+  
+  // Calculate Occupancy Ratio
+  const booked = (event as any)?.bookedCount || 0;
+  const capacity = (event as any)?.capacity || 230;
+  const occupancy = capacity > 0 ? booked / capacity : 0;
+  const isAlmostFull = isShow && status === 'OPEN' && occupancy > 0.8;
+
+  // --- HEATMAP LOGIC ---
+  let heatmapBg = isToday ? 'bg-slate-900 ring-1 ring-amber-500 z-10' : (isWeekend && !isToday ? 'bg-black/40' : 'bg-slate-900/30');
+  
+  if (isAdmin && isShow && event) {
+    if (status === 'CLOSED') {
+        heatmapBg = 'bg-red-950/20'; // Closed manually
+    } else if (occupancy > 0.9) {
+        heatmapBg = 'bg-red-900/30'; // Full/High
+    } else if (occupancy > 0.5) {
+        heatmapBg = 'bg-amber-900/20'; // Medium
+    } else {
+        heatmapBg = 'bg-emerald-900/10'; // Low
+    }
+  }
+  
+  const finalBg = isBulkMode ? (isSelected ? 'bg-amber-900/30' : 'bg-slate-950/80') : heatmapBg;
   
   // Status Logic for Borders & Badges
   let finalBorder = isSelected ? 'border-amber-500' : 'border-slate-800/50';
@@ -113,6 +135,15 @@ export const DateTile: React.FC<CalendarDayProps> = ({ day, onClick, isAdmin, is
       );
     } else if (status === 'OPEN') {
       accentBorder = `border-l-2 border-l-${theme.primary}-500`;
+      
+      // NEW: Urgency Badge
+      if (isAlmostFull) {
+        badge = (
+          <div className="absolute top-0 right-0 bg-amber-500 text-black text-[8px] md:text-[9px] px-2 py-0.5 rounded-bl-lg font-bold uppercase tracking-wider z-20 shadow-md flex items-center animate-pulse">
+            <Flame size={8} className="mr-1" fill="currentColor"/> Bijna Vol
+          </div>
+        );
+      }
     }
   }
 
@@ -121,9 +152,7 @@ export const DateTile: React.FC<CalendarDayProps> = ({ day, onClick, isAdmin, is
   let capacityText = null;
 
   if (isAdmin && isShow && event) {
-    const booked = (event as any).bookedCount || 0;
-    const capacity = (event as any).capacity || 230;
-    const pct = Math.min(100, (booked / capacity) * 100);
+    const pct = Math.min(100, occupancy * 100);
     
     let barColor = 'bg-emerald-500';
     if (pct > 50) barColor = 'bg-amber-500';
@@ -213,6 +242,7 @@ export const AgendaItem: React.FC<CalendarDayProps> = ({ day, onClick, isAdmin }
   const booked = (event as any).bookedCount || 0;
   const capacity = (event as any).capacity || 0;
   const pct = capacity > 0 ? Math.round((booked / capacity) * 100) : 0;
+  const isAlmostFull = isShow && status === 'OPEN' && (booked / capacity) > 0.8;
 
   return (
     <div 
@@ -258,9 +288,15 @@ export const AgendaItem: React.FC<CalendarDayProps> = ({ day, onClick, isAdmin }
       <div className="shrink-0 ml-2">
         {isShow ? (
           status === 'OPEN' ? (
-            <span className="px-3 py-1.5 rounded-lg bg-emerald-900/20 text-emerald-500 text-[10px] font-bold uppercase border border-emerald-900/50">
-              Boek
-            </span>
+            isAlmostFull ? (
+                <span className="px-3 py-1.5 rounded-lg bg-amber-500 text-black text-[10px] font-bold uppercase border border-amber-600 flex items-center animate-pulse">
+                    <Flame size={10} className="mr-1" /> Laatste
+                </span>
+            ) : (
+                <span className="px-3 py-1.5 rounded-lg bg-emerald-900/20 text-emerald-500 text-[10px] font-bold uppercase border border-emerald-900/50">
+                Boek
+                </span>
+            )
           ) : status === 'WAITLIST' ? (
             <span className="px-3 py-1.5 rounded-lg bg-orange-900/20 text-orange-500 text-[10px] font-bold uppercase border border-orange-900/50 flex items-center">
               <AlertCircle size={10} className="mr-1.5"/> Wachtlijst

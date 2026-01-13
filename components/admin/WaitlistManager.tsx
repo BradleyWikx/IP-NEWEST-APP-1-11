@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Clock, Check, X, ArrowRight, UserPlus, AlertTriangle, 
   RotateCcw, Calendar, Users, ArrowLeftRight, CheckCircle2,
-  AlertCircle
+  AlertCircle, Search, Mail
 } from 'lucide-react';
 import { Button, Card, Badge, ResponsiveDrawer } from '../UI';
 import { WaitlistEntry, Reservation, BookingStatus, CalendarEvent } from '../../types';
@@ -26,10 +26,18 @@ interface DateGroup {
   totalCancelledPax: number;
 }
 
+interface MatchSuggestion {
+    waitlistEntry: WaitlistEntry;
+    cancelledSlot: Reservation;
+    fitScore: number; // For sorting best matches
+}
+
 export const WaitlistManager = () => {
   const [groupedData, setGroupedData] = useState<DateGroup[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<DateGroup | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [suggestions, setSuggestions] = useState<MatchSuggestion[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   // --- DATA LOADING & GROUPING ---
 
@@ -47,7 +55,6 @@ export const WaitlistManager = () => {
 
     // 1. Identify all relevant dates (those with waitlist OR cancellations)
     const dates = new Set<string>();
-    
     allWaitlist.forEach(w => dates.add(w.date));
     
     // Filter cancellations relevant for filling spots (active dates only ideally, but let's take all future)
@@ -89,7 +96,6 @@ export const WaitlistManager = () => {
       }
     });
 
-    // 3. Sort by Urgency (Date)
     setGroupedData(groups.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
     
     // Refresh selected group if open
@@ -170,8 +176,42 @@ export const WaitlistManager = () => {
     setIsProcessing(false);
   };
 
-  // --- ACTIONS: RESTORE CANCELLATION ---
+  // --- ACTIONS: MATCH LOGIC ---
+  const findMatches = () => {
+    const matches: MatchSuggestion[] = [];
+    
+    groupedData.forEach(group => {
+        if (!group.matchPossible) return;
+        
+        group.waitlist.forEach(wl => {
+            // Find cancelled slot with exact or similar size
+            const exactMatch = group.cancelled.find(cx => cx.partySize === wl.partySize);
+            const closeMatch = group.cancelled.find(cx => cx.partySize >= wl.partySize);
+            
+            if (exactMatch) {
+                matches.push({ waitlistEntry: wl, cancelledSlot: exactMatch, fitScore: 100 });
+            } else if (closeMatch) {
+                matches.push({ waitlistEntry: wl, cancelledSlot: closeMatch, fitScore: 80 }); // Good but wasted space
+            }
+        });
+    });
+    
+    // Dedup and sort
+    const uniqueMatches = matches.filter((v,i,a) => a.findIndex(t => t.waitlistEntry.id === v.waitlistEntry.id) === i);
+    setSuggestions(uniqueMatches.sort((a,b) => b.fitScore - a.fitScore));
+    setShowSuggestions(true);
+  };
 
+  const handleSuggestionAction = (suggestion: MatchSuggestion) => {
+    // Navigate to group detail
+    const group = groupedData.find(g => g.date === suggestion.waitlistEntry.date);
+    if(group) {
+        setSelectedGroup(group);
+        setShowSuggestions(false);
+    }
+  };
+
+  // --- ACTIONS: RESTORE CANCELLATION ---
   const handleRestore = (reservation: Reservation) => {
     if (!confirm("Weet je zeker dat je deze annulering wilt herstellen naar BEVESTIGD?")) return;
     
@@ -196,6 +236,9 @@ export const WaitlistManager = () => {
           <h2 className="text-3xl font-serif text-white">Capacity Matchmaker</h2>
           <p className="text-slate-500 text-sm">Beheer uitval en vul gaten op met de wachtlijst.</p>
         </div>
+        <Button onClick={findMatches} variant="secondary" className="flex items-center">
+            <Search size={18} className="mr-2"/> Zoek Matches
+        </Button>
       </div>
 
       {groupedData.length === 0 ? (
@@ -345,7 +388,6 @@ export const WaitlistManager = () => {
                               <div>
                                 <p className="text-sm font-bold text-slate-300 line-through decoration-red-500">{r.customer.lastName}</p>
                                 <p className="text-xs text-slate-500">Geannuleerd op {new Date().toLocaleDateString()}</p> 
-                                {/* Note: Real app needs cancelledAt timestamp in Reservation model */}
                               </div>
                               <span className="bg-red-900/20 text-red-400 font-bold text-xs px-2 py-1 rounded border border-red-900/50">
                                 {r.partySize}p
@@ -380,6 +422,41 @@ export const WaitlistManager = () => {
 
           </div>
         )}
+      </ResponsiveDrawer>
+
+      {/* SUGGESTION MODAL */}
+      <ResponsiveDrawer
+        isOpen={showSuggestions}
+        onClose={() => setShowSuggestions(false)}
+        title="Slimme Suggesties"
+      >
+         <div className="space-y-4">
+             <div className="bg-slate-900 p-4 rounded-xl border border-slate-800">
+                 <p className="text-sm text-slate-400">Er zijn <strong>{suggestions.length}</strong> mogelijke matches gevonden waarbij een vrijgekomen plek past bij een wachtende groep.</p>
+             </div>
+             
+             {suggestions.map((s, idx) => (
+                 <div key={idx} className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex justify-between items-center">
+                     <div>
+                         <p className="font-bold text-white text-sm">{new Date(s.waitlistEntry.date).toLocaleDateString()}</p>
+                         <div className="flex items-center space-x-2 mt-1">
+                             <span className="text-xs text-amber-500">{s.waitlistEntry.contactName} ({s.waitlistEntry.partySize}p)</span>
+                             <ArrowRight size={12} className="text-slate-600" />
+                             <span className="text-xs text-red-500">Vrijgekomen: {s.cancelledSlot.partySize}p</span>
+                         </div>
+                     </div>
+                     <Button onClick={() => handleSuggestionAction(s)} className="text-xs h-8">
+                        Bekijk & Match
+                     </Button>
+                 </div>
+             ))}
+
+             {suggestions.length === 0 && (
+                 <div className="text-center p-8 text-slate-500">
+                     Geen matches gevonden.
+                 </div>
+             )}
+         </div>
       </ResponsiveDrawer>
     </div>
   );

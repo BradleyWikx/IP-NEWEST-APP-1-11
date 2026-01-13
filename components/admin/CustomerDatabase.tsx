@@ -5,15 +5,84 @@ import {
   Users, Search, Mail, Phone, Calendar, 
   ChevronRight, Star, AlertCircle, ShoppingBag, 
   ArrowUpRight, Ticket, X, Edit3, Save, MapPin, 
-  Merge, RefreshCw, AlertTriangle, CheckCircle2, Trash2
+  Merge, RefreshCw, AlertTriangle, CheckCircle2, Trash2,
+  Clock, MessageSquare, DollarSign
 } from 'lucide-react';
-import { Button, Input, Card, Badge } from '../UI';
+import { Button, Input, Card, Badge, ResponsiveDrawer } from '../UI';
 import { Customer, Reservation, BookingStatus } from '../../types';
-import { loadData, saveData, STORAGE_KEYS, customerRepo, bookingRepo } from '../../utils/storage';
+import { loadData, saveData, STORAGE_KEYS, customerRepo, bookingRepo, getAuditLogs, getEmailLogs } from '../../utils/storage';
 import { logAuditAction } from '../../utils/auditLogger';
 import { calculateCustomerMetrics, getCustomerSegments, getSegmentStyle, getSegmentLabel, CustomerSegment } from '../../utils/customerLogic';
 import { undoManager } from '../../utils/undoManager';
 import { formatGuestName } from '../../utils/formatters';
+
+// --- TIMELINE COMPONENT ---
+
+const CustomerTimeline = ({ customerId, emails }: { customerId: string, emails: string[] }) => {
+    const [events, setEvents] = useState<any[]>([]);
+
+    useEffect(() => {
+        const bookings = bookingRepo.getAll(true).filter(r => r.customerId === customerId);
+        const audits = getAuditLogs().filter(l => l.entityId === customerId || (l.entityType === 'RESERVATION' && bookings.some(b => b.id === l.entityId)));
+        const emailLogs = getEmailLogs().filter(l => emails.includes(l.to));
+        
+        // Normalize
+        const timeline = [
+            ...bookings.map(b => ({
+                id: b.id,
+                date: b.createdAt,
+                type: 'BOOKING',
+                title: `Boeking: ${new Date(b.date).toLocaleDateString()}`,
+                desc: `${b.partySize}p - ${b.status}`,
+                icon: Ticket,
+                color: 'blue'
+            })),
+            ...audits.map(a => ({
+                id: a.id,
+                date: a.timestamp,
+                type: 'SYSTEM',
+                title: `Systeem: ${a.action}`,
+                desc: a.changes?.description || 'Geen details',
+                icon: a.action.includes('DELETE') ? Trash2 : Edit3,
+                color: 'slate'
+            })),
+            ...emailLogs.map(e => ({
+                id: e.id,
+                date: e.createdAt,
+                type: 'EMAIL',
+                title: `Email: ${e.subject}`,
+                desc: `Status: ${e.status}`,
+                icon: Mail,
+                color: 'purple'
+            }))
+        ];
+
+        setEvents(timeline.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
+    }, [customerId, emails]);
+
+    return (
+        <div className="space-y-6 pl-4 border-l border-slate-800 ml-2">
+            {events.map(ev => {
+                const Icon = ev.icon;
+                return (
+                    <div key={ev.id} className="relative pl-6">
+                        <div className={`absolute -left-[25px] p-1 rounded-full bg-slate-900 border-2 border-${ev.color}-500 text-${ev.color}-500`}>
+                            <Icon size={12} />
+                        </div>
+                        <div className="flex flex-col">
+                            <span className="text-[10px] text-slate-500 font-mono mb-0.5">
+                                {new Date(ev.date).toLocaleString()}
+                            </span>
+                            <span className="text-sm font-bold text-white">{ev.title}</span>
+                            <span className="text-xs text-slate-400">{ev.desc}</span>
+                        </div>
+                    </div>
+                );
+            })}
+            {events.length === 0 && <p className="text-slate-500 italic text-xs">Geen historie beschikbaar.</p>}
+        </div>
+    );
+};
 
 interface CustomerProfile extends Customer {
   totalBookings: number;
@@ -200,8 +269,7 @@ export const CustomerDatabase = () => {
 
     // 1. Move Reservations
     const sourceReservations = bookingRepo.getAll().filter(r => r.customerId === sourceId);
-    const backupReservations = JSON.parse(JSON.stringify(sourceReservations));
-
+    
     sourceReservations.forEach(res => {
         bookingRepo.update(res.id, (r) => ({
             ...r,
@@ -218,9 +286,6 @@ export const CustomerDatabase = () => {
         description: `Merged ${sourceId} into ${targetId}. Moved ${sourceReservations.length} bookings.`
     });
 
-    // Undo is tricky here, but we can try to restore the deleted customer and revert bookings
-    // Simplification: We don't implement full merge-undo in this snippet, but logging is key.
-    
     undoManager.showSuccess(`${sourceReservations.length} boekingen overgezet. ${sourceCustomer.lastName} verwijderd.`);
     refreshData();
   };
@@ -368,61 +433,50 @@ export const CustomerDatabase = () => {
       )}
 
       {/* Detail Drawer */}
-      {selectedCustomer && (
-        <>
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 transition-opacity" onClick={() => setSelectedCustomer(null)} />
-          <div className="fixed top-0 right-0 h-full w-full md:w-[700px] bg-slate-950 border-l border-slate-900 z-50 shadow-2xl flex flex-col animate-in slide-in-from-right duration-300">
-             
-             {/* Header */}
-             <div className="p-6 border-b border-slate-900 bg-slate-900/50 flex justify-between items-start">
-               <div>
-                 {isEditing ? (
-                   <h2 className="text-2xl font-serif text-white">Klant Bewerken</h2>
-                 ) : (
-                   <>
-                     <div className="flex items-center space-x-2 mb-1">
-                       <h2 className="text-2xl font-serif text-white">{selectedCustomer.salutation || 'Dhr.'} {formatGuestName(selectedCustomer.firstName, selectedCustomer.lastName)}</h2>
-                       {selectedCustomer.segments.includes('VIP') && <Star size={16} className="text-amber-500 fill-amber-500" />}
-                     </div>
-                     <div className="flex gap-2 mt-2">
-                        {selectedCustomer.segments.map(seg => (
-                            <React.Fragment key={seg}>
-                                <Badge status="CONFIRMED" className={`${getSegmentStyle(seg)} border`}>{getSegmentLabel(seg)}</Badge>
-                            </React.Fragment>
-                        ))}
-                     </div>
-                   </>
-                 )}
-               </div>
-               <div className="flex items-center space-x-2">
-                 {!isEditing ? (
-                   <>
-                     <Button onClick={() => { setEditForm(selectedCustomer); setIsEditing(true); }} variant="secondary" className="h-8 text-xs">
-                       <Edit3 size={14} className="mr-2"/> Bewerken
-                     </Button>
-                     <Button onClick={handleDeleteCustomer} variant="ghost" className="h-8 text-xs text-red-500 hover:bg-red-900/20 hover:text-red-400 px-2">
-                       <Trash2 size={14} />
-                     </Button>
-                   </>
-                 ) : (
-                   <Button onClick={handleSaveCustomer} className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 border-none">
-                     <Save size={14} className="mr-2"/> Opslaan
-                   </Button>
-                 )}
-                 <button onClick={() => setSelectedCustomer(null)} className="p-2 hover:bg-slate-800 rounded-full text-slate-500 hover:text-white"><X size={24}/></button>
-               </div>
-             </div>
+      <ResponsiveDrawer
+        isOpen={!!selectedCustomer}
+        onClose={() => setSelectedCustomer(null)}
+        title={isEditing ? "Klant Bewerken" : "Klant Details"}
+        widthClass="md:w-[800px]"
+      >
+        {selectedCustomer && (
+          <div className="space-y-8 pb-12">
+            
+            {/* Action Header inside Drawer */}
+            {!isEditing && (
+                <div className="flex justify-between items-start border-b border-slate-800 pb-6">
+                    <div>
+                        <div className="flex items-center space-x-2 mb-1">
+                            <h2 className="text-2xl font-serif text-white">{selectedCustomer.salutation || 'Dhr.'} {formatGuestName(selectedCustomer.firstName, selectedCustomer.lastName)}</h2>
+                            {selectedCustomer.segments.includes('VIP') && <Star size={16} className="text-amber-500 fill-amber-500" />}
+                        </div>
+                        <div className="flex gap-2 mt-2">
+                            {selectedCustomer.segments.map(seg => (
+                                <span key={seg} className={`px-2 py-0.5 rounded border text-[9px] font-bold uppercase ${getSegmentStyle(seg)}`}>
+                                    {getSegmentLabel(seg)}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="flex gap-2">
+                        <Button onClick={() => { setEditForm(selectedCustomer); setIsEditing(true); }} variant="secondary" className="h-8 text-xs">
+                            <Edit3 size={14} className="mr-2"/> Bewerken
+                        </Button>
+                        <Button onClick={handleDeleteCustomer} variant="ghost" className="h-8 text-xs text-red-500 hover:bg-red-900/20 px-2">
+                            <Trash2 size={14} />
+                        </Button>
+                    </div>
+                </div>
+            )}
 
-             <div className="p-8 overflow-y-auto space-y-8 flex-grow">
-               {/* ... (Existing Detail Body) ... */}
-               {isEditing && editForm ? (
+            {isEditing && editForm ? (
                  <div className="space-y-6 animate-in fade-in">
                     <div className="grid grid-cols-2 gap-4">
                        <Input label="Voornaam" value={editForm.firstName} onChange={(e: any) => setEditForm({...editForm, firstName: e.target.value})} />
                        <Input label="Achternaam" value={editForm.lastName} onChange={(e: any) => setEditForm({...editForm, lastName: e.target.value})} />
-                       <Input label="Email" value={editForm.email} onChange={(e: any) => setEditForm({...editForm, email: e.target.value})} />
-                       <Input label="Telefoon" value={editForm.phone} onChange={(e: any) => setEditForm({...editForm, phone: e.target.value})} />
-                       <Input label="Bedrijfsnaam" value={editForm.companyName} onChange={(e: any) => setEditForm({...editForm, companyName: e.target.value})} />
+                       <Input label="Email" value={editForm.email} onChange={(e: any) => setEditForm({...editForm, email: e.target.value})} className="col-span-2" />
+                       <Input label="Telefoon" value={editForm.phone} onChange={(e: any) => setEditForm({...editForm, phone: e.target.value})} className="col-span-2" />
+                       <Input label="Bedrijfsnaam" value={editForm.companyName} onChange={(e: any) => setEditForm({...editForm, companyName: e.target.value})} className="col-span-2" />
                     </div>
                     
                     <div className="pt-4 border-t border-slate-900">
@@ -444,102 +498,64 @@ export const CustomerDatabase = () => {
                         placeholder="Plaats hier notities over voorkeuren, klachten of bijzonderheden..."
                       />
                     </div>
+                    <div className="flex justify-end pt-4">
+                        <Button onClick={() => setIsEditing(false)} variant="ghost" className="mr-2">Annuleren</Button>
+                        <Button onClick={handleSaveCustomer} className="bg-emerald-600 hover:bg-emerald-700">Opslaan</Button>
+                    </div>
                  </div>
-               ) : (
-                 <>
-                   {/* Quick Stats */}
-                   <div className="grid grid-cols-3 gap-4">
-                      <div className="p-4 bg-slate-900 rounded-xl border border-slate-800 text-center">
-                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Totaal</p>
-                        <p className="text-xl font-bold text-white">{selectedCustomer.totalBookings}</p>
-                      </div>
-                      <div className="p-4 bg-slate-900 rounded-xl border border-slate-800 text-center">
-                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Waarde</p>
-                        <p className="text-xl font-bold text-emerald-500">€{selectedCustomer.totalSpend.toLocaleString()}</p>
-                      </div>
-                      <div className="p-4 bg-slate-900 rounded-xl border border-slate-800 text-center">
-                        <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Laatste</p>
-                        <p className="text-sm font-bold text-white mt-1">{selectedCustomer.lastBookingDate ? new Date(selectedCustomer.lastBookingDate).toLocaleDateString() : '-'}</p>
-                      </div>
-                   </div>
-
-                   {/* Contact Info */}
-                   <div className="space-y-4">
-                     <h3 className="text-xs font-bold text-amber-500 uppercase tracking-widest border-b border-slate-800 pb-2">Gegevens</h3>
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
-                        <div className="space-y-3">
-                          <div className="flex items-center space-x-3 text-slate-300">
-                            <Mail size={14} className="text-slate-500" /> <span>{selectedCustomer.email}</span>
+            ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    
+                    {/* Left: Info */}
+                    <div className="space-y-6">
+                       {/* Quick Stats */}
+                       <div className="grid grid-cols-3 gap-3">
+                          <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 text-center">
+                            <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Boekingen</p>
+                            <p className="text-lg font-bold text-white">{selectedCustomer.totalBookings}</p>
                           </div>
-                          <div className="flex items-center space-x-3 text-slate-300">
-                            <Phone size={14} className="text-slate-500" /> <span>{selectedCustomer.phone}</span>
+                          <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 text-center">
+                            <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Omzet</p>
+                            <p className="text-lg font-bold text-emerald-500">€{selectedCustomer.totalSpend.toLocaleString()}</p>
                           </div>
-                        </div>
-                        <div className="space-y-3">
-                          <div className="text-slate-300">
-                            <p className="text-xs text-slate-500 mb-1 flex items-center"><MapPin size={10} className="mr-1"/> Adres</p>
-                            <p>{selectedCustomer.street} {selectedCustomer.houseNumber}</p>
-                            <p>{selectedCustomer.zip} {selectedCustomer.city}</p>
+                          <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 text-center">
+                            <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Laatste</p>
+                            <p className="text-xs font-bold text-white mt-1">{selectedCustomer.lastBookingDate ? new Date(selectedCustomer.lastBookingDate).toLocaleDateString() : '-'}</p>
                           </div>
-                          {selectedCustomer.isBusiness && (
-                            <div className="text-slate-300">
-                              <p className="text-xs text-slate-500 mb-1">Bedrijf</p>
-                              <p className="font-bold text-amber-500">{selectedCustomer.companyName}</p>
-                            </div>
-                          )}
-                        </div>
-                     </div>
-                   </div>
-
-                   {/* Notes Section */}
-                   {selectedCustomer.notes && (
-                     <div className="p-4 bg-amber-900/10 border border-amber-900/30 rounded-xl">
-                       <h4 className="text-xs font-bold text-amber-500 uppercase mb-2">Interne Notities</h4>
-                       <p className="text-sm text-amber-100 whitespace-pre-wrap">{selectedCustomer.notes}</p>
-                     </div>
-                   )}
-
-                   {/* Actions */}
-                   <div className="grid grid-cols-2 gap-4">
-                     <Button variant="secondary" className="flex items-center justify-center">
-                       <Mail size={16} className="mr-2" /> Stuur Email
-                     </Button>
-                     <Button variant="primary" className="flex items-center justify-center bg-blue-600 border-blue-500 hover:bg-blue-700">
-                       <ArrowUpRight size={16} className="mr-2" /> Nieuwe Boeking
-                     </Button>
-                   </div>
-
-                   {/* History */}
-                   <div className="space-y-4">
-                     <h3 className="text-xs font-bold text-amber-500 uppercase tracking-widest border-b border-slate-800 pb-2">Historie</h3>
-                     {selectedCustomer.history.length === 0 ? (
-                       <p className="text-slate-500 text-sm">Geen historie beschikbaar.</p>
-                     ) : (
-                       <div className="space-y-3">
-                         {selectedCustomer.history.map(res => (
-                           <div key={res.id} className="p-4 bg-slate-900 border border-slate-800 rounded-xl hover:border-slate-600 transition-colors">
-                              <div className="flex justify-between items-start mb-2">
-                                <div>
-                                  <p className="font-bold text-white text-sm">{new Date(res.date).toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })}</p>
-                                  <p className="text-xs text-slate-500">{res.id}</p>
-                                </div>
-                                <Badge status={res.status} />
-                              </div>
-                              <div className="flex justify-between items-center text-xs mt-3 pt-3 border-t border-slate-800">
-                                 <span className="flex items-center text-slate-300"><Users size={12} className="mr-1"/> {res.partySize} personen</span>
-                                 <span className="font-mono text-emerald-500 font-bold">€{(res.financials.finalTotal || res.financials.total).toFixed(2)}</span>
-                              </div>
-                           </div>
-                         ))}
                        </div>
-                     )}
-                   </div>
-                 </>
-               )}
-             </div>
+
+                       <div className="space-y-4 text-sm">
+                           <div className="flex items-center space-x-3 text-slate-300">
+                                <Mail size={16} className="text-slate-500" /> <span>{selectedCustomer.email}</span>
+                           </div>
+                           <div className="flex items-center space-x-3 text-slate-300">
+                                <Phone size={16} className="text-slate-500" /> <span>{selectedCustomer.phone}</span>
+                           </div>
+                           <div className="flex items-center space-x-3 text-slate-300">
+                                <MapPin size={16} className="text-slate-500" /> 
+                                <span>{selectedCustomer.street} {selectedCustomer.houseNumber}, {selectedCustomer.city}</span>
+                           </div>
+                       </div>
+
+                       {selectedCustomer.notes && (
+                         <div className="p-4 bg-amber-900/10 border border-amber-900/30 rounded-xl">
+                           <h4 className="text-xs font-bold text-amber-500 uppercase mb-2">Interne Notities</h4>
+                           <p className="text-sm text-amber-100 whitespace-pre-wrap">{selectedCustomer.notes}</p>
+                         </div>
+                       )}
+                    </div>
+
+                    {/* Right: Interactive Timeline */}
+                    <div className="border-l border-slate-800 pl-6 -ml-6 md:pl-0 md:ml-0 md:border-l-0">
+                       <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Tijdlijn Interacties</h3>
+                       <CustomerTimeline customerId={selectedCustomer.id} emails={[selectedCustomer.email]} />
+                    </div>
+                </div>
+            )}
           </div>
-        </>
-      )}
+        )}
+      </ResponsiveDrawer>
+
     </div>
   );
 };

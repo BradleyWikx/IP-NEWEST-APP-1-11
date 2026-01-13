@@ -32,6 +32,8 @@ class UndoManager {
     // Auto-expire
     setTimeout(() => {
       this.records.delete(id);
+      // Trigger update to refresh UI lists
+      window.dispatchEvent(new Event('undo-update'));
     }, UNDO_TIMEOUT_MS);
 
     // Trigger UI Toast (dispatch global event)
@@ -42,6 +44,15 @@ class UndoManager {
         undoId: id
       }
     }));
+    
+    // Trigger update for history lists
+    window.dispatchEvent(new Event('undo-update'));
+  }
+
+  // Get active history (sorted newest first)
+  getHistory(): UndoRecord[] {
+    return Array.from(this.records.values())
+      .sort((a, b) => parseInt(b.id.split('-')[1]) - parseInt(a.id.split('-')[1]));
   }
 
   // Performs the undo operation
@@ -88,8 +99,9 @@ class UndoManager {
       this.showSuccess('Actie ongedaan gemaakt.');
       this.records.delete(id);
       
-      // Refresh UI trigger
+      // Refresh UI triggers
       window.dispatchEvent(new Event('storage-update'));
+      window.dispatchEvent(new Event('undo-update'));
 
     } catch (err) {
       console.error(err);

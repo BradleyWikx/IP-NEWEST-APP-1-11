@@ -142,6 +142,15 @@ export interface LineItem {
   category: 'TICKET' | 'ADDON' | 'MERCH' | 'FEE' | 'DISCOUNT' | 'ADJUSTMENT' | 'SHIPPING';
 }
 
+export interface PaymentRecord {
+  id: string;
+  amount: number;
+  method: string;
+  date: string;
+  type: 'DEPOSIT' | 'FINAL' | 'PARTIAL' | 'REFUND';
+  note?: string;
+}
+
 export interface ReservationFinancials {
   total: number;
   subtotal?: number;
@@ -152,6 +161,7 @@ export interface ReservationFinancials {
   paymentDueAt?: string;
   paidAt?: string;
   paymentMethod?: string; // New field for Invoice, Ideal, Cash, etc.
+  payments?: PaymentRecord[]; // NEW: List of transactions
   payOnNightAllowed?: boolean;
   voucherCode?: string;
   voucherUsed?: number;
@@ -198,7 +208,9 @@ export interface Reservation {
   startTime?: string;
   adminPriceOverride?: AdminPriceOverride;
   tags?: string[]; // NEW: Manual tags like "Mooie Plaatsen", "VIP"
+  linkedBookingIds?: string[]; // NEW: Group Linking
   deletedAt?: string; // NEW: Soft delete timestamp
+  tableId?: string; // NEW: Floor Plan Assignment
 }
 
 export interface WaitlistEntry {

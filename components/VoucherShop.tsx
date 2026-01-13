@@ -133,9 +133,6 @@ export const VoucherShop = () => {
       quantity: 1
     }];
 
-    // If shipping cost exists, add as separate item for clarity in order, but logically part of totals
-    // (Storage logic handles totals separately, but let's keep items clean)
-
     const newOrder: VoucherOrder = {
       id: orderId,
       createdAt: new Date().toISOString(),
@@ -147,7 +144,6 @@ export const VoucherShop = () => {
       deliveryMethod: formData.deliveryMethod,
       recipient: { 
         name: recipientName,
-        // Store address in recipient details for shipping reference (even if same as billing)
         address: { street: `${street} ${houseNumber}`, city, zip } 
       },
       issuanceMode: 'INDIVIDUAL',
@@ -160,6 +156,99 @@ export const VoucherShop = () => {
 
     setStep('SUCCESS');
     setIsProcessing(false);
+  };
+
+  const handlePrintVoucher = () => {
+    // Generate a printable window
+    const win = window.open('', '_blank');
+    if (!win) return;
+
+    const html = `
+      <html>
+      <head>
+        <title>Voucher Print</title>
+        <style>
+          @page { size: A4; margin: 0; }
+          body { font-family: 'Georgia', serif; margin: 0; padding: 0; background: #fff; color: #000; }
+          .a4-container { width: 210mm; height: 297mm; position: relative; margin: 0 auto; box-sizing: border-box; }
+          
+          /* The Card - Center of page, designed to be folded */
+          .card-layout {
+             position: absolute;
+             top: 50%; left: 50%;
+             transform: translate(-50%, -50%);
+             width: 180mm;
+             height: 120mm;
+             border: 1px dashed #ccc; /* Cut line */
+             display: flex;
+          }
+          
+          .fold-line {
+             position: absolute;
+             left: 50%; top: 0; bottom: 0;
+             border-left: 1px dotted #ccc;
+          }
+
+          .panel {
+             flex: 1;
+             padding: 20px;
+             display: flex;
+             flex-direction: column;
+             justify-content: center;
+             align-items: center;
+             text-align: center;
+          }
+
+          .panel-left { background: #f8f8f8; } /* Back of card */
+          .panel-right { background: #000; color: #d4af37; } /* Front of card */
+
+          .logo { font-size: 24px; font-weight: bold; text-transform: uppercase; letter-spacing: 2px; color: #d4af37; margin-bottom: 10px; }
+          .value { font-size: 48px; font-weight: bold; margin: 20px 0; }
+          .message { font-style: italic; font-size: 14px; color: #666; max-width: 80%; margin: 0 auto; }
+          
+          .print-instruction { text-align: center; margin-top: 20px; font-family: sans-serif; color: #666; }
+          @media print { .print-instruction { display: none; } }
+        </style>
+      </head>
+      <body>
+        <div class="print-instruction">
+           Druk af op A4 (Liggend of Staand), knip langs de stippellijn en vouw dubbel.
+        </div>
+        <div class="a4-container">
+           <div class="card-layout">
+              <div class="fold-line"></div>
+              
+              <!-- Inside Left (Back when folded? No, standard card is Right Front, Left Back) -->
+              <div class="panel panel-left">
+                 <div style="font-size: 12px; text-transform: uppercase; color: #999;">Voor</div>
+                 <div style="font-size: 18px; font-weight: bold; margin-bottom: 20px;">${formData.recipientName}</div>
+                 
+                 <div style="font-size: 12px; text-transform: uppercase; color: #999;">Van</div>
+                 <div style="font-size: 18px; font-weight: bold; margin-bottom: 20px;">${formData.firstName}</div>
+
+                 ${formData.message ? `<div class="message">"${formData.message}"</div>` : ''}
+              </div>
+
+              <!-- Front -->
+              <div class="panel panel-right">
+                 <div class="logo">Inspiration Point</div>
+                 <div style="font-size: 10px; letter-spacing: 3px; text-transform: uppercase; color: #fff;">Dinner Theater</div>
+                 
+                 <div class="value">€${baseAmount}</div>
+                 
+                 <div style="font-size: 10px; color: #888; margin-top: 20px;">Geldig tot 2 jaar na uitgifte</div>
+              </div>
+           </div>
+        </div>
+        <script>
+           window.onload = function() { setTimeout(function(){ window.print(); }, 500); }
+        </script>
+      </body>
+      </html>
+    `;
+    
+    win.document.write(html);
+    win.document.close();
   };
 
   if (!config || !config.isEnabled) return null; // Or Loading
@@ -177,11 +266,17 @@ export const VoucherShop = () => {
           <h2 className="text-4xl font-serif text-white mb-2">Aanvraag Ontvangen!</h2>
           <p className="text-slate-300 mb-8 text-lg">
             Bedankt voor uw bestelling. We sturen u <strong>binnen 3 werkdagen</strong> de factuur per e-mail.<br/><br/>
-            <span className="text-sm text-slate-400">Na ontvangst van de betaling wordt de voucher direct verzonden.</span>
+            <span className="text-sm text-slate-400">Na ontvangst van de betaling wordt de voucher officieel geactiveerd.</span>
           </p>
-          <Button onClick={() => window.location.reload()} variant="secondary" className="w-full">
-            Nog een cadeau bestellen
-          </Button>
+          
+          <div className="space-y-3">
+            <Button onClick={handlePrintVoucher} className="w-full bg-slate-800 hover:bg-slate-700 text-white border-slate-600 flex items-center justify-center">
+               <Printer size={18} className="mr-2"/> Print Voorlopige Versie
+            </Button>
+            <Button onClick={() => window.location.reload()} variant="secondary" className="w-full">
+                Nog een cadeau bestellen
+            </Button>
+          </div>
         </Card>
       </div>
     );

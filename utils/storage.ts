@@ -32,6 +32,9 @@ export const KEYS = {
   ADMIN_NOTES: 'grand_stage_admin_notes'
 };
 
+// Helper to simulate network delay
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 // --- LocalStorage Repository Class ---
 class Repository<T extends { id?: string; code?: string } | any> {
   protected key: string;
@@ -40,6 +43,7 @@ class Repository<T extends { id?: string; code?: string } | any> {
     this.key = key;
   }
 
+  // --- Synchronous Methods (Legacy) ---
   getAll(includeArchived: boolean = false): T[] {
     try {
       const data = localStorage.getItem(this.key);
@@ -88,6 +92,34 @@ class Repository<T extends { id?: string; code?: string } | any> {
     } catch (e) {
       console.error(`Error saving ${this.key}`, e);
     }
+  }
+
+  // --- Async Methods (Future Proofing) ---
+  // These simulate API calls with latency and error handling
+
+  async getAllAsync(includeArchived: boolean = false): Promise<T[]> {
+    await delay(300 + Math.random() * 200); // Simulate 300-500ms latency
+    return this.getAll(includeArchived);
+  }
+
+  async getByIdAsync(id: string): Promise<T | undefined> {
+    await delay(200);
+    return this.getById(id);
+  }
+
+  async addAsync(item: T): Promise<void> {
+    await delay(400);
+    this.add(item);
+  }
+
+  async updateAsync(id: string, updater: (item: T) => T): Promise<void> {
+    await delay(400);
+    this.update(id, updater);
+  }
+
+  async deleteAsync(id: string): Promise<void> {
+    await delay(400);
+    this.delete(id);
   }
 }
 
@@ -170,6 +202,12 @@ class BookingRepository extends Repository<Reservation> {
     return active.filter(r => r.status !== BookingStatus.ARCHIVED);
   }
 
+  // Override async method to respect soft-delete
+  override async getAllAsync(includeArchived: boolean = false): Promise<Reservation[]> {
+    await delay(400);
+    return this.getAll(includeArchived);
+  }
+
   getTrash(): Reservation[] {
     return super.getAll().filter(r => !!r.deletedAt);
   }
@@ -178,6 +216,11 @@ class BookingRepository extends Repository<Reservation> {
     // Soft delete
     this.update(id, r => ({ ...r, deletedAt: new Date().toISOString() }));
     logAuditAction('SOFT_DELETE', 'RESERVATION', id, { description: 'Moved to trash' });
+  }
+
+  async deleteAsync(id: string): Promise<void> {
+    await delay(400);
+    this.delete(id);
   }
 
   restore(id: string): void {

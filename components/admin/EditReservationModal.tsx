@@ -4,7 +4,7 @@ import {
   X, Save, Users, Calendar, ShoppingBag, CreditCard, 
   AlertTriangle, RefreshCw, CheckCircle2, ArrowRight,
   Utensils, Info, Mail, Wine, PartyPopper, MessageSquare, StickyNote,
-  Minus, Plus
+  Minus, Plus, Trash2
 } from 'lucide-react';
 import { Button, Input, Card, Badge } from '../UI';
 import { Reservation, BookingStatus, ShowDefinition, EventDate } from '../../types';
@@ -32,13 +32,29 @@ interface EditReservationModalProps {
   reservation: Reservation;
   onClose: () => void;
   onSave: () => void;
+  initialTab?: string;
 }
 
-export const EditReservationModal: React.FC<EditReservationModalProps> = ({ reservation, onClose, onSave }) => {
-  const [activeTab, setActiveTab] = useState<'GENERAL' | 'WISHES' | 'PRODUCTS' | 'FINANCIAL'>('GENERAL');
+const DRAFT_KEY_PREFIX = 'edit_reservation_draft_';
+
+export const EditReservationModal: React.FC<EditReservationModalProps> = ({ reservation, onClose, onSave, initialTab = 'GENERAL' }) => {
+  const [activeTab, setActiveTab] = useState<string>(initialTab);
   
-  // Clone data for editing
-  const [formData, setFormData] = useState<Reservation>(JSON.parse(JSON.stringify(reservation)));
+  // Clone data for editing - Check Draft first
+  const [formData, setFormData] = useState<Reservation>(() => {
+    const draft = localStorage.getItem(DRAFT_KEY_PREFIX + reservation.id);
+    if (draft) {
+      try {
+        const parsed = JSON.parse(draft);
+        return { ...reservation, ...parsed }; // Merge to keep safe
+      } catch(e) {
+        return JSON.parse(JSON.stringify(reservation));
+      }
+    }
+    return JSON.parse(JSON.stringify(reservation));
+  });
+  
+  const [hasDraft, setHasDraft] = useState(!!localStorage.getItem(DRAFT_KEY_PREFIX + reservation.id));
   
   // Local state for manual dietary comment to append to structured data
   const [manualDietaryNote, setManualDietaryNote] = useState('');
@@ -58,11 +74,25 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
     setEvents(calendarRepo.getLegacyEvents());
     
     // Try to extract initial manual note from existing string if it's not just the structured parts
-    // This is a simple heuristic: if dietary string exists but structured is empty, assume it's all manual.
     if (reservation.notes.dietary && (!reservation.notes.structuredDietary || Object.keys(reservation.notes.structuredDietary).length === 0)) {
         setManualDietaryNote(reservation.notes.dietary);
     }
+    
+    // Notify user of draft
+    if (hasDraft) {
+        undoManager.showSuccess("Concept hersteld van vorige sessie.");
+    }
   }, []);
+
+  // --- DRAFT SAVING ---
+  const saveDraft = () => {
+    localStorage.setItem(DRAFT_KEY_PREFIX + reservation.id, JSON.stringify(formData));
+  };
+
+  const clearDraft = () => {
+    localStorage.removeItem(DRAFT_KEY_PREFIX + reservation.id);
+    setHasDraft(false);
+  };
 
   // --- LIVE RECALCULATION ---
   useEffect(() => {
@@ -73,10 +103,9 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
       // 1. Availability Check
       const allRes = bookingRepo.getAll().filter(r => r.date === formData.date && r.status !== 'CANCELLED' && r.id !== formData.id);
       const currentPax = allRes.reduce((sum, r) => sum + r.partySize, 0);
-      // Add current form pax
       const newPaxCount = currentPax + formData.partySize;
       
-      const status = calculateEventStatus(newPaxCount, event.capacity || 230, 0); // Ignore waitlist for admin override check
+      const status = calculateEventStatus(newPaxCount, event.capacity || 230, 0);
       if (status === 'CLOSED') {
         setDateWarning(`Let op: Deze datum is vol (${newPaxCount} pax). Opslaan forceert overboeking.`);
       } else {
@@ -90,7 +119,7 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
         packageType: formData.packageType,
         addons: formData.addons,
         merchandise: formData.merchandise,
-        promo: formData.financials.voucherCode, // Keep existing promo if any
+        promo: formData.financials.voucherCode, 
         date: formData.date,
         showId: formData.showId,
         adminOverride: formData.adminPriceOverride
@@ -101,6 +130,26 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
   }, [formData.partySize, formData.packageType, formData.addons, formData.merchandise, formData.date, formData.showId, formData.adminPriceOverride, events, shows]);
 
   // --- HANDLERS ---
+
+  const handleClose = () => {
+    // Basic dirty check could be done here, for now we assume any open/edit might be worthy of a draft if not saved
+    if (JSON.stringify(formData) !== JSON.stringify(reservation)) {
+        if(confirm("Wijzigingen bewaren als concept voor later?")) {
+            saveDraft();
+        } else {
+            clearDraft();
+        }
+    }
+    onClose();
+  };
+
+  const handleDiscardDraft = () => {
+    if(confirm("Concept verwijderen en terugkeren naar originele data?")) {
+        clearDraft();
+        setFormData(JSON.parse(JSON.stringify(reservation)));
+        setHasDraft(false);
+    }
+  };
 
   const handleSave = async () => {
     if (!financials) return;
@@ -115,8 +164,6 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
         subtotal: financials.subtotal,
         discount: financials.discountAmount,
         finalTotal: financials.amountDue,
-        // Logic: If already paid more than new total, keep paid amount (refund needed). If less, remaining is due.
-        // We do NOT auto-reset paid status unless manually handled, but let's keep it consistent.
         isPaid: formData.financials.paid >= financials.amountDue,
         priceBreakdown: financials.items
       }
@@ -134,11 +181,12 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
 
     // 4. Email
     if (sendEmail) {
-      triggerEmail('BOOKING_CONFIRMED', { type: 'RESERVATION', id: reservation.id, data: updatedReservation }); // Re-send confirmation with new details
+      triggerEmail('BOOKING_CONFIRMED', { type: 'RESERVATION', id: reservation.id, data: updatedReservation });
     }
 
+    clearDraft(); // Clear draft on successful save
     undoManager.showSuccess("Wijzigingen opgeslagen.");
-    await new Promise(r => setTimeout(r, 500)); // UI delay
+    await new Promise(r => setTimeout(r, 500));
     onSave();
     onClose();
   };
@@ -213,13 +261,23 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
         
         {/* Header */}
         <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900/50">
-          <div>
-            <h2 className="text-xl font-serif text-white flex items-center">
-              Reservering Bewerken <span className="ml-3 text-sm font-sans text-slate-500 bg-slate-900 px-2 py-1 rounded">{formData.id}</span>
-            </h2>
-            <p className="text-slate-500 text-xs mt-1">Wijzigingen worden direct berekend.</p>
+          <div className="flex items-center space-x-4">
+            <div>
+                <h2 className="text-xl font-serif text-white flex items-center">
+                Reservering Bewerken <span className="ml-3 text-sm font-sans text-slate-500 bg-slate-900 px-2 py-1 rounded">{formData.id}</span>
+                </h2>
+                <p className="text-slate-500 text-xs mt-1">Wijzigingen worden direct berekend.</p>
+            </div>
+            {hasDraft && (
+                <div className="flex items-center space-x-2 bg-amber-900/20 px-3 py-1 rounded-full border border-amber-900/50">
+                    <span className="text-xs text-amber-500 font-bold">Concept Geladen</span>
+                    <button onClick={handleDiscardDraft} className="text-slate-400 hover:text-red-500" title="Verwerp concept">
+                        <Trash2 size={12} />
+                    </button>
+                </div>
+            )}
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full text-slate-500 hover:text-white">
+          <button onClick={handleClose} className="p-2 hover:bg-slate-800 rounded-full text-slate-500 hover:text-white">
             <X size={24} />
           </button>
         </div>
@@ -567,7 +625,7 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
            </label>
 
            <div className="flex space-x-3">
-             <Button variant="ghost" onClick={onClose}>Annuleren</Button>
+             <Button variant="ghost" onClick={handleClose}>Annuleren</Button>
              <Button onClick={handleSave} disabled={isSaving} className="bg-emerald-600 hover:bg-emerald-700 min-w-[150px]">
                {isSaving ? 'Bezig...' : 'Wijzigingen Opslaan'}
              </Button>

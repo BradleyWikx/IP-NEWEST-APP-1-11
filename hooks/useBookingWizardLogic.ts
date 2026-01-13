@@ -8,6 +8,7 @@ import { logAuditAction } from '../utils/auditLogger';
 import { Reservation, BookingStatus, EventDate, ShowDefinition, WaitlistEntry } from '../types';
 import { calculateBookingTotals, getEffectivePricing } from '../utils/pricing';
 import { calculateEventStatus } from '../utils/status';
+import { ReservationSchema } from '../utils/validation';
 
 const STEPS = [
   'Datum', 
@@ -157,6 +158,8 @@ export const useBookingWizardLogic = () => {
     const c = wizardData.customer;
 
     if (step === 5) { // Details Step
+      // Use Zod partially here or standard logic, keep standard logic for real-time feedback
+      // Zod validation runs on full submit
       if (!c.firstName) errors.firstName = "Voornaam is verplicht.";
       if (!c.lastName) errors.lastName = "Achternaam is verplicht.";
       if (!c.street) errors.street = "Straatnaam is verplicht.";
@@ -289,7 +292,7 @@ export const useBookingWizardLogic = () => {
     // WAITLIST LITE MODE: Bypass check entirely.
     if (!isWaitlistMode) {
       try {
-        const freshEvents = calendarRepo.getAll();
+        const freshEvents = await calendarRepo.getAllAsync(); // Use Async
         const targetEvent = freshEvents.find(e => e.date === wizardData.date);
         
         if (!targetEvent || targetEvent.bookingEnabled === false) {
@@ -297,7 +300,7 @@ export const useBookingWizardLogic = () => {
         }
 
         if (targetEvent.type === 'SHOW') {
-           const freshReservations = bookingRepo.getAll();
+           const freshReservations = await bookingRepo.getAllAsync(); // Use Async
            const currentBookedCount = freshReservations
              .filter(r => 
                r.date === wizardData.date && 
@@ -394,6 +397,18 @@ export const useBookingWizardLogic = () => {
           idempotencyKey: wizardData.idempotencyKey,
           startTime: eventData?.event?.startTime
         };
+
+        // --- ZOD VALIDATION ---
+        const validationResult = ReservationSchema.safeParse(newRes);
+        if (!validationResult.success) {
+            console.error("Zod Validation Error:", validationResult.error.format());
+            // Map the first Zod error to a user-friendly string
+            const firstError = validationResult.error.errors[0];
+            const friendlyMessage = `${firstError.path.join('.')}: ${firstError.message}`;
+            setSubmitError(`Validatie fout: ${friendlyMessage}`);
+            setIsSubmitting(false);
+            return;
+        }
 
         const finalReservation = bookingRepo.createRequest(newRes);
         

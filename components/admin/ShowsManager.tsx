@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { Button, Input, Card, Badge } from '../UI';
 import { ShowDefinition, ShowProfile } from '../../types';
-import { getShowDefinitions, saveData, STORAGE_KEYS } from '../../utils/storage';
+import { getShowDefinitions, saveData, STORAGE_KEYS, bookingRepo } from '../../utils/storage';
 import { logAuditAction } from '../../utils/auditLogger';
 import { undoManager } from '../../utils/undoManager';
 
@@ -307,6 +307,54 @@ export const ShowsManager = () => {
       ...show, 
       id: show.id || `SHOW-${Date.now()}` 
     };
+
+    // --- CASCADING UPDATE LOGIC ---
+    if (!isNew) {
+      const originalShow = shows.find(s => s.id === show.id);
+      if (originalShow) {
+        // Find changed profiles
+        toSave.profiles.forEach(newProf => {
+          const oldProf = originalShow.profiles.find(p => p.id === newProf.id);
+          if (oldProf && oldProf.timing.startTime !== newProf.timing.startTime) {
+            // Time changed! Find bookings.
+            const allRes = bookingRepo.getAll();
+            const todayStr = new Date().toISOString().split('T')[0];
+            
+            const affectedRes = allRes.filter(r => 
+              r.showId === show.id && 
+              r.date >= todayStr && 
+              r.startTime === oldProf.timing.startTime &&
+              r.status !== 'CANCELLED' && r.status !== 'ARCHIVED'
+            );
+
+            if (affectedRes.length > 0) {
+              const confirmMsg = `Let op: Het profiel "${newProf.name}" heeft een nieuwe starttijd (${newProf.timing.startTime}).\n\nEr zijn ${affectedRes.length} toekomstige reserveringen gevonden op de oude tijd (${oldProf.timing.startTime}).\n\nWil je deze boekingen automatisch updaten?`;
+              
+              if (window.confirm(confirmMsg)) {
+                // Batch update
+                affectedRes.forEach(r => {
+                  bookingRepo.update(r.id, (prev) => ({
+                    ...prev,
+                    startTime: newProf.timing.startTime,
+                    notes: {
+                      ...prev.notes,
+                      internal: (prev.notes.internal || '') + ` [AUTO-UPDATE] Tijd gewijzigd van ${oldProf.timing.startTime} naar ${newProf.timing.startTime}.`
+                    }
+                  }));
+                });
+                
+                logAuditAction('BULK_UPDATE', 'RESERVATION', 'MULTIPLE', {
+                  description: `Cascading time update for ${affectedRes.length} bookings. ${oldProf.timing.startTime} -> ${newProf.timing.startTime}`
+                });
+                
+                undoManager.showSuccess(`${affectedRes.length} reserveringen bijgewerkt.`);
+              }
+            }
+          }
+        });
+      }
+    }
+    // --- END CASCADING UPDATE ---
 
     let updatedList;
     if (isNew) {

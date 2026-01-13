@@ -254,7 +254,7 @@ export const CalendarBulkWizard: React.FC<Props> = ({ onClose, onSuccess, presel
         <div className="w-full lg:w-64 space-y-4 shrink-0">
             <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl space-y-4">
                 <h4 className="text-xs font-bold text-amber-500 uppercase tracking-widest flex items-center">
-                    <Filter size={14} className="mr-2"/> Quick Select
+                    <Filter size={14} className="mr-2"/> Patroon Genereren
                 </h4>
                 
                 <div className="space-y-2">
@@ -279,7 +279,7 @@ export const CalendarBulkWizard: React.FC<Props> = ({ onClose, onSuccess, presel
                     </div>
 
                     <Button onClick={applyRangeSelection} disabled={!toolRangeStart || !toolRangeEnd} className="w-full h-8 text-xs bg-slate-800 border-slate-700 hover:bg-slate-700">
-                        Selecteer Bereik
+                        Genereer Data
                     </Button>
                 </div>
             </div>

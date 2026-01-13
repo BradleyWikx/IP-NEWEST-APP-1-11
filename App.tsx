@@ -4,6 +4,7 @@ import { HashRouter as Router, Routes, Route, Navigate, useLocation, useNavigate
 import { AdminLayout } from './components/admin/AdminLayout';
 import { AdminRole } from './types';
 import { useIframeResizer } from './hooks/useIframeResizer';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 // --- Modules ---
 import { BookingWizard } from './components/BookingWizard';
@@ -109,36 +110,38 @@ const MainContent = () => {
 
         {/* Admin Section */}
         <Route path="/admin/*" element={
-          <AdminLayout currentRole={adminRole} onRoleChange={setAdminRole}>
-            <Routes>
-              <Route path="/" element={<DashboardHome />} />
-              <Route path="/calendar" element={<CalendarManager />} />
-              <Route path="/planning" element={<PlanningManager />} />
-              <Route path="/reservations" element={<ReservationManager />} />
-              <Route path="/reservations/new" element={<AdminBookingWizard />} />
-              <Route path="/import" element={<DataImporter />} /> 
-              <Route path="/kitchen" element={<KitchenDashboard />} /> 
-              <Route path="/inbox" element={<ChangeRequestInbox />} />
-              <Route path="/tasks" element={<TaskManager />} /> 
-              <Route path="/shows" element={<ShowsManager />} />
-              <Route path="/waitlist" element={<WaitlistManager />} />
-              <Route path="/merchandise" element={<MerchandiseManager />} />
-              <Route path="/vouchers" element={<VoucherManager />} />
-              <Route path="/customers" element={<CustomerDatabase />} />
-              <Route path="/reports" element={<ReportsManager />} />
-              <Route path="/audit" element={<AuditLogViewer />} />
-              <Route path="/email" element={<EmailCenter />} />
-              <Route path="/newsletter" element={<NewsletterManager />} />
-              <Route path="/settings" element={<SettingsManager />} />
-              <Route path="/embed" element={<EmbedManager />} />
-              <Route path="/host" element={<HostView />} /> {/* Also available inside admin if needed */}
-              <Route path="/payments" element={<PaymentsManager />} />
-              <Route path="/promos" element={<PromoManager />} />
-              <Route path="/trash" element={<TrashManager />} /> 
-              <Route path="/demo" element={<DemoControlPanel />} /> 
-              <Route path="*" element={<DashboardHome />} />
-            </Routes>
-          </AdminLayout>
+          <ErrorBoundary>
+            <AdminLayout currentRole={adminRole} onRoleChange={setAdminRole}>
+              <Routes>
+                <Route path="/" element={<DashboardHome />} />
+                <Route path="/calendar" element={<CalendarManager />} />
+                <Route path="/planning" element={<PlanningManager />} />
+                <Route path="/reservations" element={<ReservationManager />} />
+                <Route path="/reservations/new" element={<AdminBookingWizard />} />
+                <Route path="/import" element={<DataImporter />} /> 
+                <Route path="/kitchen" element={<KitchenDashboard />} /> 
+                <Route path="/inbox" element={<ChangeRequestInbox />} />
+                <Route path="/tasks" element={<TaskManager />} /> 
+                <Route path="/shows" element={<ShowsManager />} />
+                <Route path="/waitlist" element={<WaitlistManager />} />
+                <Route path="/merchandise" element={<MerchandiseManager />} />
+                <Route path="/vouchers" element={<VoucherManager />} />
+                <Route path="/customers" element={<CustomerDatabase />} />
+                <Route path="/reports" element={<ReportsManager />} />
+                <Route path="/audit" element={<AuditLogViewer />} />
+                <Route path="/email" element={<EmailCenter />} />
+                <Route path="/newsletter" element={<NewsletterManager />} />
+                <Route path="/settings" element={<SettingsManager />} />
+                <Route path="/embed" element={<EmbedManager />} />
+                <Route path="/host" element={<HostView />} /> {/* Also available inside admin if needed */}
+                <Route path="/payments" element={<PaymentsManager />} />
+                <Route path="/promos" element={<PromoManager />} />
+                <Route path="/trash" element={<TrashManager />} /> 
+                <Route path="/demo" element={<DemoControlPanel />} /> 
+                <Route path="*" element={<DashboardHome />} />
+              </Routes>
+            </AdminLayout>
+          </ErrorBoundary>
         } />
 
         {/* Customer Section (Catch-all) */}

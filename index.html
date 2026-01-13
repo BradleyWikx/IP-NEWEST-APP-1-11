@@ -23,6 +23,7 @@
           /* Subtle ambience for the whole app */
           background-image: radial-gradient(circle at top center, #1a0505 0%, #000000 40%);
           background-attachment: fixed;
+          transition: background-color 0.3s, color 0.3s;
         }
 
         /* Prevent double scrollbars but allow scrolling if needed */
@@ -49,20 +50,57 @@
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
+
+        /* --- LIGHT MODE (High Contrast / Outdoor Mode) --- */
+        body.light-mode {
+            background-color: #f8fafc; /* Slate-50 */
+            background-image: none;
+            color: #0f172a; /* Slate-900 */
+        }
+        
+        body.light-mode .bg-black,
+        body.light-mode .bg-slate-950,
+        body.light-mode .bg-slate-900 {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important; /* Slate-300 */
+            color: #0f172a !important;
+        }
+
+        body.light-mode .text-slate-400,
+        body.light-mode .text-slate-500 {
+            color: #475569 !important; /* Slate-600 */
+        }
+
+        body.light-mode .text-white {
+            color: #000000 !important;
+        }
+
+        body.light-mode .border-slate-800 {
+            border-color: #e2e8f0 !important;
+        }
+        
+        /* Keep accents visible but readable */
+        body.light-mode .bg-amber-500 {
+            background-color: #d97706 !important; /* Darker amber */
+            color: white !important;
+        }
     </style>
 <script type="importmap">
 {
   "imports": {
-    "react-router-dom": "https://esm.sh/react-router-dom@^7.12.0",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3",
-    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "path": "https://esm.sh/path@^0.12.7",
-    "url": "https://esm.sh/url@^0.11.4",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
-    "vite": "https://esm.sh/vite@^7.3.1",
-    "firebase/": "https://esm.sh/firebase@^12.7.0/"
+    "react-router-dom": "https://esm.sh/react-router-dom@6.22.3?external=react,react-dom",
+    "react": "https://esm.sh/react@18.2.0",
+    "react/": "https://esm.sh/react@18.2.0/",
+    "lucide-react": "https://esm.sh/lucide-react@0.344.0?external=react",
+    "react-dom": "https://esm.sh/react-dom@18.2.0",
+    "react-dom/": "https://esm.sh/react-dom@18.2.0/",
+    "path": "https://esm.sh/path-browserify",
+    "url": "https://esm.sh/url",
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@4.2.1?external=react",
+    "vite": "https://esm.sh/vite@5.1.4",
+    "firebase/": "https://esm.sh/firebase@10.8.1/",
+    "zod": "https://esm.sh/zod@3.22.4",
+    "recharts": "https://esm.sh/recharts@2.12.2?external=react,react-dom"
   }
 }
 </script>
