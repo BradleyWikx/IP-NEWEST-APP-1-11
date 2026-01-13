@@ -18,6 +18,7 @@ interface ResponsiveTableProps<T> {
   renderMobileItem?: (item: T) => React.ReactNode;
   isVirtual?: boolean; // NEW: Enable virtualization
   virtualHeight?: string; // Height of the scroll container (default 600px)
+  rowHeight?: number; // NEW: Custom row height for calculations
 }
 
 export const ResponsiveTable = <T extends any>({
@@ -29,27 +30,43 @@ export const ResponsiveTable = <T extends any>({
   isLoading = false,
   renderMobileItem,
   isVirtual = false,
-  virtualHeight = "600px"
+  virtualHeight = "600px",
+  rowHeight
 }: ResponsiveTableProps<T>) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
 
   // Constants for row heights (Approximations)
-  const ROW_HEIGHT_DESKTOP = 60; 
+  const ROW_HEIGHT_DESKTOP = rowHeight || 60; 
   const ROW_HEIGHT_MOBILE = 180; // Estimate for cards
 
   useEffect(() => {
     if (containerRef.current) {
-      setContainerHeight(containerRef.current.clientHeight);
+      const el = containerRef.current;
+
+      // 1. Measure Height Dynamically (Fixes the "Only 5 items" bug)
+      const updateHeight = () => {
+        if (el) setContainerHeight(el.clientHeight);
+      };
       
+      // Initial measure
+      updateHeight();
+
+      // Observe resizing
+      const resizeObserver = new ResizeObserver(updateHeight);
+      resizeObserver.observe(el);
+      
+      // 2. Track Scroll
       const handleScroll = (e: Event) => {
         setScrollTop((e.target as HTMLDivElement).scrollTop);
       };
-      
-      const el = containerRef.current;
       el.addEventListener('scroll', handleScroll);
-      return () => el.removeEventListener('scroll', handleScroll);
+      
+      return () => {
+        resizeObserver.disconnect();
+        el.removeEventListener('scroll', handleScroll);
+      };
     }
   }, [isLoading, isVirtual]);
 
@@ -65,9 +82,10 @@ export const ResponsiveTable = <T extends any>({
     
     const totalH = data.length * itemHeight;
     const startIndex = Math.floor(scrollTop / itemHeight);
-    // Buffer: Render 5 extra items above and below
+    
+    // Buffer: Render 5 extra items above and below to prevent white flashes
     const effectiveStart = Math.max(0, startIndex - 5);
-    const visibleCount = Math.ceil(containerHeight / itemHeight);
+    const visibleCount = containerHeight > 0 ? Math.ceil(containerHeight / itemHeight) : 10; // Fallback to 10 if height not ready
     const effectiveEnd = Math.min(data.length, startIndex + visibleCount + 5);
 
     const items = data.slice(effectiveStart, effectiveEnd);
@@ -81,7 +99,7 @@ export const ResponsiveTable = <T extends any>({
       paddingBottom: bottomPad,
       isDesktop: isDesk
     };
-  }, [data, scrollTop, containerHeight, isVirtual]);
+  }, [data, scrollTop, containerHeight, isVirtual, ROW_HEIGHT_DESKTOP]);
 
   if (isLoading) {
     return <div className="p-12 text-center text-slate-500">Laden...</div>;
@@ -126,7 +144,8 @@ export const ResponsiveTable = <T extends any>({
                 <tr 
                   key={keyExtractor(item)} 
                   onClick={() => onRowClick && onRowClick(item)}
-                  className={`group transition-colors h-[60px] ${onRowClick ? 'cursor-pointer hover:bg-slate-800/50' : ''}`}
+                  className={`group transition-colors ${onRowClick ? 'cursor-pointer hover:bg-slate-800/50' : ''}`}
+                  style={{ height: isVirtual ? ROW_HEIGHT_DESKTOP : undefined }}
                 >
                   {columns.map((col, idx) => (
                     <td key={idx} className={`p-4 ${col.className || ''}`}>

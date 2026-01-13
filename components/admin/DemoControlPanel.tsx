@@ -1,11 +1,13 @@
 
 import React, { useState } from 'react';
-import { RefreshCw, AlertTriangle, Database, CheckCircle2, Loader2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { RefreshCw, AlertTriangle, Database, CheckCircle2, Loader2, ArrowRight } from 'lucide-react';
 import { Card, Button } from '../UI';
 import { seedFullDatabase } from '../../utils/seed';
 import { DestructiveActionModal } from '../UI/DestructiveActionModal';
 
 export const DemoControlPanel = () => {
+  const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
   const [isDone, setIsDone] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -19,17 +21,24 @@ export const DemoControlPanel = () => {
     setStatusMsg("Initialiseren...");
     
     try {
+        // Run the seed
         await seedFullDatabase((msg, pct) => {
             setStatusMsg(msg);
             setProgress(pct);
         });
         
+        // Finalize
         setIsDone(true);
-        setStatusMsg("Voltooid! Pagina herladen in 3 seconden...");
+        setStatusMsg("Voltooid! Dashboard wordt geladen...");
         
+        // Force a global UI refresh without reloading the page (prevents console errors)
+        window.dispatchEvent(new Event('storage-update'));
+        
+        // Navigate to dashboard after short delay
         setTimeout(() => {
-            window.location.reload();
-        }, 3000);
+            navigate('/admin');
+        }, 1500);
+
     } catch (e) {
         console.error(e);
         setStatusMsg("Er ging iets mis: " + (e as any).message);
@@ -38,11 +47,11 @@ export const DemoControlPanel = () => {
   };
 
   return (
-    <div className="h-full flex flex-col items-center justify-center p-8 max-w-2xl mx-auto">
+    <div className="h-full flex flex-col items-center justify-center p-8 max-w-2xl mx-auto animate-in fade-in">
       <Card className="w-full bg-slate-900 border border-slate-800 p-10 text-center space-y-8 shadow-2xl relative overflow-hidden group">
         
         {/* Animated Gradient Border */}
-        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-red-600 via-amber-500 to-red-600 animate-pulse" />
+        <div className={`absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-red-600 via-amber-500 to-red-600 ${isLoading ? 'animate-pulse' : ''}`} />
 
         <div className="mb-8">
           <div className="w-24 h-24 bg-slate-950 rounded-full flex items-center justify-center mx-auto mb-6 border-4 border-slate-800 shadow-xl group-hover:border-red-900/50 transition-colors">
@@ -56,7 +65,7 @@ export const DemoControlPanel = () => {
           </div>
           <h2 className="text-4xl font-serif text-white mb-3">Demo Environment</h2>
           <p className="text-slate-400 max-w-md mx-auto leading-relaxed">
-            Met één klik wordt het volledige systeem gewist en opnieuw opgebouwd met realistische data.
+            Met één klik wordt het volledige systeem gewist en opnieuw opgebouwd met realistische data voor Inspiration Point.
           </p>
         </div>
 
@@ -77,21 +86,38 @@ export const DemoControlPanel = () => {
         )}
 
         <div className="p-6 bg-red-950/10 rounded-xl border border-red-900/30">
-             <div className="flex justify-center mb-4 text-red-500">
-               <AlertTriangle size={32} />
-             </div>
-             <h3 className="text-xl font-bold text-white mb-2">Universe Generator</h3>
-             <p className="text-xs text-slate-500 mb-6">
-               Genereert: 200+ Boekingen, 50+ Klanten, Volledige Agenda (-3m/+6m), Vouchers, Taken, Wachtlijsten.
-             </p>
+             {!isLoading && !isDone && (
+               <div className="flex justify-center mb-4 text-red-500">
+                 <AlertTriangle size={32} />
+               </div>
+             )}
              
-             <Button 
-               onClick={() => setShowConfirm(true)} 
-               disabled={isLoading || isDone}
-               className="w-full h-14 text-lg bg-red-600 hover:bg-red-700 text-white border-none shadow-[0_0_20px_rgba(220,38,38,0.4)]"
-             >
-               {isDone ? 'Voltooid!' : isLoading ? 'Genereren...' : 'INITIALISEER DEMO OMGEVING'}
-             </Button>
+             {isDone ? (
+                <div className="text-emerald-500 font-bold text-lg mb-4">
+                    Data succesvol geladen!
+                </div>
+             ) : (
+                <>
+                    <h3 className="text-xl font-bold text-white mb-2">Universe Generator</h3>
+                    <p className="text-xs text-slate-500 mb-6">
+                    Genereert: 200+ Boekingen, 50+ Klanten, Volledige Agenda (-3m/+6m), Vouchers, Taken, Wachtlijsten.
+                    </p>
+                </>
+             )}
+             
+             {isDone ? (
+                 <Button onClick={() => navigate('/admin')} className="w-full h-14 bg-emerald-600 hover:bg-emerald-700 text-white border-none shadow-lg">
+                    Naar Dashboard <ArrowRight size={18} className="ml-2"/>
+                 </Button>
+             ) : (
+                 <Button 
+                    onClick={() => setShowConfirm(true)} 
+                    disabled={isLoading}
+                    className="w-full h-14 text-lg bg-red-600 hover:bg-red-700 text-white border-none shadow-[0_0_20px_rgba(220,38,38,0.4)]"
+                 >
+                    {isLoading ? 'Genereren...' : 'INITIALISEER DEMO OMGEVING'}
+                 </Button>
+             )}
         </div>
 
         <p className="text-[10px] text-slate-600">

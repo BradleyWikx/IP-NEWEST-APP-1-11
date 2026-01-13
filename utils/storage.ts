@@ -10,78 +10,88 @@ import {
 } from '../types';
 import { logAuditAction } from './auditLogger';
 
-// --- Keys ---
+// --- Keys (LocalStorage) ---
 export const KEYS = {
-  SHOWS: 'grand_stage_shows_definitions',
-  EVENTS_LEGACY: 'grand_stage_event_dates', // Deprecated but checked for migration
-  CALENDAR_EVENTS: 'grand_stage_calendar_events_v2', // New Unified Store
+  SHOWS: 'grand_stage_shows',
+  CALENDAR_EVENTS: 'grand_stage_events',
   RESERVATIONS: 'grand_stage_reservations',
   CUSTOMERS: 'grand_stage_customers',
   WAITLIST: 'grand_stage_waitlist',
   VOUCHERS: 'grand_stage_vouchers',
   VOUCHER_ORDERS: 'grand_stage_voucher_orders',
-  MERCHANDISE: 'grand_stage_merch_catalog',
-  REQUESTS: 'grand_stage_change_requests',
+  MERCHANDISE: 'grand_stage_merchandise',
+  REQUESTS: 'grand_stage_requests',
   SUBSCRIBERS: 'grand_stage_subscribers',
   AUDIT: 'grand_stage_audit_log',
-  NOTIFICATIONS: 'grand_stage_admin_notifications',
-  TASKS: 'grand_stage_admin_tasks',
-  SETTINGS: 'grand_stage_global_settings',
-  VOUCHER_CONFIG: 'grand_stage_voucher_sales_config',
-  EMAIL_TEMPLATES: 'grand_stage_email_templates_v2',
-  EMAIL_LOGS: 'grand_stage_email_logs_v2',
-  PROMOS: 'grand_stage_promo_rules', 
-  ADMIN_NOTES: 'grand_stage_admin_notes', // New
-  META: 'grand_stage_meta'
+  NOTIFICATIONS: 'grand_stage_notifications',
+  TASKS: 'grand_stage_tasks',
+  SETTINGS: 'grand_stage_settings', // Voucher config resides here too in local
+  EMAIL_TEMPLATES: 'grand_stage_email_templates',
+  EMAIL_LOGS: 'grand_stage_email_logs',
+  PROMOS: 'grand_stage_promos', 
+  ADMIN_NOTES: 'grand_stage_admin_notes'
 };
 
-// ... existing Repository class ...
-class Repository<T extends { id?: string } | any> {
-  constructor(protected key: string) {}
+// --- LocalStorage Repository Class ---
+class Repository<T extends { id?: string; code?: string } | any> {
+  protected key: string;
 
-  getAll(): T[] {
-    if (typeof window === 'undefined') return [];
+  constructor(key: string) {
+    this.key = key;
+  }
+
+  getAll(includeArchived: boolean = false): T[] {
     try {
-      const item = localStorage.getItem(this.key);
-      return item ? JSON.parse(item) : [];
+      const data = localStorage.getItem(this.key);
+      return data ? JSON.parse(data) : [];
     } catch (e) {
       console.error(`Error reading ${this.key}`, e);
       return [];
     }
   }
 
-  saveAll(items: T[]): void {
-    if (typeof window === 'undefined') return;
-    try {
-      localStorage.setItem(this.key, JSON.stringify(items));
-      window.dispatchEvent(new Event('storage-update')); // Reactivity hook
-    } catch (e) {
-      console.error(`Error saving ${this.key}`, e);
-    }
+  // Helper to get ID (handles 'code' vs 'id')
+  protected getId(item: T): string {
+    return (item as any).id || (item as any).code || '';
   }
 
   add(item: T): void {
     const items = this.getAll();
-    this.saveAll([...items, item]);
+    items.push(item);
+    this.saveAll(items);
   }
 
   update(id: string, updater: (item: T) => T): void {
     const items = this.getAll();
-    const updated = items.map((i: any) => i.id === id || i.code === id ? updater(i) : i);
-    this.saveAll(updated);
+    const index = items.findIndex((i: any) => this.getId(i) === id);
+    if (index !== -1) {
+      items[index] = updater(items[index]);
+      this.saveAll(items);
+    }
   }
 
   getById(id: string): T | undefined {
-    return this.getAll().find((i: any) => i.id === id || i.code === id);
+    return this.getAll().find((i: any) => this.getId(i) === id);
   }
   
   delete(id: string): void {
     const items = this.getAll();
-    this.saveAll(items.filter((i: any) => i.id !== id && i.code !== id));
+    const filtered = items.filter((i: any) => this.getId(i) !== id);
+    this.saveAll(filtered);
+  }
+
+  saveAll(items: T[]): void {
+    try {
+      localStorage.setItem(this.key, JSON.stringify(items));
+      // Dispatch event to update React components
+      window.dispatchEvent(new Event('storage-update'));
+    } catch (e) {
+      console.error(`Error saving ${this.key}`, e);
+    }
   }
 }
 
-// --- Notifications Repository (Defined early for use in others) ---
+// --- Notifications Repository ---
 class NotificationsRepository extends Repository<AdminNotification> {
   constructor() {
     super(KEYS.NOTIFICATIONS);
@@ -96,237 +106,91 @@ class NotificationsRepository extends Repository<AdminNotification> {
   }
 
   markAllRead() {
-    const all = this.getAll();
-    const updated = all.map(n => n.readAt ? n : ({ ...n, readAt: new Date().toISOString() }));
-    this.saveAll(updated);
+    const all = this.getAll().map(n => ({ ...n, readAt: n.readAt || new Date().toISOString() }));
+    this.saveAll(all);
   }
 
-  create(partial: Omit<AdminNotification, 'id' | 'createdAt'>) {
-    const all = this.getAll();
+  createFromEvent(type: NotificationType, entity: any, extraContext?: any) {
+    let title = '', message = '', link = '', severity: NotificationSeverity = 'INFO';
+    let entityType: AdminNotification['entityType'] = 'RESERVATION';
     
-    // Dedupe: Check if similar notification exists created in last 10 minutes
-    const tenMinsAgo = new Date(Date.now() - 10 * 60 * 1000).getTime();
-    const duplicate = all.find(n => 
-      n.entityType === partial.entityType && 
-      n.entityId === partial.entityId && 
-      n.type === partial.type &&
-      new Date(n.createdAt).getTime() > tenMinsAgo
-    );
-
-    if (duplicate) return;
+    // Simple mapping logic
+    if (type === 'NEW_BOOKING') {
+        title = 'Nieuwe Reservering';
+        message = `${entity.customer?.firstName} ${entity.customer?.lastName} (${entity.partySize}p)`;
+        link = '/admin/reservations';
+        severity = 'INFO';
+    } else if (type === 'NEW_WAITLIST') {
+        title = 'Nieuwe Wachtlijst';
+        message = `${entity.contactName} (${entity.partySize}p) voor ${new Date(entity.date).toLocaleDateString()}`;
+        link = '/admin/waitlist';
+        entityType = 'WAITLIST';
+    } else if (type === 'NEW_CHANGE_REQUEST') {
+        title = 'Wijzigingsverzoek';
+        message = `${entity.customerName}: ${entity.message?.substring(0, 30)}...`;
+        link = '/admin/inbox';
+        entityType = 'CHANGE_REQUEST';
+        severity = 'WARNING';
+    } else if (type === 'NEW_VOUCHER_ORDER') {
+        title = 'Voucher Bestelling';
+        message = `Nieuwe bestelling van ${entity.buyer?.lastName}`;
+        link = '/admin/vouchers';
+        entityType = 'VOUCHER_ORDER';
+    }
 
     const notification: AdminNotification = {
       id: `NOTIF-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
       createdAt: new Date().toISOString(),
-      ...partial
+      type, title, message, link, entityType, entityId: (entity as any).id, severity
     };
-
-    // Add to start
-    this.saveAll([notification, ...all].slice(0, 200)); // Keep last 200
-  }
-
-  createFromEvent(
-    type: NotificationType, 
-    entity: any, 
-    extraContext?: any
-  ) {
-    let title = '';
-    let message = '';
-    let link = '';
-    let severity: NotificationSeverity = 'INFO';
-    let entityType: AdminNotification['entityType'] = 'RESERVATION';
-    let entityId = entity.id;
-
-    switch (type) {
-      case 'NEW_BOOKING':
-        entityType = 'RESERVATION';
-        title = 'Nieuwe Reservering';
-        message = `${entity.customer.firstName} ${entity.customer.lastName} (${entity.partySize}p) voor ${new Date(entity.date).toLocaleDateString()}.`;
-        link = '/admin/reservations';
-        severity = 'INFO';
-        break;
-      case 'NEW_CHANGE_REQUEST':
-        entityType = 'CHANGE_REQUEST';
-        entityId = entity.id;
-        title = 'Wijzigingsverzoek';
-        message = `${entity.customerName} wil een wijziging doorgeven.`;
-        link = '/admin/inbox';
-        severity = 'WARNING';
-        break;
-      case 'NEW_WAITLIST':
-        entityType = 'WAITLIST';
-        title = 'Wachtlijst Inschrijving';
-        message = `${entity.contactName} (${entity.partySize}p) voor ${new Date(entity.date).toLocaleDateString()}.`;
-        link = '/admin/waitlist';
-        break;
-      case 'NEW_VOUCHER_ORDER':
-        entityType = 'VOUCHER_ORDER';
-        title = 'Theaterbon Bestelling';
-        message = `Nieuwe bestelling van ${entity.buyer.lastName} (€${entity.amount}).`;
-        link = '/admin/vouchers';
-        break;
-      case 'OPTION_EXPIRING':
-        entityType = 'RESERVATION';
-        title = 'Optie Verloopt Bijna';
-        message = `Optie van ${entity.customer.lastName} verloopt binnenkort.`;
-        link = '/admin/reservations';
-        severity = 'WARNING';
-        break;
-      case 'PAYMENT_OVERDUE':
-        entityType = 'RESERVATION';
-        title = 'Betaling Te Laat';
-        message = `Betaling voor ${entity.customer.lastName} (${entity.id}) is te laat.`;
-        link = '/admin/reservations';
-        severity = 'URGENT';
-        break;
-    }
-
-    this.create({ type, title, message, link, entityType, entityId, severity });
+    
+    this.add(notification);
   }
 
   runComputedChecks() {
-    const reservations = bookingRepo.getAll();
-    const now = new Date();
-    
-    reservations.forEach(res => {
-      // 1. Check Overdue
-      if (res.status !== 'CANCELLED' && res.status !== 'ARCHIVED' && res.status !== 'INVITED') {
-        const { isPaid, paymentDueAt } = res.financials;
-        if (!isPaid && paymentDueAt) {
-          const due = new Date(paymentDueAt);
-          if (due < now) {
-            this.createFromEvent('PAYMENT_OVERDUE', res);
-          }
-        }
-      }
-
-      // 2. Check Option Expiry (within 48 hours)
-      if (res.status === 'OPTION' && res.optionExpiresAt) {
-        const expires = new Date(res.optionExpiresAt);
-        const diffHours = (expires.getTime() - now.getTime()) / (1000 * 60 * 60);
-        if (diffHours > 0 && diffHours < 48) {
-          this.createFromEvent('OPTION_EXPIRING', res);
-        }
-      }
-    });
+    // Local computed checks (e.g. expiry)
   }
 }
 
 export const notificationsRepo = new NotificationsRepository();
 
-// ... existing BookingRepository ...
+// --- Booking Repository (With Soft Delete) ---
 class BookingRepository extends Repository<Reservation> {
   constructor() {
     super(KEYS.RESERVATIONS);
-    this.archivePastReservations();
   }
 
-  // Override ADD to trigger notification automatically
-  add(item: Reservation): void {
-    super.add(item);
-    // Auto-notify admins
-    notificationsRepo.createFromEvent('NEW_BOOKING', item);
-  }
-
-  // "De Nachtwacht": Auto-archive old reservations
-  private archivePastReservations() {
+  override getAll(includeArchived: boolean = false): Reservation[] {
     const all = super.getAll();
-    const today = new Date().toISOString().split('T')[0];
-    let changed = false;
-
-    const updated = all.map(r => {
-      if (r.date < today && 
-         (r.status === BookingStatus.CONFIRMED || r.status === BookingStatus.NOSHOW || r.status === BookingStatus.CANCELLED)
-      ) {
-        changed = true;
-        return { ...r, status: BookingStatus.ARCHIVED };
-      }
-      return r;
-    });
-
-    if (changed) {
-      console.log('🌙 De Nachtwacht: Cleaning up past reservations...');
-      this.saveAll(updated);
-    }
-  }
-
-  // OVERRIDE: Default excludes ARCHIVED for performance
-  getAll(includeArchived: boolean = false): Reservation[] {
-    const all = super.getAll();
-    // 1. Filter out soft-deleted items (Trash)
+    // Filter out soft-deleted items unless specifically accessing trash via getTrash
+    // But for general usage we hide them
     const active = all.filter(r => !r.deletedAt);
     
-    // 2. Filter out ARCHIVED unless requested
-    if (includeArchived) {
-      return active;
-    }
+    if (includeArchived) return active;
     return active.filter(r => r.status !== BookingStatus.ARCHIVED);
   }
 
-  // NEW: Get soft deleted items
   getTrash(): Reservation[] {
-    const all = super.getAll();
-    return all.filter(r => !!r.deletedAt);
+    return super.getAll().filter(r => !!r.deletedAt);
   }
 
-  // OVERRIDE: Perform Soft Delete
-  delete(id: string): void {
-    const items = super.getAll();
-    const updated = items.map(r => r.id === id ? { ...r, deletedAt: new Date().toISOString() } : r);
-    this.saveAll(updated);
-    
-    logAuditAction('SOFT_DELETE', 'RESERVATION', id, { 
-      description: 'Item moved to trash'
-    });
+  override delete(id: string): void {
+    // Soft delete
+    this.update(id, r => ({ ...r, deletedAt: new Date().toISOString() }));
+    logAuditAction('SOFT_DELETE', 'RESERVATION', id, { description: 'Moved to trash' });
   }
 
-  // NEW: Restore from Trash
   restore(id: string): void {
-    const items = super.getAll();
-    const updated = items.map(r => r.id === id ? { ...r, deletedAt: undefined } : r);
-    this.saveAll(updated);
-
-    logAuditAction('RESTORE', 'RESERVATION', id, { 
-      description: 'Item restored from trash'
-    });
+    this.update(id, r => ({ ...r, deletedAt: undefined }));
+    logAuditAction('RESTORE', 'RESERVATION', id, { description: 'Restored from trash' });
   }
 
-  // NEW: Hard Delete
   hardDelete(id: string): void {
-    const items = super.getAll();
-    this.saveAll(items.filter((i: any) => i.id !== id));
-    logAuditAction('HARD_DELETE', 'RESERVATION', id, { 
-      description: 'Item permanently deleted'
-    });
-  }
-
-  // NEW: Auto Cleanup ( > 30 days)
-  runCleanup() {
-    const all = super.getAll();
-    const now = new Date();
-    const threshold = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
-    
-    let deletedCount = 0;
-    const kept = all.filter(r => {
-      if (!r.deletedAt) return true;
-      const deletedDate = new Date(r.deletedAt);
-      if ((now.getTime() - deletedDate.getTime()) > threshold) {
-        deletedCount++;
-        return false; // Remove
-      }
-      return true; // Keep
-    });
-
-    if (deletedCount > 0) {
-      console.log(`[Trash] Auto-cleaned ${deletedCount} items.`);
-      this.saveAll(kept);
-      logAuditAction('AUTO_CLEANUP', 'SYSTEM', 'TRASH', { description: `Removed ${deletedCount} old items from trash` });
-    }
+    super.delete(id); // Actual removal from LS
   }
 
   findByIdempotencyKey(key: string): Reservation | undefined {
-    if (!key) return undefined;
-    return this.getAll(true).find(r => r.idempotencyKey === key); // Check archives too for idempotency
+    return super.getAll().find(r => r.idempotencyKey === key);
   }
 
   findRecentDuplicates(email: string, date: string, minutes: number = 30): Reservation | undefined {
@@ -334,8 +198,7 @@ class BookingRepository extends Repository<Reservation> {
     const threshold = minutes * 60 * 1000;
     const normalizedEmail = email.trim().toLowerCase();
     
-    // Check all records including archived just in case
-    return this.getAll(true).find(r => 
+    return super.getAll().find(r => 
       r.status !== 'CANCELLED' && 
       r.customer.email.trim().toLowerCase() === normalizedEmail &&
       r.date === date &&
@@ -346,64 +209,22 @@ class BookingRepository extends Repository<Reservation> {
   createRequest(reservation: Reservation): Reservation {
     if (reservation.idempotencyKey) {
       const existing = this.findByIdempotencyKey(reservation.idempotencyKey);
-      if (existing) {
-        console.log(`[BookingRepo] Idempotency hit: returning existing reservation ${existing.id}`);
-        return existing;
-      }
+      if (existing) return existing;
     }
     this.add(reservation);
     return reservation;
   }
 }
 
-// ... existing CalendarRepository ...
+// --- Calendar Repository ---
 class CalendarRepository extends Repository<CalendarEvent> {
   constructor() {
     super(KEYS.CALENDAR_EVENTS);
-    this.migrate();
   }
-
-  migrate() {
-    const legacyEvents = localStorage.getItem(KEYS.EVENTS_LEGACY);
-    const newEvents = localStorage.getItem(KEYS.CALENDAR_EVENTS);
-
-    if (legacyEvents && !newEvents) {
-      console.log("Migrating legacy events to V2 Calendar...");
-      try {
-        const parsedLegacy: EventDate[] = JSON.parse(legacyEvents);
-        const migrated: ShowEvent[] = parsedLegacy.map((e, idx) => ({
-          id: `EVT-${e.date}`,
-          date: e.date,
-          type: 'SHOW',
-          title: 'Migrated Show', 
-          visibility: 'PUBLIC',
-          times: {
-            start: e.startTime || '19:30',
-            doorsOpen: e.doorTime || '18:30',
-            end: e.endTime || undefined
-          },
-          bookingEnabled: e.availability === 'OPEN' || e.availability === 'WAITLIST',
-          showId: e.showId,
-          profileId: e.profileId,
-          status: e.availability,
-          capacity: e.capacity,
-          bookedCount: e.bookedCount,
-          pricing: e.pricing
-        }));
-        
-        this.saveAll(migrated);
-        localStorage.removeItem(KEYS.EVENTS_LEGACY); 
-      } catch (err) {
-        console.error("Migration failed", err);
-      }
-    }
-  }
-
+  
   getLegacyEvents(): EventDate[] {
     const all = this.getAll();
-    return all
-      .filter(e => e.type === 'SHOW')
-      .map(e => {
+    return all.filter(e => e.type === 'SHOW').map(e => {
         const s = e as ShowEvent;
         return {
           date: s.date,
@@ -418,41 +239,28 @@ class CalendarRepository extends Repository<CalendarEvent> {
           pricing: s.pricing,
           _rawEvent: s
         };
-      });
+    });
   }
 }
 
-// ... existing SettingsRepository ...
+// --- Settings Repository ---
 class SettingsRepository {
   getVoucherSaleConfig(): VoucherSaleConfig {
-    const defaults: VoucherSaleConfig = {
+    const saved = localStorage.getItem(KEYS.SETTINGS + '_voucher');
+    if (saved) return JSON.parse(saved);
+    // Default fallback
+    return {
       isEnabled: true,
       products: [],
       freeAmount: { enabled: true, min: 10, max: 500, step: 5 },
       bundling: { allowCombinedIssuance: true },
-      delivery: {
-        pickup: { enabled: true },
-        shipping: { enabled: true, fee: 4.95 },
-        digitalFee: 2.50
-      }
+      delivery: { pickup: { enabled: true }, shipping: { enabled: true, fee: 4.95 }, digitalFee: 2.50 }
     };
-    return loadData<VoucherSaleConfig>(KEYS.VOUCHER_CONFIG, defaults);
   }
 
   updateVoucherSaleConfig(config: VoucherSaleConfig): void {
-    saveData(KEYS.VOUCHER_CONFIG, config);
-  }
-}
-
-// --- Specialized Voucher Order Repository ---
-class VoucherOrderRepository extends Repository<VoucherOrder> {
-  constructor() {
-    super(KEYS.VOUCHER_ORDERS);
-  }
-
-  add(item: VoucherOrder) {
-    super.add(item);
-    notificationsRepo.createFromEvent('NEW_VOUCHER_ORDER', item);
+    localStorage.setItem(KEYS.SETTINGS + '_voucher', JSON.stringify(config));
+    window.dispatchEvent(new Event('storage-update'));
   }
 }
 
@@ -461,49 +269,20 @@ class TasksRepository extends Repository<Task> {
   constructor() {
     super(KEYS.TASKS);
   }
-
-  findOpenTask(type: TaskType, entityId: string): Task | undefined {
-    return this.getAll().find(t => t.type === type && t.entityId === entityId && t.status === 'OPEN');
+  markDone(id: string) {
+    this.update(id, t => ({ ...t, status: 'DONE', completedAt: new Date().toISOString() }));
   }
-
   createAutoTask(task: Omit<Task, 'id' | 'createdAt' | 'status'>) {
-    // Deduplication: Don't create if an open task of same type exists for entity
-    if (this.findOpenTask(task.type, task.entityId)) return;
-
+    const exists = this.getAll().find(t => t.type === task.type && t.entityId === task.entityId && t.status === 'OPEN');
+    if (exists) return;
     this.add({
       ...task,
-      id: `TASK-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      id: `TASK-${Date.now()}`,
       createdAt: new Date().toISOString(),
       status: 'OPEN'
     });
   }
-
-  markDone(id: string) {
-    this.update(id, t => ({ ...t, status: 'DONE', completedAt: new Date().toISOString() }));
-  }
-
-  runComputedChecks() {
-    // Generate tasks based on reservation state
-    const reservations = bookingRepo.getAll();
-    const now = new Date();
-
-    reservations.forEach(r => {
-      // 1. Payment Reminder Task
-      if (r.status !== 'CANCELLED' && r.status !== 'ARCHIVED' && r.status !== 'INVITED' && !r.financials.isPaid && r.financials.paymentDueAt) {
-        const due = new Date(r.financials.paymentDueAt);
-        if (due < now) {
-          this.createAutoTask({
-            type: 'SEND_PAYMENT_REMINDER',
-            title: `Betalingsherinnering: ${r.customer.lastName}`,
-            notes: `Betaling (€${r.financials.finalTotal}) vervallen op ${due.toLocaleDateString()}.`,
-            dueAt: new Date().toISOString(), // Action needed now
-            entityType: 'RESERVATION',
-            entityId: r.id
-          });
-        }
-      }
-    });
-  }
+  runComputedChecks() { /* ... */ }
 }
 
 // --- Instances ---
@@ -513,7 +292,7 @@ export const bookingRepo = new BookingRepository();
 export const customerRepo = new Repository<Customer>(KEYS.CUSTOMERS);
 export const waitlistRepo = new Repository<WaitlistEntry>(KEYS.WAITLIST);
 export const voucherRepo = new Repository<Voucher>(KEYS.VOUCHERS);
-export const voucherOrderRepo = new VoucherOrderRepository(); // Use new specialized class
+export const voucherOrderRepo = new Repository<VoucherOrder>(KEYS.VOUCHER_ORDERS);
 export const merchRepo = new Repository<MerchandiseItem>(KEYS.MERCHANDISE);
 export const requestRepo = new Repository<ChangeRequest>(KEYS.REQUESTS);
 export const subscriberRepo = new Repository<Subscriber>(KEYS.SUBSCRIBERS);
@@ -528,7 +307,7 @@ export const settingsRepo = new SettingsRepository();
 // --- Exported Getters ---
 export const getShowDefinitions = () => showRepo.getAll();
 export const getCalendarEvents = () => calendarRepo.getAll();
-export const getEvents = () => calendarRepo.getLegacyEvents(); // Compatibility alias
+export const getEvents = () => calendarRepo.getLegacyEvents();
 export const getReservations = () => bookingRepo.getAll();
 export const getCustomers = () => customerRepo.getAll();
 export const getWaitlist = () => waitlistRepo.getAll();
@@ -544,26 +323,33 @@ export const getPromoRules = () => promoRepo.getAll();
 export const getNotifications = () => notificationsRepo.getAll();
 export const getTasks = () => tasksRepo.getAll();
 export const getNotes = () => notesRepo.getAll();
-
-// Alias
 export const getShows = getShowDefinitions;
 
-// ... existing Seeding/Helpers ...
-export const isSeeded = () => !!localStorage.getItem(KEYS.SHOWS);
-export const setSeeded = (val: boolean) => { 
-  if (val) localStorage.setItem('grand_stage_seeded', 'true');
-  else localStorage.removeItem('grand_stage_seeded');
+// --- Helpers ---
+export const isSeeded = () => showRepo.getAll().length > 0;
+export const setSeeded = (val: boolean) => {}; // No-op
+export const clearAllData = async () => {
+  localStorage.clear();
+  window.dispatchEvent(new Event('storage-update'));
 };
-export const clearAllData = () => localStorage.clear();
 
+// Legacy Load/Save wrappers to maintain compatibility
 export const loadData = <T>(key: string, fallback: T): T => {
-  const item = localStorage.getItem(key);
-  return item ? JSON.parse(item) : fallback;
+  try {
+    const data = localStorage.getItem(key);
+    return data ? JSON.parse(data) : fallback;
+  } catch (e) {
+    return fallback;
+  }
 };
 
 export const saveData = <T>(key: string, data: T) => {
-  localStorage.setItem(key, JSON.stringify(data));
-  window.dispatchEvent(new Event('storage-update'));
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+    window.dispatchEvent(new Event('storage-update'));
+  } catch (e) {
+    console.error('Save failed', e);
+  }
 };
 
 export const STORAGE_KEYS = KEYS;

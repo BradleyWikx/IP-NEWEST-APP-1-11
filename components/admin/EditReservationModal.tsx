@@ -3,7 +3,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   X, Save, Users, Calendar, ShoppingBag, CreditCard, 
   AlertTriangle, RefreshCw, CheckCircle2, ArrowRight,
-  Utensils, Info, Mail, Wine
+  Utensils, Info, Mail, Wine, PartyPopper, MessageSquare, StickyNote,
+  Minus, Plus
 } from 'lucide-react';
 import { Button, Input, Card, Badge } from '../UI';
 import { Reservation, BookingStatus, ShowDefinition, EventDate } from '../../types';
@@ -16,6 +17,17 @@ import { MerchandisePicker } from '../MerchandisePicker';
 import { MOCK_ADDONS } from '../../mock/data';
 import { undoManager } from '../../utils/undoManager';
 
+const DIETARY_OPTIONS = [
+  'Glutenvrij', 
+  'Lactosevrij', 
+  'Notenallergie', 
+  'Vegetarisch', 
+  'Veganistisch',
+  'Geen Vis',
+  'Halal',
+  'Zwanger'
+];
+
 interface EditReservationModalProps {
   reservation: Reservation;
   onClose: () => void;
@@ -23,11 +35,14 @@ interface EditReservationModalProps {
 }
 
 export const EditReservationModal: React.FC<EditReservationModalProps> = ({ reservation, onClose, onSave }) => {
-  const [activeTab, setActiveTab] = useState<'GENERAL' | 'PRODUCTS' | 'FINANCIAL'>('GENERAL');
+  const [activeTab, setActiveTab] = useState<'GENERAL' | 'WISHES' | 'PRODUCTS' | 'FINANCIAL'>('GENERAL');
   
   // Clone data for editing
   const [formData, setFormData] = useState<Reservation>(JSON.parse(JSON.stringify(reservation)));
   
+  // Local state for manual dietary comment to append to structured data
+  const [manualDietaryNote, setManualDietaryNote] = useState('');
+
   // UI States
   const [sendEmail, setSendEmail] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -41,6 +56,12 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
   useEffect(() => {
     setShows(getShowDefinitions());
     setEvents(calendarRepo.getLegacyEvents());
+    
+    // Try to extract initial manual note from existing string if it's not just the structured parts
+    // This is a simple heuristic: if dietary string exists but structured is empty, assume it's all manual.
+    if (reservation.notes.dietary && (!reservation.notes.structuredDietary || Object.keys(reservation.notes.structuredDietary).length === 0)) {
+        setManualDietaryNote(reservation.notes.dietary);
+    }
   }, []);
 
   // --- LIVE RECALCULATION ---
@@ -129,6 +150,55 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
     }));
   };
 
+  const updateNotes = (field: string, val: any) => {
+    setFormData(prev => ({
+      ...prev,
+      notes: { ...prev.notes, [field]: val }
+    }));
+  };
+
+  // Helper for dietary counters
+  const handleDietaryCount = (type: string, delta: number) => {
+    setFormData(prev => {
+        const counts = prev.notes.structuredDietary || {};
+        const current = counts[type] || 0;
+        const next = Math.max(0, current + delta);
+        
+        const newCounts = { ...counts, [type]: next };
+        if (next === 0) delete newCounts[type];
+        
+        // Rebuild string
+        const parts = Object.entries(newCounts).map(([k, v]) => `${v}x ${k}`);
+        if (manualDietaryNote) parts.push(manualDietaryNote);
+        
+        return {
+            ...prev,
+            notes: {
+                ...prev.notes,
+                structuredDietary: newCounts,
+                dietary: parts.join(', ')
+            }
+        };
+    });
+  };
+
+  // Helper for manual dietary note
+  const handleManualDietaryChange = (val: string) => {
+      setManualDietaryNote(val);
+      setFormData(prev => {
+          const counts = prev.notes.structuredDietary || {};
+          const parts = Object.entries(counts).map(([k, v]) => `${v}x ${k}`);
+          if (val) parts.push(val);
+          return {
+              ...prev,
+              notes: {
+                  ...prev.notes,
+                  dietary: parts.join(', ')
+              }
+          };
+      });
+  };
+
   // --- RENDER ---
 
   if (!financials) return null; // Loading
@@ -155,16 +225,17 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-slate-800 bg-slate-900/20 px-6">
+        <div className="flex border-b border-slate-800 bg-slate-900/20 px-6 overflow-x-auto">
           {[
             { id: 'GENERAL', label: 'Algemeen', icon: Users },
+            { id: 'WISHES', label: 'Wensen', icon: Utensils },
             { id: 'PRODUCTS', label: 'Producten', icon: ShoppingBag },
             { id: 'FINANCIAL', label: 'Financieel', icon: CreditCard },
           ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center px-4 py-4 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === tab.id ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
+              className={`flex items-center px-4 py-4 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors whitespace-nowrap ${activeTab === tab.id ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}
             >
               <tab.icon size={14} className="mr-2" /> {tab.label}
             </button>
@@ -222,6 +293,7 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
                         <option value="REQUEST">Aanvraag</option>
                         <option value="OPTION">Optie</option>
                         <option value="CONFIRMED">Bevestigd</option>
+                        <option value="INVITED">Genodigde</option>
                         <option value="CANCELLED">Geannuleerd</option>
                         <option value="ARCHIVED">Archief</option>
                       </select>
@@ -235,9 +307,107 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
                       <Input label="Achternaam" value={formData.customer.lastName} onChange={(e: any) => updateCustomer('lastName', e.target.value)} />
                       <Input label="Email" value={formData.customer.email} onChange={(e: any) => updateCustomer('email', e.target.value)} className="col-span-2" />
                       <Input label="Telefoon" value={formData.customer.phone} onChange={(e: any) => updateCustomer('phone', e.target.value)} className="col-span-2" />
+                      <Input label="Bedrijfsnaam" value={formData.customer.companyName || ''} onChange={(e: any) => updateCustomer('companyName', e.target.value)} className="col-span-2" />
                    </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* TAB: WISHES */}
+          {activeTab === 'WISHES' && (
+            <div className="space-y-6 animate-in fade-in">
+                
+                {/* Viering */}
+                <div className="p-6 bg-slate-900 border border-slate-800 rounded-xl space-y-4">
+                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center">
+                        <PartyPopper size={14} className="mr-2 text-purple-500"/> Viering
+                    </h3>
+                    <div className="flex flex-col space-y-4">
+                        <label className="flex items-center space-x-3 cursor-pointer">
+                            <input 
+                                type="checkbox" 
+                                checked={formData.notes.isCelebrating} 
+                                onChange={(e) => updateNotes('isCelebrating', e.target.checked)}
+                                className="w-5 h-5 rounded bg-slate-800 border-slate-600 checked:bg-purple-500"
+                            />
+                            <span className="text-sm text-white">Is er iets te vieren?</span>
+                        </label>
+                        
+                        {formData.notes.isCelebrating && (
+                            <Input 
+                                label="Wat wordt er gevierd?"
+                                placeholder="Bijv. 50 jaar getrouwd"
+                                value={formData.notes.celebrationText || ''}
+                                onChange={(e: any) => updateNotes('celebrationText', e.target.value)}
+                            />
+                        )}
+                    </div>
+                </div>
+
+                {/* Dieetwensen (UPDATED with Counters) */}
+                <div className="p-6 bg-slate-900 border border-slate-800 rounded-xl space-y-4">
+                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center">
+                        <Utensils size={14} className="mr-2 text-amber-500"/> Dieetwensen & Allergieën
+                    </h3>
+                    
+                    {/* Interactive Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {DIETARY_OPTIONS.map(opt => {
+                        const count = formData.notes.structuredDietary?.[opt] || 0;
+                        return (
+                          <div key={opt} className={`flex items-center justify-between p-2 rounded-lg border transition-all ${count > 0 ? 'bg-amber-900/10 border-amber-500/50' : 'bg-black/30 border-slate-800'}`}>
+                             <span className={`text-xs ${count > 0 ? 'text-white font-bold' : 'text-slate-400'}`}>{opt}</span>
+                             <div className="flex items-center bg-slate-900 rounded p-0.5">
+                                <button onClick={() => handleDietaryCount(opt, -1)} className="p-1 text-slate-500 hover:text-white disabled:opacity-30" disabled={count === 0}><Minus size={12}/></button>
+                                <span className="w-6 text-center text-xs font-bold text-white">{count}</span>
+                                <button onClick={() => handleDietaryCount(opt, 1)} className="p-1 text-slate-500 hover:text-amber-500"><Plus size={12}/></button>
+                             </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Manual Override / Addition */}
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1.5 block">Extra toelichting (Dieet)</label>
+                      <textarea 
+                          className="w-full h-20 bg-black/40 border border-slate-800 rounded-xl p-3 text-white text-sm focus:border-amber-500 outline-none resize-none placeholder:text-slate-600"
+                          placeholder="Bijv. Kruisbesmetting is fataal, allergie voor schelpdieren..."
+                          value={manualDietaryNote}
+                          onChange={(e) => handleManualDietaryChange(e.target.value)}
+                      />
+                      <p className="text-[10px] text-slate-500 mt-1 italic">
+                        Resultaat op call sheet: <span className="text-amber-500">{formData.notes.dietary || '-'}</span>
+                      </p>
+                    </div>
+                </div>
+
+                {/* Opmerkingen */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="p-6 bg-slate-900 border border-slate-800 rounded-xl space-y-4">
+                        <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center">
+                            <MessageSquare size={14} className="mr-2 text-blue-500"/> Opmerkingen (Klant)
+                        </h3>
+                        <textarea 
+                            className="w-full h-32 bg-black/40 border border-slate-800 rounded-xl p-3 text-white text-sm focus:border-blue-500 outline-none resize-none"
+                            placeholder="Extra wensen van de klant..."
+                            value={formData.notes.comments || ''}
+                            onChange={(e) => updateNotes('comments', e.target.value)}
+                        />
+                    </div>
+                    <div className="p-6 bg-amber-900/10 border border-amber-900/30 rounded-xl space-y-4">
+                        <h3 className="text-xs font-bold text-amber-500 uppercase tracking-widest flex items-center">
+                            <StickyNote size={14} className="mr-2"/> Interne Notities (Admin)
+                        </h3>
+                        <textarea 
+                            className="w-full h-32 bg-black/20 border border-amber-900/30 rounded-xl p-3 text-amber-100 text-sm focus:border-amber-500 outline-none resize-none placeholder:text-amber-500/30"
+                            placeholder="Alleen zichtbaar voor personeel..."
+                            value={formData.notes.internal || ''}
+                            onChange={(e) => updateNotes('internal', e.target.value)}
+                        />
+                    </div>
+                </div>
             </div>
           )}
 

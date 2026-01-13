@@ -1,5 +1,5 @@
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { calendarRepo, getShowDefinitions, bookingRepo, waitlistRepo } from '../utils/storage';
 import { ShowDefinition, Availability, CalendarEvent, ShowEvent } from '../types';
 import { useIsMobile, useMediaQuery } from './useMediaQuery';
@@ -45,13 +45,9 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
     }
   }, [isMobile, isTablet]);
 
-  useEffect(() => {
-    refreshData();
-    window.addEventListener('storage-update', refreshData);
-    return () => window.removeEventListener('storage-update', refreshData);
-  }, []);
-
-  const refreshData = () => {
+  // Fix: Wrap refreshData in useCallback to maintain stable identity reference
+  // This prevents infinite useEffect loops in components that depend on refreshData
+  const refreshData = useCallback(() => {
     const rawEvents = calendarRepo.getAll();
     const allReservations = bookingRepo.getAll();
     const allWaitlist = waitlistRepo.getAll();
@@ -91,7 +87,13 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
 
     setAllEvents(enrichedEvents);
     setShows(getShowDefinitions());
-  };
+  }, []);
+
+  useEffect(() => {
+    refreshData();
+    window.addEventListener('storage-update', refreshData);
+    return () => window.removeEventListener('storage-update', refreshData);
+  }, [refreshData]);
 
   const navigateMonth = (delta: number) => {
     setCurrentMonth(prev => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));

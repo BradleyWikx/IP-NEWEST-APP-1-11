@@ -2,16 +2,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  Ticket, Search, CheckCircle2, XCircle,
-  Clock, AlertCircle, Calendar, Users, DollarSign, 
-  Edit3, Utensils, PartyPopper, Star, 
-  Trash2, Filter, AlertOctagon, Coffee, Music, ShoppingBag,
-  ChevronLeft, ChevronRight, X, BarChart3, Lock, ArrowRight,
-  CheckSquare, Layers
+  Search, Calendar, Filter, MoreHorizontal,
+  CheckCircle2, AlertCircle, Clock, XCircle, 
+  User, Users, CreditCard, Star, ShoppingBag, 
+  ArrowRight, Mail, Phone, Trash2, SlidersHorizontal,
+  ChevronDown, MessageSquare, Utensils, Tag, PartyPopper, Briefcase
 } from 'lucide-react';
 import { Button, Card, Badge, ResponsiveDrawer, Input } from '../UI';
-import { Reservation, BookingStatus, AdminPriceOverride, CalendarEvent } from '../../types';
-import { bookingRepo, tasksRepo, calendarRepo, showRepo } from '../../utils/storage';
+import { Reservation, BookingStatus, CalendarEvent } from '../../types';
+import { bookingRepo, calendarRepo } from '../../utils/storage';
 import { undoManager } from '../../utils/undoManager';
 import { logAuditAction } from '../../utils/auditLogger';
 import { triggerEmail } from '../../utils/emailEngine';
@@ -22,12 +21,41 @@ import { recalculateReservationFinancials } from '../../utils/pricing';
 import { AuditTimeline } from './AuditTimeline';
 import { EditReservationModal } from './EditReservationModal';
 import { DestructiveActionModal } from '../UI/DestructiveActionModal';
-import { formatGuestName } from '../../utils/formatters';
+import { formatGuestName, formatCurrency } from '../../utils/formatters';
 
 // --- TYPES ---
 
-type ViewTab = 'TODAY' | 'AGENDA' | 'ATTENTION' | 'ARCHIVE';
-type QuickFilter = 'ALL' | 'REQUEST' | 'UNPAID' | 'VIP';
+type FilterMode = 'ALL' | 'TODAY' | 'ACTION' | 'REQUESTS' | 'OPTIONS' | 'ARRIVALS';
+
+// --- COMPONENTS ---
+
+const KPIChip = ({ 
+  label, count, active, onClick, color, icon: Icon 
+}: { 
+  label: string, count: number, active: boolean, onClick: () => void, color: string, icon: any 
+}) => (
+  <button 
+    onClick={onClick}
+    className={`
+      flex items-center justify-between p-3 rounded-xl border transition-all duration-200 min-w-[140px] flex-1
+      ${active 
+        ? `bg-${color}-900/20 border-${color}-500/50 shadow-[0_0_15px_rgba(0,0,0,0.3)]` 
+        : 'bg-slate-900 border-slate-800 hover:border-slate-600 hover:bg-slate-800'}
+    `}
+  >
+    <div className="flex flex-col items-start">
+      <span className={`text-[10px] font-bold uppercase tracking-wider mb-1 ${active ? `text-${color}-400` : 'text-slate-500'}`}>
+        {label}
+      </span>
+      <span className={`text-2xl font-serif font-bold ${active ? 'text-white' : 'text-slate-300'}`}>
+        {count}
+      </span>
+    </div>
+    <div className={`p-2 rounded-lg ${active ? `bg-${color}-500 text-black` : 'bg-slate-950 text-slate-600'}`}>
+      <Icon size={18} />
+    </div>
+  </button>
+);
 
 export const ReservationManager = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -35,86 +63,109 @@ export const ReservationManager = () => {
   const [allEvents, setAllEvents] = useState<CalendarEvent[]>([]);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Workflow State
-  const [activeTab, setActiveTab] = useState<ViewTab>('TODAY');
-  const [quickFilter, setQuickFilter] = useState<QuickFilter>('ALL');
+  // Filter State
+  const [filterMode, setFilterMode] = useState<FilterMode>('TODAY');
+  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedDateFilter, setSelectedDateFilter] = useState<string>(new Date().toISOString().split('T')[0]);
   
-  // Selection State (BULK)
+  // Selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkAction, setBulkAction] = useState<{ type: 'CONFIRM' | 'CANCEL' | 'DELETE', count: number } | null>(null);
 
-  // Modal State
+  // Drawer / Modals
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
-  const [detailTab, setDetailTab] = useState<'DETAILS' | 'HISTORY'>('DETAILS');
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [showFullEditModal, setShowFullEditModal] = useState(false);
-  const [isEditingPrice, setIsEditingPrice] = useState(false);
+  const [drawerTab, setDrawerTab] = useState<'DETAILS' | 'HISTORY'>('DETAILS');
+  const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  
-  // Safe Status Change State
   const [statusConfirm, setStatusConfirm] = useState<{ id: string, newStatus: BookingStatus } | null>(null);
+  const [isPriceEditing, setIsPriceEditing] = useState(false);
+  
+  // Payment Logic
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState('FACTUUR');
 
-  // --- DATA LOADING ---
+  // --- LOADING ---
   useEffect(() => {
     const load = () => {
-        let data = bookingRepo.getAll(true);
-        // Deep Link Check
+        const data = bookingRepo.getAll(true); // Include archived for history if needed
+        setReservations(data);
+        setAllEvents(calendarRepo.getAll());
+
+        // Handle Deep Links
         const openId = searchParams.get('open');
-        const dateQuery = searchParams.get('date');
-        
         if (openId && !selectedReservation) {
             const match = data.find(r => r.id === openId);
             if (match) setSelectedReservation(match);
         }
         
-        if (dateQuery) {
-            setSelectedDateFilter(dateQuery);
-            setActiveTab('AGENDA');
+        // Date Override via URL
+        const dateParam = searchParams.get('date');
+        if (dateParam) {
+            setSelectedDate(dateParam);
+            setFilterMode('ALL'); // Reset specific filter to show everything for that date
         }
-
-        setReservations(data);
-        setAllEvents(calendarRepo.getAll());
     };
     load();
     window.addEventListener('storage-update', load);
     return () => window.removeEventListener('storage-update', load);
   }, [refreshTrigger, searchParams]);
 
-  const refreshData = () => setRefreshTrigger(p => p + 1);
+  const refresh = () => setRefreshTrigger(p => p + 1);
 
   // --- FILTER LOGIC ---
-  const filteredData = useMemo<Reservation[]>(() => {
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
+  
+  const stats = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Base set: Active reservations (not cancelled/archived)
+    const active = reservations.filter(r => r.status !== 'CANCELLED' && r.status !== 'ARCHIVED');
+    
+    return {
+      todayCount: active.filter(r => r.date === today).length,
+      actionCount: active.filter(r => r.status === 'REQUEST' || getPaymentStatus(r) === 'OVERDUE' || (r.status === 'OPTION' && r.optionExpiresAt && r.optionExpiresAt <= today)).length,
+      requests: active.filter(r => r.status === 'REQUEST').length,
+      options: active.filter(r => r.status === 'OPTION').length,
+      arrivals: active.filter(r => r.date === today && r.status === 'CONFIRMED').length,
+    };
+  }, [reservations]);
 
-    // 1. Tab & Date Filtering
-    let result = reservations.filter(r => {
-      if (activeTab === 'ARCHIVE') return r.status === 'ARCHIVED' || r.status === 'CANCELLED';
-      if (r.status === 'ARCHIVED' || r.status === 'CANCELLED') return false;
+  const filteredData = useMemo(() => {
+    let result = reservations;
 
-      switch (activeTab) {
-        case 'TODAY':
-          return r.date === todayStr;
-        case 'AGENDA':
-          return r.date === selectedDateFilter;
-        case 'ATTENTION':
-          const paymentStatus = getPaymentStatus(r);
-          const isOverdue = paymentStatus === 'OVERDUE' || paymentStatus === 'DUE_SOON';
-          const isRequest = r.status === 'REQUEST';
-          const isExpiringOption = r.status === 'OPTION' && r.optionExpiresAt && r.optionExpiresAt <= todayStr;
-          return isOverdue || isRequest || isExpiringOption;
-        default: return true;
-      }
-    });
+    // 1. Primary Filter Mode
+    const today = new Date().toISOString().split('T')[0];
 
-    // 2. Quick Filters
-    if (quickFilter === 'REQUEST') result = result.filter(r => r.status === 'REQUEST');
-    if (quickFilter === 'UNPAID') result = result.filter(r => !r.financials.isPaid);
-    if (quickFilter === 'VIP') result = result.filter(r => r.packageType === 'premium' || r.tags?.includes('VIP'));
+    switch (filterMode) {
+      case 'TODAY':
+        result = result.filter(r => r.date === today);
+        break;
+      case 'ACTION':
+        result = result.filter(r => {
+           if (r.status === 'CANCELLED' || r.status === 'ARCHIVED') return false;
+           const isReq = r.status === 'REQUEST';
+           const isOverdue = getPaymentStatus(r) === 'OVERDUE';
+           const isExpiring = r.status === 'OPTION' && r.optionExpiresAt && r.optionExpiresAt <= today;
+           return isReq || isOverdue || isExpiring;
+        });
+        break;
+      case 'REQUESTS':
+        result = result.filter(r => r.status === 'REQUEST');
+        break;
+      case 'OPTIONS':
+        result = result.filter(r => r.status === 'OPTION');
+        break;
+      case 'ARRIVALS':
+        result = result.filter(r => r.date === today && (r.status === 'CONFIRMED' || r.status === 'ARRIVED'));
+        break;
+      case 'ALL':
+        // If searching, search EVERYTHING. If date filter active, respect date.
+        if (!searchTerm && selectedDate) {
+            result = result.filter(r => r.date === selectedDate);
+        }
+        break;
+    }
 
-    // 3. Search
+    // 2. Search
     if (searchTerm) {
       const q = searchTerm.toLowerCase();
       result = result.filter(r => 
@@ -124,435 +175,534 @@ export const ReservationManager = () => {
       );
     }
 
-    return result.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [reservations, activeTab, quickFilter, searchTerm, selectedDateFilter]);
+    // Sort: Action items first, then date
+    return result.sort((a, b) => {
+        // Priority to requests
+        if (a.status === 'REQUEST' && b.status !== 'REQUEST') return -1;
+        if (b.status === 'REQUEST' && a.status !== 'REQUEST') return 1;
+        // Then by date
+        return new Date(a.date).getTime() - new Date(b.date).getTime();
+    });
+  }, [reservations, filterMode, selectedDate, searchTerm]);
 
-  // --- BULK SELECTION LOGIC ---
-  const toggleSelection = (id: string) => {
-    const newSet = new Set(selectedIds);
-    if (newSet.has(id)) newSet.delete(id);
-    else newSet.add(id);
-    setSelectedIds(newSet);
-  };
+  // --- CAPACITY BAR ---
+  const capacityStats = useMemo(() => {
+    // Only relevant if filtering by specific date (TODAY or ALL + Date)
+    let targetDate = filterMode === 'TODAY' ? new Date().toISOString().split('T')[0] : selectedDate;
+    if (!targetDate) return null;
 
-  const toggleSelectAll = () => {
-    if (selectedIds.size === filteredData.length) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(filteredData.map(r => r.id)));
-    }
-  };
+    const event = allEvents.find(e => e.date === targetDate && e.type === 'SHOW');
+    const capacity = (event as any)?.capacity || 230;
+    
+    const dailyRes = reservations.filter(r => 
+        r.date === targetDate && 
+        ['CONFIRMED', 'ARRIVED', 'OPTION', 'INVITED'].includes(r.status)
+    );
+    const booked = dailyRes.reduce((s, r) => s + r.partySize, 0);
+    const pending = reservations.filter(r => r.date === targetDate && r.status === 'REQUEST').reduce((s,r) => s + r.partySize, 0);
+
+    return { date: targetDate, capacity, booked, pending, eventName: event?.title };
+  }, [filterMode, selectedDate, reservations, allEvents]);
+
+  // --- ACTIONS ---
 
   const handleBulkAction = (type: 'CONFIRM' | 'CANCEL' | 'DELETE') => {
     setBulkAction({ type, count: selectedIds.size });
   };
 
-  const executeBulkAction = () => {
+  const executeBulk = () => {
     if (!bulkAction) return;
+    const ids = Array.from(selectedIds);
     
-    let updatedCount = 0;
-    const ids: string[] = Array.from(selectedIds);
-
     ids.forEach((id: string) => {
-      const res = reservations.find(r => r.id === id);
-      if (!res) return;
-
-      if (bulkAction.type === 'DELETE') {
-        bookingRepo.delete(id);
-        updatedCount++;
-      } else {
-        const newStatus = bulkAction.type === 'CONFIRM' ? BookingStatus.CONFIRMED : BookingStatus.CANCELLED;
-        
-        // Skip if already in that status
-        if (res.status === newStatus) return;
-
-        bookingRepo.update(id, (r) => ({ ...r, status: newStatus }));
-        
-        // Trigger Email
-        if (newStatus === BookingStatus.CONFIRMED) {
-           triggerEmail('BOOKING_CONFIRMED', { type: 'RESERVATION', id, data: { ...res, status: newStatus } });
-        } else if (newStatus === BookingStatus.CANCELLED) {
-           triggerEmail('BOOKING_CANCELLED', { type: 'RESERVATION', id, data: { ...res, status: newStatus } });
-        }
-
-        updatedCount++;
-      }
+       if (bulkAction.type === 'DELETE') bookingRepo.delete(id);
+       else {
+          const newStatus = bulkAction.type === 'CONFIRM' ? BookingStatus.CONFIRMED : BookingStatus.CANCELLED;
+          bookingRepo.update(id, r => ({ ...r, status: newStatus }));
+          if (newStatus === BookingStatus.CONFIRMED) {
+             const res = bookingRepo.getById(id);
+             if (res) triggerEmail('BOOKING_CONFIRMED', { type: 'RESERVATION', id, data: res });
+          }
+       }
     });
 
-    logAuditAction('BULK_UPDATE', 'RESERVATION', 'MULTIPLE', { 
-        description: `Bulk ${bulkAction.type} on ${updatedCount} items` 
-    });
-
-    undoManager.showSuccess(`${updatedCount} items bijgewerkt.`);
-    
+    logAuditAction('BULK_UPDATE', 'RESERVATION', 'MULTIPLE', { description: `Bulk ${bulkAction.type} on ${ids.length} items` });
+    undoManager.showSuccess(`${bulkAction.count} items verwerkt.`);
     setBulkAction(null);
     setSelectedIds(new Set());
-    refreshData();
+    refresh();
   };
 
-  // --- SMART DECISION BAR LOGIC ---
-  const dateCapacityStats = useMemo(() => {
-      const targetDate = activeTab === 'TODAY' ? new Date().toISOString().split('T')[0] : selectedDateFilter;
-      const event = allEvents.find(e => e.date === targetDate && e.type === 'SHOW');
-      
-      const relevant = reservations.filter(r => 
-          r.date === targetDate &&
-          r.status !== 'CANCELLED' && 
-          r.status !== 'ARCHIVED' && 
-          r.status !== 'NOSHOW' &&
-          r.status !== 'WAITLIST'
-      );
-
-      const hardOccupancy = relevant
-        .filter(r => ['CONFIRMED', 'ARRIVED', 'OPTION', 'INVITED'].includes(r.status))
-        .reduce((s,r) => s + r.partySize, 0);
-        
-      const pendingOccupancy = relevant
-        .filter(r => r.status === 'REQUEST')
-        .reduce((s,r) => s + r.partySize, 0);
-      
-      const capacity = (event as any)?.capacity || 230;
-      const totalPotential = hardOccupancy + pendingOccupancy;
-
-      return {
-          date: targetDate,
-          capacity,
-          hardOccupancy,
-          pendingOccupancy,
-          totalPotential,
-          isOverbooked: totalPotential > capacity,
-          hasEvent: !!event
-      };
-  }, [selectedDateFilter, activeTab, reservations, allEvents]);
-
-  // --- HELPER: Get Capacity Info per Request ---
-  const getRequestCapacityInfo = (res: Reservation) => {
-    if (res.status !== 'REQUEST') return null;
-    const event = allEvents.find(e => e.date === res.date && e.type === 'SHOW');
-    const capacity = (event as any)?.capacity || 230;
-    
-    const currentHardOccupancy = reservations
-      .filter(r => r.date === res.date && ['CONFIRMED', 'OPTION', 'INVITED', 'ARRIVED'].includes(r.status))
-      .reduce((s, r) => s + r.partySize, 0);
-
-    const projected = currentHardOccupancy + res.partySize;
-    return { currentHardOccupancy, capacity, projected, isOverflow: projected > capacity };
+  const toggleSelect = (id: string) => {
+    const s = new Set(selectedIds);
+    if (s.has(id)) s.delete(id); else s.add(id);
+    setSelectedIds(s);
   };
 
-  // --- ACTIONS ---
-  const initiateStatusChange = (id: string, newStatus: BookingStatus) => {
-    setStatusConfirm({ id, newStatus });
-  };
-
-  const confirmStatusChange = () => {
-    if (!statusConfirm) return;
-    const { id, newStatus } = statusConfirm;
-    
-    const original = reservations.find(r => r.id === id);
-    if (!original) return;
-
-    let updates: Partial<Reservation> = { status: newStatus };
-    if (newStatus === BookingStatus.OPTION && !original.optionExpiresAt) {
-       const nextWeek = new Date(); nextWeek.setDate(nextWeek.getDate() + 7);
-       updates.optionExpiresAt = nextWeek.toISOString();
-    }
-
-    bookingRepo.update(id, r => ({ ...r, ...updates }));
-    logAuditAction('UPDATE_STATUS', 'RESERVATION', id, { description: `Status changed to ${newStatus}` });
-    
-    if (newStatus === 'CONFIRMED') triggerEmail('BOOKING_CONFIRMED', { type: 'RESERVATION', id, data: { ...original, status: newStatus } });
-    
-    undoManager.showSuccess(`Status gewijzigd naar ${newStatus}`);
-    setStatusConfirm(null);
-    refreshData();
-  };
-
-  const executeDelete = () => {
+  const handleRegisterPayment = () => {
     if (!selectedReservation) return;
-    bookingRepo.delete(selectedReservation.id);
-    setSelectedReservation(null);
-    setShowDeleteModal(false);
-    refreshData();
-    undoManager.showSuccess('Item verplaatst naar prullenbak');
+    
+    const updates = {
+      financials: {
+        ...selectedReservation.financials,
+        isPaid: true,
+        paidAt: new Date().toISOString(),
+        paid: selectedReservation.financials.finalTotal, // Assume full payment
+        paymentMethod: paymentMethod
+      }
+    };
+    
+    bookingRepo.update(selectedReservation.id, r => ({ ...r, ...updates }));
+    
+    logAuditAction('REGISTER_PAYMENT', 'RESERVATION', selectedReservation.id, { 
+      description: `Payment of €${selectedReservation.financials.finalTotal} registered via ${paymentMethod}` 
+    });
+    
+    undoManager.showSuccess('Betaling succesvol geregistreerd');
+    setSelectedReservation({ ...selectedReservation, ...updates }); // Update local view
+    setShowPaymentModal(false);
+    refresh();
   };
-
-  // --- RENDER HELPERS ---
-  const renderQuickFilter = (id: QuickFilter, label: string, icon: any) => (
-    <button
-      onClick={() => setQuickFilter(quickFilter === id ? 'ALL' : id)}
-      className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all flex items-center ${quickFilter === id ? 'bg-amber-500 border-amber-500 text-black' : 'bg-slate-900 border-slate-700 text-slate-400 hover:border-slate-500'}`}
-    >
-      {icon} <span className="ml-2">{label}</span>
-    </button>
-  );
 
   return (
-    <div className="h-full flex flex-col space-y-6 relative">
+    <div className="h-full flex flex-col space-y-6">
       
-      {/* HEADER AREA */}
-      <div>
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4 mb-6">
-          <div>
-            <h2 className="text-3xl font-serif text-white">Reserveringen</h2>
-            <p className="text-slate-500 text-sm">Beheer boekingen en aanvragen.</p>
-          </div>
-          <div className="flex items-center bg-slate-900 p-1.5 rounded-xl border border-slate-800 shadow-lg">
-             <Button variant="ghost" className={`h-10 text-xs ${activeTab === 'TODAY' ? 'bg-amber-500 text-black' : 'text-slate-400'}`} onClick={() => { setActiveTab('TODAY'); setSelectedDateFilter(new Date().toISOString().split('T')[0]); }}>Vandaag</Button>
-             <div className="h-6 w-px bg-slate-800 mx-2" />
-             <div className="relative">
-               <Calendar size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
-               <input type="date" className="bg-transparent border-none text-white text-sm pl-9 pr-2 py-2 focus:ring-0 outline-none font-bold" value={selectedDateFilter} onChange={(e) => { setSelectedDateFilter(e.target.value); setActiveTab('AGENDA'); }} />
-             </div>
-          </div>
-        </div>
-
-        {/* TABS & FILTERS */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-slate-800 gap-4 md:gap-0 pb-4">
-           <div className="flex space-x-6">
-             {[{ id: 'TODAY', label: 'VANDAAG' }, { id: 'AGENDA', label: 'AGENDA' }, { id: 'ATTENTION', label: 'ACTIE VEREIST' }, { id: 'ARCHIVE', label: 'ARCHIEF' }].map(tab => (
-               <button key={tab.id} onClick={() => { setActiveTab(tab.id as ViewTab); }} className={`text-xs font-black uppercase tracking-widest pb-4 border-b-2 transition-all ${activeTab === tab.id ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>{tab.label}</button>
-             ))}
-           </div>
-           <div className="flex items-center space-x-3">
-              {renderQuickFilter('REQUEST', 'Aanvragen', <Ticket size={14}/>)}
-              {renderQuickFilter('VIP', 'VIP', <Star size={14}/>)}
-              <div className="w-px h-6 bg-slate-800" />
-              <div className="relative">
-                <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
-                <input className="bg-slate-900 border border-slate-800 rounded-lg pl-8 pr-3 py-1.5 text-xs text-white focus:border-amber-500 outline-none w-48" placeholder="Zoek gast..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-              </div>
-           </div>
-        </div>
+      {/* 1. TOP BAR: KPI FILTERS */}
+      <div className="flex flex-col lg:flex-row gap-4 overflow-x-auto pb-2 lg:pb-0 no-scrollbar">
+         <KPIChip 
+            label="Vandaag" 
+            count={stats.todayCount} 
+            active={filterMode === 'TODAY'} 
+            onClick={() => setFilterMode('TODAY')}
+            color="emerald" 
+            icon={Calendar} 
+         />
+         <KPIChip 
+            label="Actie Vereist" 
+            count={stats.actionCount} 
+            active={filterMode === 'ACTION'} 
+            onClick={() => setFilterMode('ACTION')}
+            color="red" 
+            icon={AlertCircle} 
+         />
+         <KPIChip 
+            label="Aanvragen" 
+            count={stats.requests} 
+            active={filterMode === 'REQUESTS'} 
+            onClick={() => setFilterMode('REQUESTS')}
+            color="blue" 
+            icon={MessageSquare} 
+         />
+         <KPIChip 
+            label="Opties" 
+            count={stats.options} 
+            active={filterMode === 'OPTIONS'} 
+            onClick={() => setFilterMode('OPTIONS')}
+            color="amber" 
+            icon={Clock} 
+         />
+         <div className="h-auto w-px bg-slate-800 mx-2 hidden lg:block" />
+         
+         {/* Capacity Viz */}
+         {capacityStats && (
+            <Card className="flex-grow min-w-[250px] p-3 bg-slate-900 border-slate-800 flex flex-col justify-center">
+               <div className="flex justify-between items-center mb-2">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{capacityStats.eventName || 'Geen Show'}</span>
+                  <span className="text-xs font-mono font-bold text-white">{capacityStats.booked} / {capacityStats.capacity}</span>
+               </div>
+               <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden flex">
+                  <div className="h-full bg-emerald-500 transition-all duration-500" style={{ width: `${Math.min(100, (capacityStats.booked / capacityStats.capacity) * 100)}%` }} />
+                  <div className="h-full bg-blue-500/50" style={{ width: `${Math.min(100, (capacityStats.pending / capacityStats.capacity) * 100)}%` }} />
+               </div>
+            </Card>
+         )}
       </div>
 
-      {/* BULK ACTION BAR */}
-      {selectedIds.size > 0 && (
-        <div className="bg-slate-800 border border-slate-700 rounded-xl p-3 flex items-center justify-between animate-in slide-in-from-top-2 shadow-xl sticky top-2 z-20">
-           <div className="flex items-center space-x-4 pl-2">
-              <span className="bg-amber-500 text-black text-xs font-bold px-2 py-1 rounded">{selectedIds.size} geselecteerd</span>
-              <div className="h-4 w-px bg-slate-600" />
-              <button onClick={() => setSelectedIds(new Set())} className="text-xs text-slate-400 hover:text-white">Annuleren</button>
-           </div>
-           <div className="flex space-x-2">
-              <Button onClick={() => handleBulkAction('CONFIRM')} className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 border-none shadow-none"><CheckCircle2 size={14} className="mr-2"/> Bevestig Selectie</Button>
-              <Button onClick={() => handleBulkAction('CANCEL')} variant="secondary" className="h-8 text-xs border-slate-600 hover:bg-red-900/20 hover:text-red-500 hover:border-red-900"><XCircle size={14} className="mr-2"/> Annuleer</Button>
-              <Button onClick={() => handleBulkAction('DELETE')} variant="ghost" className="h-8 w-8 p-0 text-slate-500 hover:text-red-500"><Trash2 size={14}/></Button>
-           </div>
-        </div>
-      )}
+      {/* 2. TOOLBAR */}
+      <div className="flex flex-col md:flex-row gap-4 items-center bg-slate-900 p-4 rounded-2xl border border-slate-800">
+         {/* Bulk Actions (Conditional) */}
+         {selectedIds.size > 0 ? (
+            <div className="flex items-center space-x-3 w-full animate-in slide-in-from-left-2">
+               <span className="text-sm font-bold text-white bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">
+                 {selectedIds.size} geselecteerd
+               </span>
+               <div className="h-6 w-px bg-slate-800" />
+               <Button onClick={() => handleBulkAction('CONFIRM')} className="h-9 text-xs bg-emerald-600 hover:bg-emerald-700 border-none"><CheckCircle2 size={14} className="mr-2"/> Bevestig</Button>
+               <Button onClick={() => handleBulkAction('CANCEL')} variant="secondary" className="h-9 text-xs"><XCircle size={14} className="mr-2"/> Annuleer</Button>
+               <Button onClick={() => handleBulkAction('DELETE')} variant="ghost" className="h-9 w-9 p-0 text-red-500 hover:bg-red-900/20"><Trash2 size={16}/></Button>
+               <div className="flex-grow" />
+               <button onClick={() => setSelectedIds(new Set())} className="text-slate-500 hover:text-white"><XCircle size={20}/></button>
+            </div>
+         ) : (
+            <>
+               {/* Search */}
+               <div className="relative flex-grow w-full md:w-auto group">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-amber-500 transition-colors" size={18} />
+                  <input 
+                    className="w-full bg-black/40 border border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:border-amber-500 outline-none transition-all placeholder:text-slate-600"
+                    placeholder="Zoek op naam, email of ref..."
+                    value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)}
+                  />
+               </div>
 
-      {/* SMART DECISION BAR */}
-      {(activeTab === 'AGENDA' || activeTab === 'TODAY') && quickFilter !== 'REQUEST' && dateCapacityStats.hasEvent && (
-        <div className="bg-slate-900 rounded-xl border border-slate-800 p-4 animate-in fade-in slide-in-from-top-2 shadow-lg">
-           <div className="flex justify-between items-end mb-2">
-              <h3 className="text-white font-bold text-sm flex items-center"><BarChart3 size={16} className="mr-2 text-amber-500"/> Zaal Bezetting <span className="text-slate-500 ml-2 font-normal text-xs">{new Date(dateCapacityStats.date).toLocaleDateString()}</span></h3>
-              <div className="text-right">
-                 <span className={`text-xl font-black ${dateCapacityStats.isOverbooked ? 'text-red-500' : 'text-white'}`}>{dateCapacityStats.hardOccupancy} <span className="text-slate-500 text-sm font-normal">vast</span> + {dateCapacityStats.pendingOccupancy} <span className="text-slate-500 text-sm font-normal">aanvraag</span></span>
-                 <span className="text-xs text-slate-400 block">Totaal potentieel: <strong>{dateCapacityStats.totalPotential}</strong> / {dateCapacityStats.capacity}</span>
-              </div>
-           </div>
-           <div className="w-full h-4 bg-slate-950 rounded-full overflow-hidden border border-slate-800 flex relative">
-              <div className="h-full bg-emerald-600 transition-all duration-500" style={{ width: `${Math.min(100, (dateCapacityStats.hardOccupancy / dateCapacityStats.capacity) * 100)}%` }} />
-              <div className="h-full bg-blue-600/60 relative overflow-hidden" style={{ width: `${Math.min(100, (dateCapacityStats.pendingOccupancy / dateCapacityStats.capacity) * 100)}%`, backgroundImage: 'linear-gradient(45deg,rgba(255,255,255,.15) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.15) 75%,transparent 75%,transparent)', backgroundSize: '1rem 1rem' }} />
-              {dateCapacityStats.isOverbooked && <div className="absolute right-0 top-0 bottom-0 w-2 bg-red-600 animate-pulse" />}
-           </div>
-        </div>
-      )}
+               {/* Date Picker (Always visible or context aware) */}
+               <div className="flex items-center space-x-2 bg-black/40 p-1 rounded-xl border border-slate-700">
+                  <button onClick={() => { setFilterMode('ALL'); setSelectedDate(''); }} className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${filterMode === 'ALL' && !selectedDate ? 'bg-amber-500 text-black' : 'text-slate-400 hover:text-white'}`}>Alles</button>
+                  <div className="h-4 w-px bg-slate-700" />
+                  <input 
+                    type="date" 
+                    value={selectedDate} 
+                    onChange={(e) => { setSelectedDate(e.target.value); setFilterMode('ALL'); }}
+                    className="bg-transparent border-none text-white text-xs font-bold focus:ring-0 cursor-pointer"
+                  />
+               </div>
 
-      {/* RICH TABLE */}
-      <div className="flex-grow bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col">
+               <div className="flex space-x-2">
+                  <Button variant="secondary" className="h-10 w-10 p-0 flex items-center justify-center border-slate-700"><SlidersHorizontal size={16}/></Button>
+                  <Button onClick={() => window.location.href='#/admin/reservations/new'} className="h-10 text-xs bg-amber-500 text-black hover:bg-amber-400 border-none font-bold">
+                     + Nieuwe Boeking
+                  </Button>
+               </div>
+            </>
+         )}
+      </div>
+
+      {/* 3. RICH TABLE */}
+      <div className="flex-grow bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col shadow-2xl">
          <ResponsiveTable<Reservation>
-           data={filteredData}
-           keyExtractor={r => r.id}
-           onRowClick={setSelectedReservation}
-           isVirtual={true}
-           virtualHeight="calc(100vh - 350px)"
-           columns={[
-             { 
-               header: (
-                 <div className="flex items-center justify-center h-full" onClick={(e) => e.stopPropagation()}>
-                   <input type="checkbox" className="rounded bg-slate-900 border-slate-600 checked:bg-amber-500" checked={selectedIds.size > 0 && selectedIds.size === filteredData.length} onChange={toggleSelectAll} />
-                 </div>
-               ) as any,
-               accessor: r => (
-                 <div className="flex items-center justify-center h-full" onClick={(e) => e.stopPropagation()}>
-                   <input type="checkbox" className="rounded bg-slate-900 border-slate-600 checked:bg-amber-500" checked={selectedIds.has(r.id)} onChange={() => toggleSelection(r.id)} />
-                 </div>
-               ),
-               className: 'w-12 text-center'
-             },
-             { 
-               header: 'Wanneer', 
-               accessor: r => (
-                 <div className="flex flex-col">
-                    <span className="font-bold text-white text-sm">{new Date(r.date).toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric', month: 'short' })}</span>
-                    <span className="font-mono text-slate-500 text-xs">{r.startTime || '19:30'}</span>
-                 </div>
-               ),
-               className: 'w-24'
-             },
-             { 
-               header: 'Gast & Details', 
-               accessor: r => (
-                 <div>
-                   <div className="flex items-center space-x-2">
-                     <span className="font-bold text-white">{formatGuestName(r.customer.firstName, r.customer.lastName)}</span>
-                     {r.customer.companyName && <span className="text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">{r.customer.companyName}</span>}
-                   </div>
-                   <div className="flex gap-2 mt-1">
-                      <span className="text-xs text-slate-500 font-mono bg-black/30 px-1.5 rounded">{r.id}</span>
-                      {r.packageType === 'premium' && <span className="text-[10px] bg-amber-900/20 text-amber-500 border border-amber-900/50 px-1.5 rounded font-bold flex items-center">VIP</span>}
-                      {r.addons.some(a => a.id.includes('pre')) && <span className="text-[10px] bg-blue-900/20 text-blue-400 border border-blue-900/50 px-1.5 rounded font-bold flex items-center"><Coffee size={8} className="mr-1"/> PRE</span>}
-                      {r.addons.some(a => a.id.includes('after')) && <span className="text-[10px] bg-purple-900/20 text-purple-400 border border-purple-900/50 px-1.5 rounded font-bold flex items-center"><Music size={8} className="mr-1"/> AFTER</span>}
-                      {r.merchandise.length > 0 && <span className="text-[10px] bg-emerald-900/20 text-emerald-400 border border-emerald-900/50 px-1.5 rounded font-bold flex items-center"><ShoppingBag size={8} className="mr-1"/> SHOP</span>}
-                   </div>
-                   {r.status === 'CONFIRMED' && !r.packageType && <div className="mt-1 text-[10px] text-red-500 font-bold bg-red-900/10 px-1.5 py-0.5 rounded inline-flex items-center animate-pulse"><AlertOctagon size={10} className="mr-1"/> ⚠️ INCOMPLEET</div>}
-                 </div>
-               )
-             },
-             { 
-               header: 'Pax & Impact', 
-               accessor: r => {
-                 const capInfo = getRequestCapacityInfo(r);
-                 return (
-                   <div className="flex flex-col items-center">
-                     <span className="font-bold text-lg text-white block">{r.partySize}p</span>
-                     {capInfo && (
-                        <div className={`mt-1 text-[9px] font-bold px-1.5 py-0.5 rounded border flex flex-col items-center w-24 ${capInfo.isOverflow ? 'bg-red-900/20 text-red-400 border-red-900/50' : 'bg-emerald-900/20 text-emerald-400 border-emerald-900/50'}`}>
-                           <span>{capInfo.projected} / {capInfo.capacity}</span>
-                           <span className="text-[8px] opacity-70 uppercase tracking-tight">{capInfo.isOverflow ? 'VOL!' : 'PAST'}</span>
-                        </div>
-                     )}
-                   </div>
-                 );
+            data={filteredData}
+            keyExtractor={r => r.id}
+            onRowClick={setSelectedReservation}
+            isVirtual={true}
+            virtualHeight="calc(100vh - 380px)"
+            rowHeight={80} 
+            columns={[
+               {
+                  header: '',
+                  accessor: r => (
+                     <div onClick={e => e.stopPropagation()} className="flex items-center justify-center h-full">
+                        <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)} className="rounded bg-slate-950 border-slate-700 checked:bg-amber-500 w-4 h-4 cursor-pointer" />
+                     </div>
+                  ),
+                  className: 'w-12'
                },
-               className: 'w-24 text-center'
-             },
-             { 
-                header: 'Financieel',
-                accessor: r => (
-                  <div className="text-right">
-                    <span className="block font-mono font-bold text-slate-300">€{r.financials.finalTotal.toFixed(0)}</span>
-                    {!r.financials.isPaid && r.status !== 'CANCELLED' && <span className="text-[10px] text-red-400 font-bold">OPEN</span>}
-                    {r.financials.isPaid && <span className="text-[10px] text-emerald-500 font-bold">BETAALD</span>}
-                  </div>
-                ),
-                className: 'w-24 text-right'
-             },
-             { 
-               header: 'Status', 
-               accessor: r => (
-                 <div onClick={(e) => e.stopPropagation()}>
-                   <select 
-                     className={`bg-slate-950 border border-slate-700 rounded text-xs font-bold py-1 px-2 uppercase cursor-pointer outline-none focus:border-amber-500 ${r.status === 'CONFIRMED' ? 'text-emerald-500' : r.status === 'REQUEST' ? 'text-blue-500' : r.status === 'CANCELLED' ? 'text-red-500' : 'text-amber-500'}`}
-                     value={r.status}
-                     onChange={(e) => initiateStatusChange(r.id, e.target.value as BookingStatus)}
-                   >
-                     <option value="REQUEST">REQUEST</option>
-                     <option value="OPTION">OPTION</option>
-                     <option value="CONFIRMED">CONFIRMED</option>
-                     <option value="CANCELLED">CANCELLED</option>
-                   </select>
-                 </div>
-               ),
-               className: 'w-32'
-             }
-           ]}
+               {
+                  header: 'Gast',
+                  accessor: r => (
+                     <div className="flex flex-col">
+                        <div className="flex items-center font-bold text-white text-sm">
+                           {formatGuestName(r.customer.firstName, r.customer.lastName)}
+                        </div>
+                        <div className="flex items-center text-xs text-slate-500 mt-1">
+                           <Mail size={10} className="mr-1"/> {r.customer.email}
+                        </div>
+                        {/* TAGS ROW */}
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                           {/* Manual Tags */}
+                           {r.tags?.map(tag => (
+                              <span key={tag} className="px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-[9px] text-slate-300 font-bold uppercase tracking-wider flex items-center">
+                                <Tag size={8} className="mr-1" /> {tag}
+                              </span>
+                           ))}
+                           
+                           {/* System Derived Tags */}
+                           {r.notes.dietary && (
+                              <span className="px-1.5 py-0.5 rounded bg-red-900/20 border border-red-900/50 text-[9px] text-red-400 font-bold uppercase tracking-wider flex items-center" title={r.notes.dietary}>
+                                 <Utensils size={8} className="mr-1" /> Dieet
+                              </span>
+                           )}
+                           {r.notes.isCelebrating && (
+                              <span className="px-1.5 py-0.5 rounded bg-blue-900/20 border border-blue-900/50 text-[9px] text-blue-400 font-bold uppercase tracking-wider flex items-center">
+                                 <PartyPopper size={8} className="mr-1" /> Viering
+                              </span>
+                           )}
+                           {r.customer.companyName && (
+                              <span className="px-1.5 py-0.5 rounded bg-purple-900/20 border border-purple-900/50 text-[9px] text-purple-400 font-bold uppercase tracking-wider flex items-center">
+                                 <Briefcase size={8} className="mr-1" /> Zakelijk
+                              </span>
+                           )}
+                           {r.merchandise.length > 0 && (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-900/20 border border-amber-900/50 text-[9px] text-amber-500 font-bold uppercase tracking-wider flex items-center">
+                                 <ShoppingBag size={8} className="mr-1" /> Merch
+                              </span>
+                           )}
+                        </div>
+                     </div>
+                  )
+               },
+               {
+                  header: 'Wanneer',
+                  accessor: r => (
+                     <div>
+                        <span className="block font-bold text-slate-200 text-sm">{new Date(r.date).toLocaleDateString('nl-NL', {weekday:'short', day:'numeric', month:'short'})}</span>
+                        <span className="text-xs text-slate-500 font-mono">{r.startTime || '19:30'}</span>
+                     </div>
+                  ),
+                  className: 'w-32'
+               },
+               {
+                  header: 'Arrangement',
+                  accessor: r => (
+                     <div className="flex items-center">
+                        <div className="flex flex-col items-center mr-3 bg-slate-950 border border-slate-800 rounded-lg p-1.5 min-w-[40px]">
+                           <Users size={14} className="text-slate-500 mb-0.5"/>
+                           <span className="font-bold text-white">{r.partySize}</span>
+                        </div>
+                        <div>
+                           <span className={`text-xs font-bold uppercase tracking-wider ${r.packageType === 'premium' ? 'text-amber-500' : 'text-slate-400'}`}>
+                              {r.packageType}
+                           </span>
+                           {r.addons.length > 0 && <span className="block text-[9px] text-slate-500">+ {r.addons.length} opties</span>}
+                        </div>
+                     </div>
+                  )
+               },
+               {
+                  header: 'Status',
+                  accessor: r => {
+                     const isOverdue = getPaymentStatus(r) === 'OVERDUE';
+                     return (
+                        <div className="flex flex-col items-start space-y-1">
+                           <Badge status={r.status} className="shadow-sm" />
+                           {isOverdue && r.status !== 'CANCELLED' && (
+                              <span className="flex items-center text-[9px] font-bold text-red-500 bg-red-900/10 px-1.5 py-0.5 rounded border border-red-900/30">
+                                 <AlertCircle size={10} className="mr-1"/> Betaal Actie
+                              </span>
+                           )}
+                        </div>
+                     )
+                  },
+                  className: 'w-32'
+               },
+               {
+                  header: 'Totaal',
+                  accessor: r => (
+                     <div className="text-right">
+                        <span className="block font-mono font-bold text-white">€{r.financials.finalTotal.toFixed(0)}</span>
+                        {r.financials.isPaid ? (
+                           <span className="text-[10px] text-emerald-500 font-bold flex items-center justify-end"><CheckCircle2 size={10} className="mr-1"/> Betaald</span>
+                        ) : (
+                           <span className="text-[10px] text-slate-500">Open</span>
+                        )}
+                     </div>
+                  ),
+                  className: 'w-24 text-right'
+               },
+               {
+                  header: '',
+                  accessor: r => (
+                     <Button variant="ghost" className="h-8 w-8 p-0 text-slate-500 hover:text-white" onClick={() => setSelectedReservation(r)}>
+                        <ChevronDown size={16} className="-rotate-90"/>
+                     </Button>
+                  ),
+                  className: 'w-10'
+               }
+            ]}
          />
       </div>
 
-      {/* --- CONFIRMATION MODAL FOR STATUS CHANGE --- */}
-      <DestructiveActionModal 
-        isOpen={!!statusConfirm}
-        onClose={() => setStatusConfirm(null)}
-        onConfirm={confirmStatusChange}
-        title="Status Wijzigen"
-        description={<div><p className="mb-2">Weet u zeker dat u de status wilt wijzigen naar <strong>{statusConfirm?.newStatus}</strong>?</p></div>}
-        verificationText={statusConfirm?.newStatus || ""}
-        confirmButtonText="Wijzig Status"
-        requireVerification={statusConfirm?.newStatus !== BookingStatus.CONFIRMED}
-      />
-
-      {/* --- BULK CONFIRM MODAL --- */}
-      <DestructiveActionModal 
-        isOpen={!!bulkAction}
-        onClose={() => setBulkAction(null)}
-        onConfirm={executeBulkAction}
-        title={`Bulk ${bulkAction?.type === 'CONFIRM' ? 'Bevestigen' : bulkAction?.type === 'CANCEL' ? 'Annuleren' : 'Verwijderen'}`}
-        description={
-            <div>
-                <p>U staat op het punt om <strong>{bulkAction?.count}</strong> reserveringen te verwerken.</p>
-                {bulkAction?.type === 'CONFIRM' && <div className="mt-2 bg-emerald-900/20 p-2 rounded text-emerald-400 text-xs">Er worden {bulkAction.count} bevestigingsmails verstuurd.</div>}
-            </div>
-        }
-        verificationText={bulkAction?.type || ""}
-        confirmButtonText="Start Bulk Verwerking"
-        requireVerification={bulkAction?.type !== 'CONFIRM'}
-      />
-
-      {/* --- DETAIL DRAWER --- */}
+      {/* 4. DETAIL DRAWER (Enhanced) */}
       <ResponsiveDrawer
-        isOpen={!!selectedReservation}
-        onClose={() => setSelectedReservation(null)}
-        title="Reservering Details"
+         isOpen={!!selectedReservation}
+         onClose={() => setSelectedReservation(null)}
+         title="Details"
+         widthClass="md:w-[600px]"
       >
-        {selectedReservation && (
-          <div className="space-y-6 pb-12">
-             <div className="flex border-b border-slate-800 mb-4">
-                <button onClick={() => setDetailTab('DETAILS')} className={`px-4 py-2 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${detailTab === 'DETAILS' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Details</button>
-                <button onClick={() => setDetailTab('HISTORY')} className={`px-4 py-2 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${detailTab === 'HISTORY' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Geschiedenis</button>
-             </div>
-
-             {detailTab === 'HISTORY' && <AuditTimeline entityId={selectedReservation.id} />}
-
-             {detailTab === 'DETAILS' && (
-               <div className="space-y-8 animate-in fade-in">
-                 <div className="grid grid-cols-2 gap-4 relative group">
-                      <Button variant="secondary" onClick={() => setShowFullEditModal(true)} className="absolute top-2 right-2 h-8 px-3 z-10 bg-slate-800 hover:bg-amber-500 hover:text-black border-slate-700 transition-colors flex items-center text-xs"><Edit3 size={12} className="mr-1"/> Bewerken</Button>
-                      <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl">
-                          <p className="text-xs font-bold text-slate-500 uppercase">Klant</p>
-                          <p className="font-bold text-white text-lg">{selectedReservation.customer.salutation} {formatGuestName(selectedReservation.customer.firstName, selectedReservation.customer.lastName)}</p>
-                          <p className="text-sm text-slate-400">{selectedReservation.customer.email}</p>
-                          <p className="text-sm text-slate-400">{selectedReservation.customer.phone}</p>
-                      </div>
-                      <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl">
-                          <p className="text-xs font-bold text-slate-500 uppercase">Boeking</p>
-                          <p className="text-sm text-slate-400">Datum: {new Date(selectedReservation.date).toLocaleDateString()}</p>
-                          <p className="text-sm text-slate-400">Gasten: <span className="text-white font-bold">{selectedReservation.partySize}</span></p>
-                          <p className="text-sm text-slate-400">Arrangement: <span className="text-white capitalize">{selectedReservation.packageType}</span></p>
-                      </div>
-                 </div>
-
-                 {isEditingPrice ? (
-                   <PriceOverridePanel reservation={selectedReservation} onSave={(override) => { const updated = { ...selectedReservation, adminPriceOverride: override }; bookingRepo.update(selectedReservation.id, () => updated); setIsEditingPrice(false); refreshData(); }} onCancel={() => setIsEditingPrice(false)} />
-                 ) : (
-                   <div className="p-4 bg-slate-950 rounded-xl border border-slate-800 flex justify-between items-center">
-                      <div className="flex flex-col">
-                        <span className="text-sm text-slate-400">Totaalbedrag</span>
-                        <div className="flex items-baseline space-x-2">
-                          <span className="text-xl font-mono text-white">€{(selectedReservation.financials.finalTotal || 0).toFixed(2)}</span>
-                          {selectedReservation.adminPriceOverride && <Badge status="OPTION" className="scale-75 origin-left">Aangepast</Badge>}
-                        </div>
-                        {selectedReservation.financials.isPaid ? <span className="text-xs text-emerald-500 font-bold mt-1">Betaald via {selectedReservation.financials.paymentMethod || 'Onbekend'}</span> : <span className="text-xs text-red-500 font-bold mt-1">Nog te betalen</span>}
-                      </div>
-                      <div className="flex space-x-2">
-                        {!selectedReservation.financials.isPaid && <Button className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 border-none" onClick={() => setShowPaymentModal(true)}>Betalen</Button>}
-                        <Button variant="ghost" onClick={() => setIsEditingPrice(true)} className="h-8 text-xs px-2">Aanpassen</Button>
-                      </div>
-                   </div>
-                 )}
-
-                 <div className="pt-4 border-t border-slate-800">
-                    <Button variant="ghost" onClick={() => setShowDeleteModal(true)} className="w-full text-red-500 hover:bg-red-900/20 hover:text-red-400"><Trash2 size={16} className="mr-2" /> Verplaats naar Prullenbak</Button>
-                 </div>
+         {selectedReservation && (
+            <div className="pb-20 space-y-8">
+               
+               {/* Quick Header */}
+               <div className="flex justify-between items-start">
+                  <div>
+                     <h2 className="text-2xl font-serif text-white">{formatGuestName(selectedReservation.customer.firstName, selectedReservation.customer.lastName)}</h2>
+                     <div className="flex items-center space-x-3 text-slate-400 text-sm mt-1">
+                        <span className="flex items-center"><Mail size={12} className="mr-1"/> {selectedReservation.customer.email}</span>
+                        <span className="flex items-center"><Phone size={12} className="mr-1"/> {selectedReservation.customer.phone}</span>
+                     </div>
+                     {/* Tags in Drawer */}
+                     <div className="flex flex-wrap gap-2 mt-3">
+                        {selectedReservation.tags?.map(tag => (
+                           <span key={tag} className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-xs text-slate-300 font-bold uppercase tracking-wider flex items-center">
+                             <Tag size={12} className="mr-1" /> {tag}
+                           </span>
+                        ))}
+                        {selectedReservation.customer.companyName && (
+                           <span className="px-2 py-1 rounded bg-purple-900/20 border border-purple-900/50 text-xs text-purple-400 font-bold uppercase tracking-wider flex items-center">
+                              <Briefcase size={12} className="mr-1" /> {selectedReservation.customer.companyName}
+                           </span>
+                        )}
+                     </div>
+                  </div>
+                  <div className="text-right">
+                     <Badge status={selectedReservation.status} className="mb-1 text-sm px-3 py-1"/>
+                     <p className="text-xs text-slate-500 font-mono">{selectedReservation.id}</p>
+                  </div>
                </div>
-             )}
-          </div>
-        )}
+
+               {/* Action Grid */}
+               <div className="grid grid-cols-4 gap-2">
+                  <Button variant="secondary" className="flex flex-col items-center justify-center h-16 text-xs gap-1" onClick={() => triggerEmail('BOOKING_CONFIRMED', {type:'RESERVATION', id: selectedReservation.id, data: selectedReservation})}>
+                     <Mail size={16} /> <span>Email</span>
+                  </Button>
+                  <Button variant="secondary" className="flex flex-col items-center justify-center h-16 text-xs gap-1" onClick={() => setShowEditModal(true)}>
+                     <SlidersHorizontal size={16} /> <span>Wijzig</span>
+                  </Button>
+                  <Button 
+                     variant="secondary" 
+                     className="flex flex-col items-center justify-center h-16 text-xs gap-1" 
+                     onClick={() => setShowPaymentModal(true)}
+                  >
+                     <CreditCard size={16} /> <span>Betaal</span>
+                  </Button>
+                  <Button variant="secondary" className="flex flex-col items-center justify-center h-16 text-xs gap-1 text-red-400 hover:text-red-500" onClick={() => setShowDeleteModal(true)}>
+                     <Trash2 size={16} /> <span>Verwijder</span>
+                  </Button>
+               </div>
+
+               {/* Info Cards */}
+               <div className="space-y-4">
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex justify-between items-center">
+                     <div className="flex items-center space-x-4">
+                        <div className="p-3 bg-slate-950 rounded-lg text-slate-400">
+                           <Calendar size={20} />
+                        </div>
+                        <div>
+                           <p className="text-xs text-slate-500 font-bold uppercase">Wanneer</p>
+                           <p className="text-white font-bold">{new Date(selectedReservation.date).toLocaleDateString('nl-NL', {weekday:'long', day:'numeric', month:'long'})}</p>
+                           <p className="text-slate-400 text-sm">Start: {selectedReservation.startTime || '19:30'}</p>
+                        </div>
+                     </div>
+                     <div className="text-right">
+                        <p className="text-xs text-slate-500 font-bold uppercase">Gezelschap</p>
+                        <p className="text-xl font-serif text-white">{selectedReservation.partySize} Personen</p>
+                        <p className="text-slate-400 text-sm capitalize">{selectedReservation.packageType}</p>
+                     </div>
+                  </div>
+
+                  {/* Financials */}
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 relative overflow-hidden">
+                     <div className="flex justify-between items-end relative z-10">
+                        <div>
+                           <p className="text-xs text-slate-500 font-bold uppercase mb-1">Financieel</p>
+                           <p className="text-3xl font-mono text-white">€{selectedReservation.financials.finalTotal.toFixed(2)}</p>
+                           {selectedReservation.financials.isPaid ? 
+                              <span className="text-emerald-500 text-xs font-bold flex items-center mt-1"><CheckCircle2 size={12} className="mr-1"/> Betaald</span> : 
+                              <span className="text-red-500 text-xs font-bold flex items-center mt-1"><AlertCircle size={12} className="mr-1"/> Openstaand</span>
+                           }
+                        </div>
+                        <Button variant="ghost" onClick={() => setIsPriceEditing(true)} className="text-xs">Aanpassen</Button>
+                     </div>
+                     {/* Background deco */}
+                     <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none"><CreditCard size={100} /></div>
+                  </div>
+
+                  {/* Notes */}
+                  {(selectedReservation.notes.dietary || selectedReservation.notes.comments || selectedReservation.notes.isCelebrating) && (
+                     <div className="bg-amber-900/10 border border-amber-900/30 rounded-xl p-4 space-y-3">
+                        <h4 className="text-amber-500 font-bold text-xs uppercase flex items-center"><Utensils size={12} className="mr-2"/> Bijzonderheden</h4>
+                        
+                        {selectedReservation.notes.dietary && <p className="text-sm text-amber-100"><span className="font-bold text-amber-500">Dieet:</span> {selectedReservation.notes.dietary}</p>}
+                        
+                        {selectedReservation.notes.isCelebrating && (
+                           <p className="text-sm text-amber-100 flex items-center">
+                              <PartyPopper size={12} className="mr-1 text-purple-400"/> 
+                              <span className="font-bold text-purple-400 mr-1">Viering:</span> {selectedReservation.notes.celebrationText}
+                           </p>
+                        )}
+
+                        {selectedReservation.notes.comments && <p className="text-sm text-amber-200/80 italic border-t border-amber-900/30 pt-2">"{selectedReservation.notes.comments}"</p>}
+                     </div>
+                  )}
+               </div>
+
+               {/* Timeline */}
+               <div className="pt-6 border-t border-slate-800">
+                  <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Geschiedenis</h3>
+                  <AuditTimeline entityId={selectedReservation.id} />
+               </div>
+
+            </div>
+         )}
       </ResponsiveDrawer>
 
-      {showFullEditModal && selectedReservation && <EditReservationModal reservation={selectedReservation} onClose={() => setShowFullEditModal(false)} onSave={refreshData} />}
-      {showDeleteModal && selectedReservation && <DestructiveActionModal isOpen={showDeleteModal} onClose={() => setShowDeleteModal(false)} onConfirm={executeDelete} title="Verplaats naar Prullenbak" description={<p>Weet je zeker dat je de reservering van <strong>{selectedReservation.customer.lastName}</strong> wilt verwijderen?</p>} verificationText="VERWIJDER" confirmButtonText="Verwijderen" />}
+      {/* Modals */}
+      {showEditModal && selectedReservation && (
+         <EditReservationModal 
+            reservation={selectedReservation} 
+            onClose={() => setShowEditModal(false)} 
+            onSave={() => { refresh(); setShowEditModal(false); }} 
+         />
+      )}
+
+      <DestructiveActionModal 
+         isOpen={showDeleteModal} 
+         onClose={() => setShowDeleteModal(false)}
+         title="Verwijder Reservering"
+         description="Weet je zeker dat je deze reservering wilt verwijderen? Dit verplaatst het item naar de prullenbak."
+         onConfirm={() => { bookingRepo.delete(selectedReservation!.id); setShowDeleteModal(false); setSelectedReservation(null); refresh(); }}
+         verificationText="VERWIJDER"
+      />
+
+      {isPriceEditing && selectedReservation && (
+         <div className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4">
+            <Card className="w-full max-w-lg bg-slate-950 border-slate-800 p-6">
+               <PriceOverridePanel 
+                  reservation={selectedReservation} 
+                  onCancel={() => setIsPriceEditing(false)}
+                  onSave={(override) => {
+                     const updated = { ...selectedReservation, adminPriceOverride: override };
+                     // Re-calculate totals
+                     const newFinancials = recalculateReservationFinancials(updated);
+                     updated.financials = newFinancials;
+                     bookingRepo.update(updated.id, () => updated);
+                     setIsPriceEditing(false);
+                     setSelectedReservation(updated);
+                     refresh();
+                  }}
+               />
+            </Card>
+         </div>
+      )}
+
+      {showPaymentModal && selectedReservation && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in">
+          <Card className="bg-slate-950 border border-slate-800 w-full max-w-sm p-6 shadow-2xl">
+             <h3 className="text-lg font-serif text-white mb-6">Betaling Registreren</h3>
+             
+             <div className="space-y-4">
+               <div className="p-4 bg-slate-900 rounded-xl border border-slate-800">
+                  <p className="text-xs text-slate-500 uppercase font-bold mb-1">Te Betalen</p>
+                  <p className="text-3xl font-mono text-white">€{selectedReservation.financials.finalTotal.toFixed(2)}</p>
+                  <p className="text-xs text-slate-400 mt-2">{formatGuestName(selectedReservation.customer.firstName, selectedReservation.customer.lastName)}</p>
+               </div>
+
+               <div>
+                 <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 block">Betaalmethode</label>
+                 <select 
+                   className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500"
+                   value={paymentMethod}
+                   onChange={(e) => setPaymentMethod(e.target.value)}
+                 >
+                   <option value="FACTUUR">Op Factuur (Overboeking)</option>
+                   <option value="IDEAL">iDeal / Mollie</option>
+                   <option value="PIN">Pin (aan de deur)</option>
+                   <option value="CASH">Contant</option>
+                   <option value="VOUCHER">Voucher Verrekening</option>
+                 </select>
+               </div>
+
+               <div className="flex gap-3 pt-2">
+                 <Button variant="ghost" onClick={() => setShowPaymentModal(false)} className="flex-1">Annuleren</Button>
+                 <Button onClick={handleRegisterPayment} className="flex-1 bg-emerald-600 hover:bg-emerald-700 border-none">
+                   Bevestigen
+                 </Button>
+               </div>
+             </div>
+          </Card>
+        </div>
+      )}
+
     </div>
   );
 };
