@@ -57,6 +57,9 @@ export const AdminBookingWizard = () => {
     ignoreAddonThresholds: false
   });
 
+  // Local state for expiry picker
+  const [expiryType, setExpiryType] = useState('1WEEK');
+
   // Derived Data
   const [selectedEvent, setSelectedEvent] = useState<EventDate | null>(null);
   const [selectedShow, setSelectedShow] = useState<ShowDefinition | null>(null);
@@ -149,6 +152,23 @@ export const AdminBookingWizard = () => {
       setShowSuggestions(false);
     }
   }, [customerQuery]);
+
+  // --- EXPIRY LOGIC ---
+  useEffect(() => {
+    if (formData.status === 'OPTION') {
+        const today = new Date();
+        let newDate = new Date();
+        
+        if (expiryType === '1WEEK') {
+            newDate.setDate(today.getDate() + 7);
+            setFormData(prev => ({ ...prev, optionExpiry: newDate.toISOString().split('T')[0] }));
+        } else if (expiryType === '2WEEKS') {
+            newDate.setDate(today.getDate() + 14);
+            setFormData(prev => ({ ...prev, optionExpiry: newDate.toISOString().split('T')[0] }));
+        }
+        // If CUSTOM, we don't auto-update, let user pick
+    }
+  }, [expiryType, formData.status]);
 
   const handleCustomerSelect = (customer: Customer) => {
     setFormData(prev => ({
@@ -545,14 +565,33 @@ export const AdminBookingWizard = () => {
                     </select>
                   </div>
 
+                  {/* Smart Expiry Picker for Options */}
                   {formData.status === 'OPTION' && (
                     <div className="space-y-1.5 animate-in fade-in">
                       <label className="text-xs font-bold text-amber-500 uppercase tracking-widest">Optie Verloopt Op</label>
-                      <Input 
-                        type="date" 
-                        value={formData.optionExpiry}
-                        onChange={(e: any) => setFormData({...formData, optionExpiry: e.target.value})}
-                      />
+                      <div className="grid grid-cols-2 gap-4">
+                          <select 
+                            className="w-full px-4 py-3 bg-black/40 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500"
+                            value={expiryType}
+                            onChange={(e) => setExpiryType(e.target.value)}
+                          >
+                            <option value="1WEEK">1 Week (Standaard)</option>
+                            <option value="2WEEKS">2 Weken</option>
+                            <option value="CUSTOM">Aangepast...</option>
+                          </select>
+                          
+                          {expiryType === 'CUSTOM' ? (
+                              <Input 
+                                type="date" 
+                                value={formData.optionExpiry}
+                                onChange={(e: any) => setFormData({...formData, optionExpiry: e.target.value})}
+                              />
+                          ) : (
+                              <div className="px-4 py-3 bg-slate-900/50 border border-slate-800 rounded-xl text-slate-400 text-sm flex items-center">
+                                  {new Date(formData.optionExpiry).toLocaleDateString()}
+                              </div>
+                          )}
+                      </div>
                     </div>
                   )}
 

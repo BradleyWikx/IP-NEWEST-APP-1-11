@@ -7,7 +7,7 @@ import { notificationsRepo, waitlistRepo } from '../utils/storage';
 import { ErrorBanner } from './UI/ErrorBanner';
 
 export const WaitlistModal = ({ date, onClose }: { date: string, onClose: () => void }) => {
-  const [formData, setFormData] = useState({ name: '', email: '', phone: '', partySize: 2 });
+  const [formData, setFormData] = useState({ name: '', email: '', phone: '', partySize: 2, notes: '' });
   const [submittedId, setSubmittedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,7 +36,8 @@ export const WaitlistModal = ({ date, onClose }: { date: string, onClose: () => 
       contactPhone: formData.phone,
       partySize: formData.partySize,
       requestDate: new Date().toISOString(),
-      status: 'PENDING'
+      status: 'PENDING',
+      notes: formData.notes
     };
 
     waitlistRepo.add(newEntry);
@@ -52,27 +53,40 @@ export const WaitlistModal = ({ date, onClose }: { date: string, onClose: () => 
 
   if (submittedId) {
     return (
-      <div className="p-8 text-center bg-slate-900 rounded-xl">
+      <Card className="p-8 text-center bg-slate-900 border-slate-800 rounded-xl max-w-md mx-auto">
         <h3 className="text-xl text-white font-bold mb-2">Ingeschreven!</h3>
-        <p className="text-slate-400 mb-4">We nemen contact op als er een plek vrijkomt.</p>
-        <Button onClick={onClose}>Sluiten</Button>
-      </div>
+        <p className="text-slate-400 mb-6">We nemen contact op als er een plek vrijkomt.</p>
+        <Button onClick={onClose} className="w-full">Sluiten</Button>
+      </Card>
     );
   }
 
   return (
     <Card className="p-6 bg-slate-900 border-slate-800 w-full max-w-md mx-auto">
-      <h3 className="text-xl font-serif text-white mb-4">Wachtlijst Inschrijving</h3>
-      <p className="text-sm text-slate-400 mb-4">Voor datum: {new Date(date).toLocaleDateString()}</p>
+      <div className="mb-6">
+        <h3 className="text-xl font-serif text-white">Wachtlijst Inschrijving</h3>
+        <p className="text-sm text-slate-400">Datum: {new Date(date).toLocaleDateString()}</p>
+      </div>
       
       {error && <ErrorBanner message={error} className="mb-4" onDismiss={() => setError(null)} />}
 
       <div className="space-y-4">
         <Input label="Naam" value={formData.name} onChange={(e: any) => setFormData({...formData, name: e.target.value})} />
         <Input label="Email" value={formData.email} onChange={(e: any) => setFormData({...formData, email: e.target.value})} />
-        <Input label="Telefoon" value={formData.phone} onChange={(e: any) => setFormData({...formData, phone: e.target.value})} />
-        <Input label="Aantal Personen" type="number" value={formData.partySize} onChange={(e: any) => setFormData({...formData, partySize: parseInt(e.target.value)})} />
-        <Button onClick={handleSubmit} className="w-full">Inschrijven</Button>
+        <div className="grid grid-cols-2 gap-4">
+            <Input label="Telefoon" value={formData.phone} onChange={(e: any) => setFormData({...formData, phone: e.target.value})} />
+            <Input label="Personen" type="number" value={formData.partySize} onChange={(e: any) => setFormData({...formData, partySize: parseInt(e.target.value)})} />
+        </div>
+        <div>
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 block">Notitie</label>
+            <textarea 
+                className="w-full bg-black/40 border border-slate-800 rounded-xl p-3 text-white text-sm focus:border-amber-500 outline-none h-20 resize-none"
+                placeholder="Bijv. Rolstoel, voorkeur tafel..."
+                value={formData.notes}
+                onChange={(e) => setFormData({...formData, notes: e.target.value})}
+            />
+        </div>
+        <Button onClick={handleSubmit} className="w-full bg-amber-600 hover:bg-amber-700 text-black border-none">Inschrijven</Button>
       </div>
     </Card>
   );

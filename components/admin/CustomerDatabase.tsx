@@ -13,6 +13,7 @@ import { loadData, saveData, STORAGE_KEYS, customerRepo, bookingRepo } from '../
 import { logAuditAction } from '../../utils/auditLogger';
 import { calculateCustomerMetrics, getCustomerSegments, getSegmentStyle, getSegmentLabel, CustomerSegment } from '../../utils/customerLogic';
 import { undoManager } from '../../utils/undoManager';
+import { formatGuestName } from '../../utils/formatters';
 
 interface CustomerProfile extends Customer {
   totalBookings: number;
@@ -274,7 +275,7 @@ export const CustomerDatabase = () => {
                     filteredCustomers.map(c => (
                         <tr key={c.id} className="hover:bg-slate-800/50 cursor-pointer group" onClick={() => { setSelectedCustomer(c); setIsEditing(false); }}>
                         <td className="p-4">
-                            <div className="font-bold text-white">{c.firstName} {c.lastName}</div>
+                            <div className="font-bold text-white">{formatGuestName(c.firstName, c.lastName)}</div>
                             {c.isBusiness && <div className="text-xs text-amber-500 uppercase font-bold">{c.companyName}</div>}
                         </td>
                         <td className="p-4">
@@ -309,6 +310,7 @@ export const CustomerDatabase = () => {
         </>
       )}
 
+      {/* ... Maintenance Tab ... */}
       {activeTab === 'MAINTENANCE' && (
           <div className="space-y-6 animate-in fade-in">
               <div className="flex items-center space-x-4 p-4 bg-slate-900 border border-slate-800 rounded-xl">
@@ -338,7 +340,7 @@ export const CustomerDatabase = () => {
                                   {group.group.map(cust => (
                                       <div key={cust.id} className="flex items-center justify-between p-3 bg-black/40 rounded-lg border border-slate-800">
                                           <div>
-                                              <p className="text-sm font-bold text-slate-200">{cust.firstName} {cust.lastName}</p>
+                                              <p className="text-sm font-bold text-slate-200">{formatGuestName(cust.firstName, cust.lastName)}</p>
                                               <p className="text-xs text-slate-500 font-mono">{cust.id} • {cust.totalBookings} boekingen</p>
                                           </div>
                                           
@@ -379,7 +381,7 @@ export const CustomerDatabase = () => {
                  ) : (
                    <>
                      <div className="flex items-center space-x-2 mb-1">
-                       <h2 className="text-2xl font-serif text-white">{selectedCustomer.salutation || 'Dhr.'} {selectedCustomer.firstName} {selectedCustomer.lastName}</h2>
+                       <h2 className="text-2xl font-serif text-white">{selectedCustomer.salutation || 'Dhr.'} {formatGuestName(selectedCustomer.firstName, selectedCustomer.lastName)}</h2>
                        {selectedCustomer.segments.includes('VIP') && <Star size={16} className="text-amber-500 fill-amber-500" />}
                      </div>
                      <div className="flex gap-2 mt-2">
@@ -412,7 +414,7 @@ export const CustomerDatabase = () => {
              </div>
 
              <div className="p-8 overflow-y-auto space-y-8 flex-grow">
-               
+               {/* ... (Existing Detail Body) ... */}
                {isEditing && editForm ? (
                  <div className="space-y-6 animate-in fade-in">
                     <div className="grid grid-cols-2 gap-4">

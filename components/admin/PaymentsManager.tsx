@@ -2,7 +2,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   DollarSign, AlertCircle, CheckCircle2, Clock, 
-  Search, Filter, Download, Mail, CreditCard, Calendar
+  Search, Filter, Download, Mail, CreditCard, Calendar,
+  ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { Button, Card, Badge, Input, ResponsiveDrawer } from '../UI';
 import { Reservation, BookingStatus } from '../../types';
@@ -13,11 +14,17 @@ import { undoManager } from '../../utils/undoManager';
 import { logAuditAction } from '../../utils/auditLogger';
 import { triggerEmail } from '../../utils/emailEngine';
 import { toCSV, downloadCSV } from '../../utils/csvExport';
+import { formatGuestName } from '../../utils/formatters';
+
+const ITEMS_PER_PAGE = 20;
 
 export const PaymentsManager = () => {
   const [activeTab, setActiveTab] = useState<'OPEN' | 'PAID'>('OPEN');
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
+  
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
   
   // Payment Modal
   const [selectedRes, setSelectedRes] = useState<Reservation | null>(null);
@@ -28,6 +35,11 @@ export const PaymentsManager = () => {
     window.addEventListener('storage-update', refreshData);
     return () => window.removeEventListener('storage-update', refreshData);
   }, []);
+
+  useEffect(() => {
+    // Reset to page 1 when filter changes
+    setCurrentPage(1);
+  }, [activeTab, searchTerm]);
 
   const refreshData = () => {
     // Filter out cancelled/archived unless they have payments involved (edge case, usually we ignore)
@@ -95,7 +107,7 @@ export const PaymentsManager = () => {
     const data = filteredList.map(r => ({
         id: r.id,
         datum: r.date,
-        klant: `${r.customer.firstName} ${r.customer.lastName}`,
+        klant: formatGuestName(r.customer.firstName, r.customer.lastName),
         bedrag: r.financials.finalTotal.toFixed(2),
         status: r.financials.isPaid ? 'Betaald' : 'Open',
         methode: r.financials.paymentMethod || '-',
@@ -105,7 +117,7 @@ export const PaymentsManager = () => {
     downloadCSV(`betalingen_${activeTab.toLowerCase()}_${new Date().toISOString().split('T')[0]}.csv`, csv);
   };
 
-  // --- FILTERING ---
+  // --- FILTERING & PAGINATION ---
   const filteredList = reservations.filter(r => {
     // Tab Filter
     if (activeTab === 'OPEN' && r.financials.isPaid) return false;
@@ -120,6 +132,9 @@ export const PaymentsManager = () => {
     }
     return true;
   });
+
+  const totalPages = Math.ceil(filteredList.length / ITEMS_PER_PAGE);
+  const paginatedList = filteredList.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
   return (
     <div className="h-full flex flex-col space-y-6">
@@ -190,9 +205,9 @@ export const PaymentsManager = () => {
       </Card>
 
       {/* Table */}
-      <div className="flex-grow">
+      <div className="flex-grow flex flex-col bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
          <ResponsiveTable 
-            data={filteredList}
+            data={paginatedList}
             keyExtractor={r => r.id}
             columns={[
                 { 
@@ -203,7 +218,7 @@ export const PaymentsManager = () => {
                     header: 'Reservering', 
                     accessor: (r: Reservation) => (
                         <div>
-                            <span className="block font-bold text-white text-sm">{r.customer.lastName}, {r.customer.firstName}</span>
+                            <span className="block font-bold text-white text-sm">{formatGuestName(r.customer.firstName, r.customer.lastName)}</span>
                             <span className="text-[10px] text-slate-500 font-mono">{r.id}</span>
                         </div>
                     )
@@ -244,7 +259,7 @@ export const PaymentsManager = () => {
                                  <Button 
                                     onClick={(e: any) => handleSendReminder(r, e)} 
                                     variant="ghost" 
-                                    className="h-8 w-8 p-0 text-slate-500 hover:text-amber-500"
+                                    className="h-8 w-8 p-0 text-slate-500 hover:text-amber-500 hover:bg-amber-900/20"
                                     title="Stuur Herinnering"
                                  >
                                     <Mail size={16} />
@@ -266,6 +281,31 @@ export const PaymentsManager = () => {
                 }
             ]}
          />
+         
+         {/* Pagination Controls */}
+         {totalPages > 1 && (
+            <div className="p-4 border-t border-slate-800 flex justify-between items-center bg-slate-950">
+               <span className="text-xs text-slate-500">
+                 Pagina {currentPage} van {totalPages}
+               </span>
+               <div className="flex space-x-2">
+                 <button 
+                   onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                   disabled={currentPage === 1}
+                   className="p-2 rounded hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent text-slate-400"
+                 >
+                   <ChevronLeft size={16} />
+                 </button>
+                 <button 
+                   onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                   disabled={currentPage === totalPages}
+                   className="p-2 rounded hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent text-slate-400"
+                 >
+                   <ChevronRight size={16} />
+                 </button>
+               </div>
+            </div>
+         )}
       </div>
 
       {/* Payment Modal */}
@@ -278,13 +318,13 @@ export const PaymentsManager = () => {
                <div className="p-4 bg-slate-900 rounded-xl border border-slate-800">
                   <p className="text-xs text-slate-500 uppercase font-bold mb-1">Te Betalen</p>
                   <p className="text-3xl font-mono text-white">€{selectedRes.financials.finalTotal.toFixed(2)}</p>
-                  <p className="text-xs text-slate-400 mt-2">{selectedRes.customer.firstName} {selectedRes.customer.lastName}</p>
+                  <p className="text-xs text-slate-400 mt-2">{formatGuestName(selectedRes.customer.firstName, selectedRes.customer.lastName)}</p>
                </div>
 
                <div>
                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 block">Betaalmethode</label>
                  <select 
-                   className="w-full px-4 py-3 bg-slate-900 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500"
+                   className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500"
                    value={paymentMethod}
                    onChange={(e) => setPaymentMethod(e.target.value)}
                  >
