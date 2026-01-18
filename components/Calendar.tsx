@@ -6,7 +6,7 @@ import {
 } from './calendar/CalendarComponents';
 import { ResponsiveDrawer, Button, Badge } from './UI';
 import { Availability } from '../types';
-import { Clock, Star, AlertCircle, Calendar as CalIcon, ChevronRight, Lock, Hourglass } from 'lucide-react';
+import { Clock, Star, AlertCircle, Calendar as CalIcon, ChevronRight, Lock, Hourglass, Info, Phone } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useIsMobile } from '../hooks/useMediaQuery';
 
@@ -34,8 +34,11 @@ export const CustomerCalendar = ({ onSelect, selectedDate }: CalendarProps) => {
 
   const handleBookNow = () => {
     if (selectedDay && selectedDay.event) {
-      // Prevent booking if closed
+      // Prevent booking for closed events (waitlist IS allowed)
       if (selectedDay.status === 'CLOSED') return;
+      
+      // Prevent booking for today (Last Minute Call Only)
+      if (selectedDay.isToday) return;
 
       if (onSelect) {
         onSelect(selectedDay.dateStr, selectedDay.event.showId, selectedDay.status);
@@ -45,7 +48,7 @@ export const CustomerCalendar = ({ onSelect, selectedDate }: CalendarProps) => {
           state: { 
             date: selectedDay.dateStr, 
             showId: selectedDay.event.showId,
-            availability: selectedDay.status // Pass calculated status (OPEN or WAITLIST)
+            availability: selectedDay.status 
           } 
         });
       }
@@ -54,11 +57,15 @@ export const CustomerCalendar = ({ onSelect, selectedDate }: CalendarProps) => {
   };
 
   return (
-    <div className="h-full flex flex-col p-4 md:p-8 w-full max-w-7xl mx-auto">
+    <div className="h-full flex flex-col p-4 md:p-8 w-full max-w-7xl mx-auto animate-in fade-in duration-700">
       <div className="flex flex-col h-full">
-        <div className="mb-6">
-          <h1 className="text-3xl font-serif text-white mb-2">Reserveren</h1>
-          <p className="text-slate-400 text-sm">Selecteer een datum voor uw avond uit.</p>
+        <div className="mb-8 text-center md:text-left">
+          <h1 className="text-4xl font-serif text-white mb-2 tracking-wide">
+            Agenda & Tickets
+          </h1>
+          <p className="text-slate-400 text-sm max-w-md">
+            Selecteer een datum voor een onvergetelijke avond uit.
+          </p>
         </div>
 
         <CalendarHeader 
@@ -73,7 +80,7 @@ export const CustomerCalendar = ({ onSelect, selectedDate }: CalendarProps) => {
         
         {!isMobile && <CalendarLegend />}
 
-        <div className="flex-grow overflow-y-auto custom-scrollbar bg-slate-900/50 rounded-2xl border border-slate-800">
+        <div className="flex-grow overflow-y-auto custom-scrollbar bg-slate-950/50 backdrop-blur-sm rounded-3xl border border-slate-800 shadow-2xl">
           {viewMode === 'GRID' ? (
             <CalendarGrid days={calendarDays} onDayClick={handleDayClick} isDense={isDense} />
           ) : (
@@ -82,115 +89,143 @@ export const CustomerCalendar = ({ onSelect, selectedDate }: CalendarProps) => {
         </div>
       </div>
 
-      {/* Detail Drawer (Mobile Bottom Sheet / Desktop Drawer) */}
+      {/* Detail Drawer (Enhanced Visuals) */}
       <ResponsiveDrawer
         isOpen={!!selectedDay}
         onClose={() => setSelectedDay(null)}
         title={selectedDay?.show?.name || 'Voorstelling'}
       >
         {selectedDay && selectedDay.event && (
-          <div className="space-y-6 pb-20 md:pb-0">
-            {/* Hero Image */}
-            <div className="relative h-48 rounded-2xl overflow-hidden border border-slate-800 shadow-2xl group">
+          <div className="space-y-6 pb-20 md:pb-0 relative">
+            
+            {/* Hero Banner with Status Overlay */}
+            <div className="relative h-56 rounded-3xl overflow-hidden border border-slate-800 shadow-2xl group">
                {selectedDay.show.posterImage ? (
                  <img 
                    src={selectedDay.show.posterImage} 
                    alt={selectedDay.show.name} 
-                   className="absolute inset-0 w-full h-full object-cover"
+                   className="absolute inset-0 w-full h-full object-cover transition-transform duration-1000 group-hover:scale-105"
                  />
                ) : (
                  <div className={`absolute inset-0 bg-gradient-to-br from-${selectedDay.theme.primary}-900 to-black opacity-80`} />
                )}
-               <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
-               <div className="absolute bottom-4 left-6">
-                 {/* Status Badge inside Image */}
-                 {selectedDay.status === 'CLOSED' && (
-                    <span className="px-3 py-1 rounded-full bg-red-600 text-white text-xs font-bold uppercase tracking-widest shadow-lg flex items-center w-fit mb-2">
-                      <Lock size={12} className="mr-1.5" /> Volgeboekt
-                    </span>
-                 )}
-                 {selectedDay.status === 'WAITLIST' && (
-                    <span className="px-3 py-1 rounded-full bg-orange-500 text-black text-xs font-bold uppercase tracking-widest shadow-lg flex items-center w-fit mb-2">
-                      <Hourglass size={12} className="mr-1.5" /> Wachtlijst Open
-                    </span>
-                 )}
+               
+               {/* Gradient Overlay */}
+               <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/60 to-transparent" />
+               
+               <div className="absolute bottom-6 left-6 right-6">
+                 {/* Status Badge */}
+                 <div className="flex items-center justify-between mb-3">
+                    {selectedDay.isToday ? (
+                        <span className="px-3 py-1 rounded-full bg-blue-600/90 backdrop-blur text-white text-[10px] font-bold uppercase tracking-widest shadow-lg flex items-center">
+                        <Clock size={10} className="mr-1.5" /> Laatste Kaarten
+                        </span>
+                    ) : selectedDay.status === 'CLOSED' ? (
+                        <span className="px-3 py-1 rounded-full bg-red-600/90 backdrop-blur text-white text-[10px] font-bold uppercase tracking-widest shadow-lg flex items-center">
+                        <Lock size={10} className="mr-1.5" /> Volgeboekt
+                        </span>
+                    ) : selectedDay.status === 'WAITLIST' ? (
+                        <span className="px-3 py-1 rounded-full bg-orange-500/90 backdrop-blur text-black text-[10px] font-bold uppercase tracking-widest shadow-lg flex items-center">
+                        <Hourglass size={10} className="mr-1.5" /> Wachtlijst Open
+                        </span>
+                    ) : (
+                        <span className="px-3 py-1 rounded-full bg-emerald-500/90 backdrop-blur text-black text-[10px] font-bold uppercase tracking-widest shadow-lg flex items-center">
+                        <Star size={10} className="mr-1.5" /> Beschikbaar
+                        </span>
+                    )}
+                 </div>
                  
-                 <p className="text-white text-2xl font-serif font-bold leading-none shadow-black drop-shadow-md">{selectedDay.show.name}</p>
+                 <h2 className="text-3xl font-serif font-bold text-white leading-none shadow-black drop-shadow-lg">
+                    {selectedDay.show.name}
+                 </h2>
                </div>
             </div>
 
-            {/* Info Grid */}
-            <div className="grid grid-cols-2 gap-3">
-               <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl">
-                 <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Datum</p>
-                 <div className="flex items-center text-white text-sm font-bold">
-                   <CalIcon size={14} className="mr-2 text-amber-500" />
-                   {selectedDay.date.toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric', month: 'short' })}
+            {/* Event Info Grid */}
+            <div className="grid grid-cols-2 gap-4">
+               <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col justify-center">
+                 <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1 flex items-center"><CalIcon size={10} className="mr-1"/> Datum</p>
+                 <div className="text-white text-sm font-bold capitalize">
+                   {selectedDay.date.toLocaleDateString('nl-NL', { weekday: 'short', day: 'numeric', month: 'long' })}
                  </div>
                </div>
-               <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl">
-                 <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Tijd</p>
-                 <div className="flex items-center text-white text-sm font-bold">
-                   <Clock size={14} className="mr-2 text-amber-500" />
-                   {selectedDay.event.times?.start || 'N/A'}
-                 </div>
-               </div>
-            </div>
-
-            {/* Description */}
-            <div className="p-4 bg-slate-900/50 border border-slate-800 rounded-xl">
-               <div className="flex items-start space-x-3">
-                 <Star className={`text-${selectedDay.theme.primary}-500 mt-0.5 shrink-0`} size={16} />
-                 <div>
-                   <h4 className="font-bold text-white text-sm">Over de show</h4>
-                   <p className="text-slate-400 text-xs mt-1 leading-relaxed">
-                     {selectedDay.show.description || 'Geniet van een onvergetelijke avond uit bij Grand Stage.'}
-                   </p>
+               <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col justify-center">
+                 <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1 flex items-center"><Clock size={10} className="mr-1"/> Aanvang</p>
+                 <div className="text-white text-sm font-bold">
+                   {selectedDay.event.times?.start || '19:30'} uur
                  </div>
                </div>
             </div>
 
-            {/* Pricing Hint - Hide if closed/waitlist to reduce noise */}
-            {selectedDay.status === 'OPEN' && (
-                <div className="flex justify-between items-center text-sm px-2">
-                <span className="text-slate-400">Vanaf prijs</span>
-                <span className="font-serif text-amber-500 text-lg">€{selectedDay.event.pricing?.standard || selectedDay.show.profiles[0].pricing.standard} <span className="text-xs text-slate-500 font-sans">p.p.</span></span>
+            {/* Description Card */}
+            <div className="p-6 bg-slate-900/50 border border-slate-800 rounded-2xl relative overflow-hidden">
+               <div className="absolute top-0 right-0 p-4 opacity-10">
+                  <Star size={64} />
+               </div>
+               <h4 className="font-bold text-white text-sm mb-2">Over de show</h4>
+               <p className="text-slate-400 text-sm leading-relaxed">
+                 {selectedDay.show.description || 'Laat u meevoeren in een avond vol culinaire verrassingen en topentertainment.'}
+               </p>
+            </div>
+
+            {/* Pricing Hint */}
+            {selectedDay.status === 'OPEN' && !selectedDay.isToday && (
+                <div className="flex justify-between items-end px-2">
+                    <div className="text-xs text-slate-500">
+                        Arrangementen vanaf
+                    </div>
+                    <div className="font-serif text-amber-500 text-2xl leading-none">
+                        €{selectedDay.event.pricing?.standard || selectedDay.show.profiles[0].pricing.standard} 
+                        <span className="text-xs text-slate-500 font-sans ml-1 font-bold">p.p.</span>
+                    </div>
                 </div>
             )}
 
-            {/* Dynamic Actions based on Status */}
+            {/* Action Area */}
             <div className="pt-2">
-               {selectedDay.status === 'CLOSED' ? (
-                 <div className="space-y-3 animate-in fade-in">
-                    <div className="bg-red-900/20 border border-red-900/50 p-4 rounded-xl flex items-start">
-                        <Lock size={20} className="text-red-500 mr-3 mt-0.5 shrink-0" />
-                        <div>
-                            <h4 className="text-red-400 font-bold text-sm">Helaas Volgeboekt</h4>
-                            <p className="text-red-300/70 text-xs mt-1">
-                                Zowel de zaal als de wachtlijst voor deze datum zitten vol. Probeer een andere datum.
-                            </p>
-                        </div>
+               {selectedDay.isToday ? (
+                  <div className="bg-blue-900/10 border border-blue-900/50 p-6 rounded-2xl flex flex-col items-center text-center space-y-4">
+                     <div className="p-3 bg-blue-500/20 text-blue-400 rounded-full">
+                       <Phone size={24} />
+                     </div>
+                     <div>
+                       <h4 className="text-blue-400 font-bold text-lg mb-1">Online Reserveren Gesloten</h4>
+                       <p className="text-blue-200/70 text-sm max-w-xs mx-auto">
+                          Voor <strong>vandaag</strong> zijn de online boekingen gesloten. 
+                          Neem telefonisch contact op voor de allerlaatste plekken.
+                       </p>
+                     </div>
+                     <a 
+                       href="tel:+3112345678" 
+                       className="px-8 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold flex items-center shadow-lg shadow-blue-900/20 transition-all"
+                     >
+                        <Phone size={18} className="mr-2"/> Bel Direct
+                     </a>
+                  </div>
+               ) : selectedDay.status === 'CLOSED' ? (
+                 <div className="bg-red-950/30 border border-red-900/50 p-4 rounded-2xl flex items-center space-x-4">
+                    <div className="p-3 bg-red-900/20 rounded-full text-red-500"><Lock size={20} /></div>
+                    <div>
+                        <h4 className="text-red-400 font-bold text-sm">Helaas Volgeboekt</h4>
+                        <p className="text-red-300/60 text-xs">De wachtlijst voor deze datum is ook vol.</p>
                     </div>
-                    <Button disabled className="w-full bg-slate-800 text-slate-500 border-slate-700 cursor-not-allowed opacity-50">
-                        Niet Beschikbaar
-                    </Button>
                  </div>
                ) : selectedDay.status === 'WAITLIST' ? (
-                 <div className="space-y-3 animate-in fade-in">
-                   <div className="bg-amber-900/20 border border-amber-900/50 p-3 rounded-lg flex items-start">
-                     <AlertCircle size={16} className="text-amber-500 mr-2 shrink-0 mt-0.5" />
-                     <p className="text-xs text-amber-200">
-                        <strong>Deze datum is vol.</strong> U kunt zich inschrijven op de wachtlijst. 
-                        We nemen contact op zodra er een tafel vrijkomt.
+                 <div className="space-y-4">
+                   <div className="bg-amber-900/20 border border-amber-900/50 p-4 rounded-2xl flex items-start space-x-3">
+                     <Info size={18} className="text-amber-500 mt-0.5 shrink-0" />
+                     <p className="text-xs text-amber-200 leading-relaxed">
+                        <strong>Deze datum is populair.</strong> Schrijf u in op de wachtlijst. 
+                        Mochten er plaatsen vrijkomen, ontvangt u direct bericht.
                      </p>
                    </div>
-                   <Button onClick={handleBookNow} className="w-full bg-amber-600 hover:bg-amber-700 text-black border-none shadow-lg shadow-amber-900/20">
+                   <Button onClick={handleBookNow} className="w-full bg-amber-600 hover:bg-amber-700 text-black border-none shadow-lg shadow-amber-900/20 h-14 text-sm font-bold uppercase tracking-wider">
                      <Hourglass size={18} className="mr-2" /> Inschrijven Wachtlijst
                    </Button>
                  </div>
                ) : (
-                 <Button onClick={handleBookNow} className="w-full h-12 text-lg shadow-xl shadow-red-900/20">
-                   Start Reservering <ChevronRight size={18} className="ml-2" />
+                 <Button onClick={handleBookNow} className="w-full h-14 text-lg bg-gradient-to-r from-red-700 to-red-900 hover:from-red-600 hover:to-red-800 shadow-xl shadow-red-900/20 border border-red-500/30">
+                   Start Reservering <ChevronRight size={20} className="ml-2" />
                  </Button>
                )}
             </div>

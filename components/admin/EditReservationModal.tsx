@@ -4,10 +4,10 @@ import {
   X, Save, Users, Calendar, ShoppingBag, CreditCard, 
   AlertTriangle, RefreshCw, CheckCircle2, ArrowRight,
   Utensils, Info, Mail, Wine, PartyPopper, MessageSquare, StickyNote,
-  Minus, Plus, Trash2
+  Minus, Plus, Trash2, Phone, Building2, MapPin
 } from 'lucide-react';
 import { Button, Input, Card, Badge } from '../UI';
-import { Reservation, BookingStatus, ShowDefinition, EventDate } from '../../types';
+import { Reservation, BookingStatus, ShowDefinition, CalendarEvent, ShowEvent, AdminPriceOverride } from '../../types';
 import { bookingRepo, calendarRepo, showRepo, getShowDefinitions, getEvents } from '../../utils/storage';
 import { calculateBookingTotals, getEffectivePricing } from '../../utils/pricing';
 import { calculateEventStatus } from '../../utils/status';
@@ -16,6 +16,7 @@ import { triggerEmail } from '../../utils/emailEngine';
 import { MerchandisePicker } from '../MerchandisePicker';
 import { MOCK_ADDONS } from '../../mock/data';
 import { undoManager } from '../../utils/undoManager';
+import { PriceOverridePanel } from './PriceOverridePanel';
 
 const DIETARY_OPTIONS = [
   'Glutenvrij', 
@@ -26,6 +27,21 @@ const DIETARY_OPTIONS = [
   'Geen Vis',
   'Halal',
   'Zwanger'
+];
+
+const PHONE_CODES = [
+  { code: '+31', label: 'NL (+31)' },
+  { code: '+32', label: 'BE (+32)' },
+  { code: '+49', label: 'DE (+49)' },
+  { code: '+44', label: 'UK (+44)' },
+  { code: '+33', label: 'FR (+33)' },
+];
+
+const COUNTRIES = [
+  { code: 'NL', label: 'Nederland' },
+  { code: 'BE', label: 'België' },
+  { code: 'DE', label: 'Duitsland' },
+  { code: 'OTHER', label: 'Anders' },
 ];
 
 interface EditReservationModalProps {
@@ -63,15 +79,16 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
   const [sendEmail, setSendEmail] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [dateWarning, setDateWarning] = useState<string | null>(null);
+  const [isOverridingPrice, setIsOverridingPrice] = useState(false);
   
   // Derived Calculation State
   const [financials, setFinancials] = useState<any>(null);
   const [shows, setShows] = useState<ShowDefinition[]>([]);
-  const [events, setEvents] = useState<EventDate[]>([]);
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
 
   useEffect(() => {
     setShows(getShowDefinitions());
-    setEvents(calendarRepo.getLegacyEvents());
+    setEvents(calendarRepo.getAll());
     
     // Try to extract initial manual note from existing string if it's not just the structured parts
     if (reservation.notes.dietary && (!reservation.notes.structuredDietary || Object.keys(reservation.notes.structuredDietary).length === 0)) {
@@ -99,13 +116,14 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
     const event = events.find(e => e.date === formData.date);
     const show = shows.find(s => s.id === formData.showId);
 
-    if (event && show) {
+    if (event && show && event.type === 'SHOW') {
+      const showEvent = event as ShowEvent;
       // 1. Availability Check
       const allRes = bookingRepo.getAll().filter(r => r.date === formData.date && r.status !== 'CANCELLED' && r.id !== formData.id);
       const currentPax = allRes.reduce((sum, r) => sum + r.partySize, 0);
       const newPaxCount = currentPax + formData.partySize;
       
-      const status = calculateEventStatus(newPaxCount, event.capacity || 230, 0);
+      const status = calculateEventStatus(newPaxCount, showEvent.capacity || 230, 0);
       if (status === 'CLOSED') {
         setDateWarning(`Let op: Deze datum is vol (${newPaxCount} pax). Opslaan forceert overboeking.`);
       } else {
@@ -113,7 +131,7 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
       }
 
       // 2. Pricing Calculation
-      const pricingProfile = getEffectivePricing(event, show);
+      const pricingProfile = getEffectivePricing(showEvent, show);
       const totals = calculateBookingTotals({
         totalGuests: formData.partySize,
         packageType: formData.packageType,
@@ -247,6 +265,12 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
       });
   };
 
+  // Helper for Price Override Save (Internal)
+  const handlePriceOverride = (override: AdminPriceOverride | undefined) => {
+      setFormData(prev => ({ ...prev, adminPriceOverride: override }));
+      setIsOverridingPrice(false);
+  };
+
   // --- RENDER ---
 
   if (!financials) return null; // Loading
@@ -364,8 +388,42 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
                       <Input label="Voornaam" value={formData.customer.firstName} onChange={(e: any) => updateCustomer('firstName', e.target.value)} />
                       <Input label="Achternaam" value={formData.customer.lastName} onChange={(e: any) => updateCustomer('lastName', e.target.value)} />
                       <Input label="Email" value={formData.customer.email} onChange={(e: any) => updateCustomer('email', e.target.value)} className="col-span-2" />
-                      <Input label="Telefoon" value={formData.customer.phone} onChange={(e: any) => updateCustomer('phone', e.target.value)} className="col-span-2" />
+                      
+                      {/* Phone Edit */}
+                      <div className="col-span-2 flex gap-2">
+                        <div className="w-1/3">
+                            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-2">Code</label>
+                            <select 
+                                className="w-full px-2 py-3 bg-black/40 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500 appearance-none"
+                                value={formData.customer.phoneCode || '+31'}
+                                onChange={(e) => updateCustomer('phoneCode', e.target.value)}
+                            >
+                                {PHONE_CODES.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
+                            </select>
+                        </div>
+                        <div className="flex-grow">
+                            <Input label="Telefoon" value={formData.customer.phone} onChange={(e: any) => updateCustomer('phone', e.target.value)} />
+                        </div>
+                      </div>
+
+                      {/* Business Edit */}
                       <Input label="Bedrijfsnaam" value={formData.customer.companyName || ''} onChange={(e: any) => updateCustomer('companyName', e.target.value)} className="col-span-2" />
+                      
+                      <div className="col-span-2 space-y-2 border-t border-slate-800 pt-2">
+                          <Input label="Factuur Opmerking" value={formData.customer.billingInstructions || ''} onChange={(e: any) => updateCustomer('billingInstructions', e.target.value)} />
+                          <div>
+                             <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-2">Alternatieve Datum</label>
+                             <div className="relative">
+                               <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+                               <input 
+                                 type="date"
+                                 className="w-full pl-10 pr-4 py-3 bg-black/40 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500"
+                                 value={formData.alternativeDate || ''}
+                                 onChange={(e) => setFormData({...formData, alternativeDate: e.target.value})}
+                               />
+                             </div>
+                          </div>
+                      </div>
                    </div>
                 </div>
               </div>
@@ -550,63 +608,81 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
           {/* TAB: FINANCIAL */}
           {activeTab === 'FINANCIAL' && (
             <div className="space-y-6 animate-in fade-in">
-               <div className="grid grid-cols-2 gap-6">
-                  {/* Before */}
-                  <div className="p-6 bg-slate-900 border border-slate-800 rounded-xl opacity-50">
-                     <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Huidig</h3>
-                     <div className="space-y-2">
-                        <div className="flex justify-between text-sm"><span>Totaal</span> <span>€{reservation.financials.finalTotal.toFixed(2)}</span></div>
-                        <div className="flex justify-between text-sm text-emerald-500"><span>Betaald</span> <span>€{paid.toFixed(2)}</span></div>
-                     </div>
-                  </div>
+               
+               {isOverridingPrice ? (
+                   <PriceOverridePanel 
+                      reservation={formData}
+                      onSave={handlePriceOverride}
+                      onCancel={() => setIsOverridingPrice(false)}
+                   />
+               ) : (
+                   <>
+                       <div className="grid grid-cols-2 gap-6">
+                          {/* Before */}
+                          <div className="p-6 bg-slate-900 border border-slate-800 rounded-xl opacity-50">
+                             <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Huidig</h3>
+                             <div className="space-y-2">
+                                <div className="flex justify-between text-sm"><span>Totaal</span> <span>€{reservation.financials.finalTotal.toFixed(2)}</span></div>
+                                <div className="flex justify-between text-sm text-emerald-500"><span>Betaald</span> <span>€{paid.toFixed(2)}</span></div>
+                             </div>
+                          </div>
 
-                  {/* After */}
-                  <div className="p-6 bg-slate-900 border border-amber-500/50 rounded-xl shadow-lg relative overflow-hidden">
-                     <div className="absolute top-0 right-0 p-2 bg-amber-500 text-black text-[10px] font-bold uppercase rounded-bl-xl">Nieuw</div>
-                     <h3 className="text-xs font-bold text-amber-500 uppercase tracking-widest mb-4">Voorstel</h3>
-                     <div className="space-y-2">
-                        <div className="flex justify-between text-sm text-white"><span>Subtotaal</span> <span>€{financials.subtotal.toFixed(2)}</span></div>
-                        {financials.discountAmount > 0 && (
-                          <div className="flex justify-between text-sm text-emerald-500"><span>Korting</span> <span>-€{financials.discountAmount.toFixed(2)}</span></div>
-                        )}
-                        <div className="flex justify-between text-lg font-bold text-white border-t border-slate-700 pt-2 mt-2">
-                          <span>Nieuw Totaal</span> 
-                          <span>€{financials.amountDue.toFixed(2)}</span>
-                        </div>
-                     </div>
-                  </div>
-               </div>
+                          {/* After */}
+                          <div className="p-6 bg-slate-900 border border-amber-500/50 rounded-xl shadow-lg relative overflow-hidden">
+                             <div className="absolute top-0 right-0 p-2 bg-amber-500 text-black text-[10px] font-bold uppercase rounded-bl-xl">Nieuw</div>
+                             <h3 className="text-xs font-bold text-amber-500 uppercase tracking-widest mb-4">Voorstel</h3>
+                             <div className="space-y-2">
+                                <div className="flex justify-between text-sm text-white"><span>Subtotaal</span> <span>€{financials.subtotal.toFixed(2)}</span></div>
+                                {financials.discountAmount > 0 && (
+                                  <div className="flex justify-between text-sm text-emerald-500"><span>Korting</span> <span>-€{financials.discountAmount.toFixed(2)}</span></div>
+                                )}
+                                <div className="flex justify-between text-lg font-bold text-white border-t border-slate-700 pt-2 mt-2">
+                                  <span>Nieuw Totaal</span> 
+                                  <span>€{financials.amountDue.toFixed(2)}</span>
+                                </div>
+                             </div>
+                          </div>
+                       </div>
 
-               {/* Delta Banner */}
-               <div className={`p-6 rounded-xl border flex items-center justify-between ${newBalance > 0 ? 'bg-amber-900/20 border-amber-500/50' : newBalance < 0 ? 'bg-blue-900/20 border-blue-500/50' : 'bg-slate-900 border-slate-800'}`}>
-                  <div className="flex items-center space-x-4">
-                    <div className={`p-3 rounded-full ${newBalance > 0 ? 'bg-amber-500/20 text-amber-500' : 'bg-blue-500/20 text-blue-500'}`}>
-                      <RefreshCw size={24} />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-white text-lg">
-                        {newBalance > 0 ? 'Bijbetaling Vereist' : newBalance < 0 ? 'Teruggave Vereist' : 'Geen Verschil'}
-                      </h4>
-                      <p className="text-slate-400 text-sm">Saldo wordt aangepast na opslaan.</p>
-                    </div>
-                  </div>
-                  <span className={`text-3xl font-mono font-bold ${newBalance > 0 ? 'text-amber-500' : newBalance < 0 ? 'text-blue-400' : 'text-slate-500'}`}>
-                    {newBalance > 0 ? '+' : ''}€{newBalance.toFixed(2)}
-                  </span>
-               </div>
+                       {/* Action: Manual Override */}
+                       <div className="flex justify-end">
+                           <Button variant="secondary" onClick={() => setIsOverridingPrice(true)} className="text-xs">
+                               Handmatige Prijsaanpassing
+                           </Button>
+                       </div>
 
-               {/* Breakdown List */}
-               <div className="bg-black/30 rounded-xl p-4 border border-slate-800">
-                 <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Specificatie Nieuw</h4>
-                 <div className="space-y-1">
-                   {financials.items.map((item: any, idx: number) => (
-                     <div key={idx} className="flex justify-between text-xs text-slate-300">
-                       <span>{item.quantity}x {item.label}</span>
-                       <span>€{item.total.toFixed(2)}</span>
-                     </div>
-                   ))}
-                 </div>
-               </div>
+                       {/* Delta Banner */}
+                       <div className={`p-6 rounded-xl border flex items-center justify-between ${newBalance > 0 ? 'bg-amber-900/20 border-amber-500/50' : newBalance < 0 ? 'bg-blue-900/20 border-blue-500/50' : 'bg-slate-900 border-slate-800'}`}>
+                          <div className="flex items-center space-x-4">
+                            <div className={`p-3 rounded-full ${newBalance > 0 ? 'bg-amber-500/20 text-amber-500' : 'bg-blue-500/20 text-blue-500'}`}>
+                              <RefreshCw size={24} />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-white text-lg">
+                                {newBalance > 0 ? 'Bijbetaling Vereist' : newBalance < 0 ? 'Teruggave Vereist' : 'Geen Verschil'}
+                              </h4>
+                              <p className="text-slate-400 text-sm">Saldo wordt aangepast na opslaan.</p>
+                            </div>
+                          </div>
+                          <span className={`text-3xl font-mono font-bold ${newBalance > 0 ? 'text-amber-500' : newBalance < 0 ? 'text-blue-400' : 'text-slate-500'}`}>
+                            {newBalance > 0 ? '+' : ''}€{newBalance.toFixed(2)}
+                          </span>
+                       </div>
+
+                       {/* Breakdown List */}
+                       <div className="bg-black/30 rounded-xl p-4 border border-slate-800">
+                         <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Specificatie Nieuw</h4>
+                         <div className="space-y-1">
+                           {financials.items.map((item: any, idx: number) => (
+                             <div key={idx} className="flex justify-between text-xs text-slate-300">
+                               <span>{item.quantity}x {item.label}</span>
+                               <span>€{item.total.toFixed(2)}</span>
+                             </div>
+                           ))}
+                         </div>
+                       </div>
+                   </>
+               )}
             </div>
           )}
 

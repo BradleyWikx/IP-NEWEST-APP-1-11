@@ -62,14 +62,14 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({ currentRole, onRoleCha
   };
 
   return (
-    <header className="h-20 bg-black/50 backdrop-blur-md border-b border-slate-900 flex items-center justify-between px-8 sticky top-0 z-40">
+    <header className="h-14 bg-black/50 backdrop-blur-md border-b border-slate-900 flex items-center justify-between px-6 sticky top-0 z-40">
       {/* Search Bar (Global Command Palette) */}
-      <div className="relative w-96 group bg-slate-900/50 border border-slate-800 rounded-full pl-4 pr-4 py-2 transition-all hover:border-amber-500/30 focus-within:ring-2 focus-within:ring-amber-500/20">
+      <div className="relative w-96 group bg-slate-900/50 border border-slate-800 rounded-full pl-4 pr-4 py-1.5 transition-all hover:border-amber-500/30 focus-within:ring-2 focus-within:ring-amber-500/20">
         <GlobalSearch />
       </div>
 
       {/* Right Actions */}
-      <div className="flex items-center space-x-6">
+      <div className="flex items-center space-x-4">
         
         {/* Theme Toggle */}
         <button
@@ -77,7 +77,7 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({ currentRole, onRoleCha
             className="p-2 rounded-full text-slate-500 hover:text-white transition-colors"
             title={isLightMode ? "Donkere modus" : "Lichte modus (Zonlicht)"}
         >
-            {isLightMode ? <Moon size={20} /> : <Sun size={20} />}
+            {isLightMode ? <Moon size={18} /> : <Sun size={18} />}
         </button>
 
         {/* Undo History */}
@@ -87,9 +87,9 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({ currentRole, onRoleCha
              className={`relative p-2 rounded-full transition-colors ${showHistory ? 'text-amber-500 bg-slate-800' : 'text-slate-500 hover:text-white'}`}
              title="Actie Historie"
            >
-             <RotateCcw size={20} />
+             <RotateCcw size={18} />
              {undoHistory.length > 0 && (
-                <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-amber-500 rounded-full shadow-lg border border-black" />
+                <span className="absolute top-0 right-0 w-2 h-2 bg-amber-500 rounded-full shadow-lg border border-black" />
              )}
            </button>
 
@@ -132,9 +132,9 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({ currentRole, onRoleCha
             onClick={() => setShowNotifications(!showNotifications)}
             className={`relative p-2 rounded-full transition-colors ${showNotifications ? 'text-white bg-slate-800' : 'text-slate-500 hover:text-white'}`}
           >
-            <Bell size={20} />
+            <Bell size={18} />
             {unreadCount > 0 && (
-              <span className="absolute top-0 right-0 w-4 h-4 bg-red-600 rounded-full shadow-[0_0_8px_rgba(220,38,38,0.5)] text-[9px] font-bold flex items-center justify-center text-white border border-black">
+              <span className="absolute top-0 right-0 w-3.5 h-3.5 bg-red-600 rounded-full shadow-[0_0_8px_rgba(220,38,38,0.5)] text-[8px] font-bold flex items-center justify-center text-white border border-black">
                 {unreadCount > 9 ? '9+' : unreadCount}
               </span>
             )}

@@ -65,7 +65,7 @@ export const DemoControlPanel = () => {
           </div>
           <h2 className="text-4xl font-serif text-white mb-3">Demo Environment</h2>
           <p className="text-slate-400 max-w-md mx-auto leading-relaxed">
-            Met één klik wordt het volledige systeem gewist en opnieuw opgebouwd met realistische data voor Inspiration Point.
+            Met één klik wordt het volledige systeem gewist en opnieuw opgebouwd met realistische data, correcte vouchercodes en financiële historie.
           </p>
         </div>
 
@@ -98,9 +98,9 @@ export const DemoControlPanel = () => {
                 </div>
              ) : (
                 <>
-                    <h3 className="text-xl font-bold text-white mb-2">Universe Generator</h3>
+                    <h3 className="text-xl font-bold text-white mb-2">Universe Generator v2</h3>
                     <p className="text-xs text-slate-500 mb-6">
-                    Genereert: 200+ Boekingen, 50+ Klanten, Volledige Agenda (-3m/+6m), Vouchers, Taken, Wachtlijsten.
+                    Genereert: 200+ Boekingen (met payments), 15 Vouchers (valid codes), Agenda (-3m/+4m), Taken & Logs.
                     </p>
                 </>
              )}

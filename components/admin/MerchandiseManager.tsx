@@ -4,7 +4,7 @@ import {
   Search, Plus, Filter, Trash2, Edit3, Save, X, 
   ShoppingBag, Check, Eye, Tag, DollarSign, Image as ImageIcon,
   MoreHorizontal, AlertCircle, ToggleLeft, ToggleRight, List,
-  ClipboardList, Package, User, Calendar
+  ClipboardList, Package, User, Calendar, Printer, ChevronLeft, ChevronRight, BarChart3
 } from 'lucide-react';
 import { Button, Input, Card, Badge } from '../UI';
 import { MerchandiseItem, Reservation } from '../../types';
@@ -15,21 +15,20 @@ import { MerchandiseItemCard } from '../MerchandisePicker';
 const CATEGORIES = ['Souvenir', 'Home', 'Apparel', 'Art', 'Food & Bev'];
 
 export const MerchandiseManager = () => {
-  const [activeTab, setActiveTab] = useState<'CATALOG' | 'WORKLIST'>('CATALOG');
+  const [activeTab, setActiveTab] = useState<'CATALOG' | 'DAILY' | 'WEEKLY'>('CATALOG');
   const [items, setItems] = useState<MerchandiseItem[]>([]);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
+  
+  // Catalog State
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  
-  // Drawer / Editor State
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<MerchandiseItem | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-
-  // Bulk Action State
   const [bulkCategory, setBulkCategory] = useState('');
 
-  // Worklist Data
-  const [worklistData, setWorklistData] = useState<{ prepList: { name: string, count: number }[], distList: any[] }>({ prepList: [], distList: [] });
+  // Report State
+  const [selectedDate, setSelectedDate] = useState(new Date());
 
   // Load Data
   useEffect(() => {
@@ -39,62 +38,92 @@ export const MerchandiseManager = () => {
   }, []);
 
   const refreshData = () => {
-    const catalog = getMerchandise();
-    setItems(catalog);
+    setItems(getMerchandise());
+    setReservations(bookingRepo.getAll());
+  };
 
-    // Calculate Worklist (Today + Tomorrow)
-    const reservations = bookingRepo.getAll();
-    const today = new Date();
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+  // --- REPORT LOGIC ---
+
+  const getDailyData = (date: Date) => {
+    const dateStr = date.toISOString().split('T')[0];
     
-    const todayStr = today.toISOString().split('T')[0];
-    const tomorrowStr = tomorrow.toISOString().split('T')[0];
-
-    const activeRes = reservations.filter(r => 
-        (r.date === todayStr || r.date === tomorrowStr) && 
+    // Filter valid reservations with merchandise
+    const relevantRes = reservations.filter(r => 
+        r.date === dateStr && 
         r.status !== 'CANCELLED' && 
         r.status !== 'ARCHIVED' &&
         r.merchandise && r.merchandise.length > 0
     );
 
-    // Prep List (Aggregated)
-    const prepMap = new Map<string, number>();
-    // Distribution List (Per Guest)
-    const distList: any[] = [];
-
-    activeRes.forEach(r => {
-        const guestItems: { name: string, qty: number }[] = [];
-        
-        r.merchandise.forEach(sel => {
-            const def = catalog.find(i => i.id === sel.id);
-            if (def && sel.quantity > 0) {
-                // Add to Prep
-                prepMap.set(def.name, (prepMap.get(def.name) || 0) + sel.quantity);
-                // Add to Guest
-                guestItems.push({ name: def.name, qty: sel.quantity });
+    // 1. Aggregated Production List
+    const productionMap = new Map<string, { count: number, category: string }>();
+    
+    // 2. Per Reservation Distribution List
+    const distributionList = relevantRes.map(r => {
+        const orderItems = r.merchandise.map(m => {
+            const def = items.find(i => i.id === m.id);
+            if (def) {
+                const current = productionMap.get(def.name) || { count: 0, category: def.category };
+                productionMap.set(def.name, { count: current.count + m.quantity, category: def.category });
             }
+            return {
+                name: def ? def.name : 'Unknown',
+                quantity: m.quantity,
+                category: def ? def.category : '-'
+            };
         });
 
-        if (guestItems.length > 0) {
-            distList.push({
-                id: r.id,
-                guestName: `${r.customer.firstName} ${r.customer.lastName}`,
-                date: r.date,
-                table: (r as any).tableNumber || '?',
-                items: guestItems,
-                delivered: false // Local state, could be persisted in Reservation notes/tags
-            });
-        }
+        return {
+            id: r.id,
+            guestName: `${r.customer.firstName} ${r.customer.lastName}`,
+            table: (r as any).tableId ? (r as any).tableId.replace('TAB-', '') : '-',
+            items: orderItems
+        };
     });
 
-    setWorklistData({
-        prepList: Array.from(prepMap.entries()).map(([name, count]) => ({ name, count })),
-        distList: distList.sort((a,b) => a.date.localeCompare(b.date))
-    });
+    return {
+        productionList: Array.from(productionMap.entries()).map(([name, data]) => ({ name, ...data })),
+        distributionList
+    };
   };
 
-  // --- Actions ---
+  const getWeeklyForecast = (startDate: Date) => {
+    const forecast: Record<string, number[]> = {}; // ItemName -> [Day1Count, Day2Count...]
+    const days: Date[] = [];
+    const itemNames = items.map(i => i.name);
+
+    // Initialize
+    itemNames.forEach(name => forecast[name] = [0,0,0,0,0,0,0]);
+
+    for (let i = 0; i < 7; i++) {
+        const d = new Date(startDate);
+        d.setDate(startDate.getDate() + i);
+        days.push(d);
+        const dStr = d.toISOString().split('T')[0];
+
+        const dayRes = reservations.filter(r => 
+            r.date === dStr && 
+            r.status !== 'CANCELLED' && 
+            r.status !== 'ARCHIVED' &&
+            r.merchandise && r.merchandise.length > 0
+        );
+
+        dayRes.forEach(r => {
+            r.merchandise.forEach(m => {
+                const def = items.find(it => it.id === m.id);
+                if (def && forecast[def.name]) {
+                    forecast[def.name][i] += m.quantity;
+                }
+            });
+        });
+    }
+
+    return { days, forecast };
+  };
+
+  const handlePrint = () => window.print();
+
+  // --- CATALOG ACTIONS ---
 
   const handleSave = () => {
     if (!editingItem) return;
@@ -139,7 +168,7 @@ export const MerchandiseManager = () => {
     setItems(updated);
   };
 
-  // --- Bulk Actions ---
+  // --- BULK ACTIONS ---
 
   const toggleSelection = (id: string) => {
     const newSet = new Set(selectedIds);
@@ -174,7 +203,7 @@ export const MerchandiseManager = () => {
     logAuditAction('BULK_UPDATE', 'SYSTEM', 'MULTIPLE', { description: `Moved ${selectedIds.size} items to ${bulkCategory}` });
   };
 
-  // --- Derived State ---
+  // --- DERIVED STATE ---
 
   const filteredItems = useMemo(() => {
     return items.filter(i => 
@@ -183,7 +212,7 @@ export const MerchandiseManager = () => {
     );
   }, [items, searchTerm]);
 
-  // --- Render Editor ---
+  // --- RENDERERS ---
 
   const openEditor = (item?: MerchandiseItem) => {
     if (item) {
@@ -204,97 +233,195 @@ export const MerchandiseManager = () => {
     setIsDrawerOpen(true);
   };
 
+  const dailyData = useMemo(() => getDailyData(selectedDate), [selectedDate, reservations, items]);
+  const weeklyData = useMemo(() => getWeeklyForecast(selectedDate), [selectedDate, reservations, items]);
+
   return (
     <div className="h-full flex flex-col space-y-6">
       {/* Header */}
-      <div className="flex justify-between items-end">
+      <div className="flex justify-between items-end print:hidden">
         <div>
           <h2 className="text-3xl font-serif text-white">Merchandise</h2>
-          <p className="text-slate-500 text-sm">Beheer catalogus en uitgifte.</p>
+          <p className="text-slate-500 text-sm">Beheer catalogus en productierapporten.</p>
         </div>
-        {activeTab === 'CATALOG' && (
-            <Button onClick={() => openEditor()} className="flex items-center">
-            <Plus size={18} className="mr-2" /> Nieuw Item
-            </Button>
-        )}
+        <div className="flex space-x-2">
+            {activeTab === 'CATALOG' ? (
+                <Button onClick={() => openEditor()} className="flex items-center">
+                <Plus size={18} className="mr-2" /> Nieuw Item
+                </Button>
+            ) : (
+                <Button variant="secondary" onClick={handlePrint} className="flex items-center bg-white text-black hover:bg-slate-200 border-none">
+                    <Printer size={18} className="mr-2"/> Print Rapport
+                </Button>
+            )}
+        </div>
       </div>
 
-      <div className="flex space-x-1 border-b border-slate-800">
+      <div className="flex space-x-1 border-b border-slate-800 print:hidden">
         <button onClick={() => setActiveTab('CATALOG')} className={`px-6 py-3 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'CATALOG' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Catalogus</button>
-        <button onClick={() => setActiveTab('WORKLIST')} className={`px-6 py-3 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'WORKLIST' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Werklijst</button>
+        <button onClick={() => setActiveTab('DAILY')} className={`px-6 py-3 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'DAILY' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Dagproductie</button>
+        <button onClick={() => setActiveTab('WEEKLY')} className={`px-6 py-3 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'WEEKLY' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Weekoverzicht</button>
       </div>
 
-      {activeTab === 'WORKLIST' && (
-          <div className="flex-grow grid grid-cols-1 lg:grid-cols-3 gap-8 overflow-hidden">
-              
-              {/* DEEL A: PREP LIST */}
-              <div className="lg:col-span-1 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col overflow-hidden">
-                  <div className="p-4 border-b border-slate-800 bg-slate-950 flex items-center space-x-3">
-                      <div className="p-2 bg-blue-900/20 text-blue-500 rounded-lg">
-                          <ClipboardList size={20} />
-                      </div>
-                      <div>
-                          <h3 className="font-bold text-white text-sm uppercase tracking-wide">Mise-en-place</h3>
-                          <p className="text-[10px] text-slate-500">Totaal te verzamelen</p>
-                      </div>
-                  </div>
-                  <div className="flex-grow p-4 overflow-y-auto custom-scrollbar space-y-2">
-                      {worklistData.prepList.length === 0 ? (
-                          <div className="text-center py-8 text-slate-500 italic">Geen items voor vandaag/morgen.</div>
-                      ) : (
-                          worklistData.prepList.map((item, idx) => (
-                              <div key={idx} className="flex justify-between items-center p-3 bg-black/30 rounded-lg border border-slate-800">
-                                  <span className="text-slate-300 font-medium">{item.name}</span>
-                                  <span className="text-xl font-bold text-white">{item.count}x</span>
-                              </div>
-                          ))
-                      )}
-                  </div>
+      {activeTab === 'DAILY' && (
+          <div className="flex-grow flex flex-col space-y-6">
+              {/* Date Control */}
+              <div className="print:hidden flex items-center justify-between p-4 bg-slate-900 border border-slate-800 rounded-xl">
+                 <div className="flex items-center space-x-4">
+                    <div className="p-2 bg-slate-800 rounded-lg text-slate-400"><Calendar size={20}/></div>
+                    <div>
+                        <p className="text-xs font-bold text-slate-500 uppercase">Selecteer Datum</p>
+                        <input 
+                            type="date" 
+                            value={selectedDate.toISOString().split('T')[0]} 
+                            onChange={(e) => setSelectedDate(new Date(e.target.value))}
+                            className="bg-transparent text-white font-bold outline-none"
+                        />
+                    </div>
+                 </div>
+                 <div className="flex space-x-2">
+                    <button onClick={() => setSelectedDate(d => { const n = new Date(d); n.setDate(n.getDate()-1); return n; })} className="p-2 bg-slate-800 rounded hover:bg-slate-700 text-white"><ChevronLeft size={16}/></button>
+                    <button onClick={() => setSelectedDate(d => { const n = new Date(d); n.setDate(n.getDate()+1); return n; })} className="p-2 bg-slate-800 rounded hover:bg-slate-700 text-white"><ChevronRight size={16}/></button>
+                 </div>
               </div>
 
-              {/* DEEL B: DISTRIBUTION LIST */}
-              <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col overflow-hidden">
-                  <div className="p-4 border-b border-slate-800 bg-slate-950 flex items-center space-x-3">
-                      <div className="p-2 bg-emerald-900/20 text-emerald-500 rounded-lg">
-                          <Package size={20} />
-                      </div>
-                      <div>
-                          <h3 className="font-bold text-white text-sm uppercase tracking-wide">Uitgifte</h3>
-                          <p className="text-[10px] text-slate-500">Per gast / tafel</p>
-                      </div>
-                  </div>
-                  <div className="flex-grow p-4 overflow-y-auto custom-scrollbar">
-                      {worklistData.distList.length === 0 ? (
-                          <div className="text-center py-12 text-slate-500 italic">Geen orders om uit te delen.</div>
-                      ) : (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              {worklistData.distList.map((order: any) => (
-                                  <div key={order.id} className="p-4 bg-slate-800/50 border border-slate-700 rounded-xl relative group hover:border-slate-500 transition-colors">
-                                      <div className="flex justify-between items-start mb-3">
-                                          <div>
-                                              <h4 className="font-bold text-white">{order.guestName}</h4>
-                                              <div className="flex items-center text-xs text-slate-400 mt-1">
-                                                  <span className="bg-slate-950 px-2 py-0.5 rounded mr-2 border border-slate-800">Tafel {order.table}</span>
-                                                  <Calendar size={10} className="mr-1" /> {new Date(order.date).toLocaleDateString('nl-NL', {weekday:'short'})}
-                                              </div>
-                                          </div>
-                                          <button className="w-8 h-8 rounded-full border border-slate-600 flex items-center justify-center text-slate-500 hover:bg-emerald-500 hover:text-black hover:border-emerald-500 transition-all">
-                                              <Check size={16} />
-                                          </button>
-                                      </div>
-                                      <div className="space-y-1">
-                                          {order.items.map((item: any, idx: number) => (
-                                              <div key={idx} className="flex justify-between text-sm text-slate-300 border-t border-slate-700/50 pt-1 mt-1">
-                                                  <span>{item.name}</span>
-                                                  <span className="font-bold text-amber-500">{item.qty}x</span>
-                                              </div>
-                                          ))}
-                                      </div>
-                                  </div>
-                              ))}
-                          </div>
-                      )}
-                  </div>
+              {/* REPORT CONTENT */}
+              <div className="bg-white text-slate-900 p-8 rounded-sm shadow-2xl min-h-[297mm] print:shadow-none print:w-full print:m-0">
+                 
+                 <div className="flex justify-between items-start border-b-4 border-black pb-6 mb-8">
+                    <div>
+                        <h1 className="text-4xl font-black uppercase">Merchandise Productie</h1>
+                        <p className="text-xl mt-2">{selectedDate.toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                    </div>
+                    <div className="text-right">
+                        <div className="text-sm font-bold uppercase tracking-widest text-slate-500">Totaal Items</div>
+                        <div className="text-4xl font-black">{dailyData.productionList.reduce((s,i)=>s+i.count,0)}</div>
+                    </div>
+                 </div>
+
+                 <div className="grid grid-cols-2 gap-12">
+                    
+                    {/* LEFT: SUMMARY */}
+                    <div>
+                        <h3 className="text-lg font-bold uppercase mb-4 flex items-center border-b-2 border-slate-200 pb-2">
+                            <ClipboardList size={20} className="mr-2"/> Te Maken / Verzamelen
+                        </h3>
+                        {dailyData.productionList.length === 0 ? (
+                            <p className="text-slate-400 italic">Geen items.</p>
+                        ) : (
+                            <table className="w-full text-left">
+                                <thead className="text-xs uppercase bg-slate-100 text-slate-600">
+                                    <tr><th className="p-2">Aantal</th><th className="p-2">Item</th><th className="p-2">Categorie</th></tr>
+                                </thead>
+                                <tbody>
+                                    {dailyData.productionList.map((item, idx) => (
+                                        <tr key={idx} className="border-b border-slate-100">
+                                            <td className="p-3 font-black text-xl">{item.count}x</td>
+                                            <td className="p-3 font-bold">{item.name}</td>
+                                            <td className="p-3 text-sm text-slate-500">{item.category}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+
+                    {/* RIGHT: DISTRIBUTION */}
+                    <div>
+                        <h3 className="text-lg font-bold uppercase mb-4 flex items-center border-b-2 border-slate-200 pb-2">
+                            <Package size={20} className="mr-2"/> Uitgifte Per Gast
+                        </h3>
+                        {dailyData.distributionList.length === 0 ? (
+                            <p className="text-slate-400 italic">Geen reserveringen met merchandise.</p>
+                        ) : (
+                            <div className="space-y-4">
+                                {dailyData.distributionList.map((dist, idx) => (
+                                    <div key={idx} className="border border-slate-200 p-4 rounded-lg bg-slate-50 break-inside-avoid">
+                                        <div className="flex justify-between font-bold mb-2">
+                                            <span>{dist.guestName}</span>
+                                            <span className="bg-black text-white px-2 rounded text-sm">Tafel {dist.table}</span>
+                                        </div>
+                                        <ul className="text-sm space-y-1">
+                                            {dist.items.map((item: any, i: number) => (
+                                                <li key={i} className="flex justify-between">
+                                                    <span>{item.name}</span>
+                                                    <span className="font-bold">{item.quantity}x</span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                 </div>
+              </div>
+          </div>
+      )}
+
+      {activeTab === 'WEEKLY' && (
+          <div className="flex-grow flex flex-col space-y-6">
+              {/* Date Control */}
+              <div className="print:hidden flex items-center justify-between p-4 bg-slate-900 border border-slate-800 rounded-xl">
+                 <div className="flex items-center space-x-4">
+                    <div className="p-2 bg-slate-800 rounded-lg text-slate-400"><BarChart3 size={20}/></div>
+                    <div>
+                        <p className="text-xs font-bold text-slate-500 uppercase">Start Datum Week</p>
+                        <input 
+                            type="date" 
+                            value={selectedDate.toISOString().split('T')[0]} 
+                            onChange={(e) => setSelectedDate(new Date(e.target.value))}
+                            className="bg-transparent text-white font-bold outline-none"
+                        />
+                    </div>
+                 </div>
+              </div>
+
+              {/* REPORT CONTENT */}
+              <div className="bg-white text-slate-900 p-8 rounded-sm shadow-2xl min-h-[297mm] print:shadow-none print:w-full print:m-0 print:landscape">
+                 <div className="border-b-4 border-black pb-6 mb-8">
+                    <h1 className="text-4xl font-black uppercase">Weekplanning Merchandise</h1>
+                    <p className="text-xl mt-2">Week van {selectedDate.toLocaleDateString('nl-NL')}</p>
+                 </div>
+
+                 <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                        <thead className="bg-black text-white text-xs uppercase">
+                            <tr>
+                                <th className="p-4 border-r border-white/20">Item</th>
+                                {weeklyData.days.map(d => (
+                                    <th key={d.toISOString()} className="p-4 text-center border-r border-white/20 w-24">
+                                        <div className="font-bold">{d.toLocaleDateString('nl-NL', { weekday: 'short' })}</div>
+                                        <div className="font-normal">{d.getDate()}</div>
+                                    </th>
+                                ))}
+                                <th className="p-4 text-center w-24 bg-slate-800">Totaal</th>
+                            </tr>
+                        </thead>
+                        <tbody className="text-sm">
+                            {Object.entries(weeklyData.forecast).map(([name, counts], idx) => {
+                                const total = (counts as number[]).reduce((a,b)=>a+b,0);
+                                if (total === 0) return null; // Skip empty rows
+
+                                return (
+                                    <tr key={name} className={`border-b border-slate-200 ${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50'}`}>
+                                        <td className="p-4 font-bold border-r border-slate-200">{name}</td>
+                                        {(counts as number[]).map((c, i) => (
+                                            <td key={i} className="p-4 text-center border-r border-slate-200">
+                                                {c > 0 ? <span className="font-bold">{c}</span> : <span className="text-slate-300">-</span>}
+                                            </td>
+                                        ))}
+                                        <td className="p-4 text-center font-black bg-slate-100">{total}</td>
+                                    </tr>
+                                );
+                            })}
+                            {Object.keys(weeklyData.forecast).every(key => (weeklyData.forecast[key] as number[]).reduce((a,b)=>a+b,0) === 0) && (
+                                <tr><td colSpan={9} className="p-12 text-center text-slate-400 italic">Geen merchandise gepland voor deze week.</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                 </div>
               </div>
           </div>
       )}

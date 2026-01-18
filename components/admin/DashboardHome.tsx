@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -49,7 +48,7 @@ export const DashboardHome = () => {
 
     const allRes = bookingRepo.getAll();
     const allWaitlist = waitlistRepo.getAll();
-    const allEvents = calendarRepo.getLegacyEvents(); // or getCalendarEvents()
+    const allEvents = calendarRepo.getAll(); // Changed from getLegacyEvents
 
     // 1. KPI Stats (Selected Month)
     const thisMonthRes = allRes.filter(r => {
@@ -70,9 +69,11 @@ export const DashboardHome = () => {
     let totalCap = 0;
     let totalBooked = 0;
     monthEvents.forEach(e => {
-      totalCap += (e.capacity || 230);
-      const dayRes = allRes.filter(r => r.date === e.date && r.status !== 'CANCELLED');
-      totalBooked += dayRes.reduce((s, r) => s + r.partySize, 0);
+      if (e.type === 'SHOW') {
+        totalCap += (e.capacity || 230);
+        const dayRes = allRes.filter(r => r.date === e.date && r.status !== 'CANCELLED');
+        totalBooked += dayRes.reduce((s, r) => s + r.partySize, 0);
+      }
     });
     const occupancy = totalCap > 0 ? Math.round((totalBooked / totalCap) * 100) : 0;
 
@@ -91,7 +92,7 @@ export const DashboardHome = () => {
       const dStr = d.toISOString().split('T')[0];
       
       const event = allEvents.find(e => e.date === dStr);
-      if (event) {
+      if (event && event.type === 'SHOW') {
         const dayRes = allRes.filter(r => r.date === dStr && r.status !== 'CANCELLED');
         const booked = dayRes.reduce((s, r) => s + r.partySize, 0);
         const capacity = event.capacity || 230;
@@ -113,11 +114,13 @@ export const DashboardHome = () => {
 
     // 4. Operational View (Specific View Date)
     const todayRes = allRes.filter(r => r.date === viewDateStr && r.status !== 'CANCELLED');
+    const todayEvent = allEvents.find(e => e.date === viewDateStr);
+    
     setTodayStats({
       count: todayRes.reduce((s, r) => s + r.partySize, 0),
       dietary: todayRes.filter(r => r.notes.dietary).length,
       vip: todayRes.filter(r => r.packageType === 'premium').length,
-      event: allEvents.find(e => e.date === viewDateStr)
+      event: todayEvent
     });
   };
 

@@ -103,7 +103,8 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, currentRole,
         </div>
         
         {/* Scrollable Page Content */}
-        <main className="flex-grow overflow-y-auto bg-black p-4 lg:p-8 print:p-0 print:bg-white print:text-black print:overflow-visible custom-scrollbar pb-20">
+        {/* Increased bottom padding (pb-32) for mobile to avoid FAB overlap */}
+        <main className="flex-grow overflow-y-auto bg-black p-4 lg:p-8 print:p-0 print:bg-white print:text-black print:overflow-visible custom-scrollbar pb-32 lg:pb-20">
           <div className="max-w-7xl mx-auto animate-in fade-in duration-500 print:max-w-none print:mx-0">
             {children}
           </div>

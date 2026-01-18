@@ -6,6 +6,7 @@ import {
   ChevronLeft, ChevronRight, PieChart, Printer, Layers
 } from 'lucide-react';
 import { Button, Card, Badge, Input, ResponsiveDrawer } from '../UI';
+import { DestructiveActionModal } from '../UI/DestructiveActionModal';
 import { Reservation, BookingStatus, PaymentRecord } from '../../types';
 import { bookingRepo, saveData, STORAGE_KEYS } from '../../utils/storage';
 import { ResponsiveTable } from '../ResponsiveTable';
@@ -32,6 +33,10 @@ export const PaymentsManager = () => {
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState('FACTUUR');
   const [paymentType, setPaymentType] = useState<'DEPOSIT' | 'FINAL' | 'PARTIAL'>('PARTIAL');
+
+  // Batch Invoice State
+  const [showBatchConfirm, setShowBatchConfirm] = useState(false);
+  const [batchList, setBatchList] = useState<Reservation[]>([]);
 
   useEffect(() => {
     refreshData();
@@ -158,20 +163,24 @@ export const PaymentsManager = () => {
     const endStr = endOfWeek.toISOString().split('T')[0];
 
     // 2. Filter Reservations
-    const batchList = reservations.filter(r => 
+    const candidates = reservations.filter(r => 
         r.date >= startStr && 
         r.date <= endStr && 
         r.financials.paymentMethod === 'FACTUUR' // Only explicit invoices usually need printing
     );
 
-    if (batchList.length === 0) {
-        alert("Geen factuur-boekingen gevonden voor deze week.");
+    if (candidates.length === 0) {
+        undoManager.showError("Geen factuur-boekingen gevonden voor deze week.");
         return;
     }
 
-    if (confirm(`Wil je een PDF genereren voor ${batchList.length} boekingen van deze week?`)) {
-        printBatchInvoices(batchList);
-    }
+    setBatchList(candidates);
+    setShowBatchConfirm(true);
+  };
+
+  const executeBatchInvoice = () => {
+    printBatchInvoices(batchList);
+    setShowBatchConfirm(false);
   };
 
   // --- FILTERING & PAGINATION ---
@@ -478,6 +487,24 @@ export const PaymentsManager = () => {
           </Card>
         </div>
       )}
+
+      {/* Confirmation Modal for Batch Invoice */}
+      <DestructiveActionModal
+        isOpen={showBatchConfirm}
+        onClose={() => setShowBatchConfirm(false)}
+        onConfirm={executeBatchInvoice}
+        title="Batch Facturen Genereren"
+        description={
+            <div className="space-y-2">
+                <p>Je staat op het punt om <strong>{batchList.length}</strong> facturen te genereren voor deze week.</p>
+                <p className="text-sm text-slate-400">Dit opent een PDF in een nieuw venster om af te drukken of op te slaan.</p>
+            </div>
+        }
+        verificationText="CONFIRM"
+        requireVerification={false}
+        confirmButtonText="Genereren & Printen"
+      />
+
     </div>
   );
 };

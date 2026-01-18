@@ -13,6 +13,54 @@ export enum BookingStatus {
   NOSHOW = 'NOSHOW'
 }
 
+// ... (Existing types remain, adding Invoice specific types below) ...
+
+export type VatRate = 0 | 9 | 21;
+
+export interface InvoiceItem {
+  id: string;
+  description: string;
+  quantity: number;
+  unitPrice: number; // Incl VAT
+  vatRate: VatRate;
+  total: number; // Incl VAT
+  category?: 'ARRANGEMENT' | 'DRINK' | 'FOOD' | 'MERCH' | 'OTHER';
+  originalReservationItemId?: string; // Link back to booking line item
+}
+
+export interface Invoice {
+  id: string; // E.g. FAC-2024-001
+  reservationId?: string; // Optional link
+  customerId: string;
+  customerSnapshot: { // Snapshot at time of invoice
+    name: string;
+    companyName?: string;
+    address: string;
+    zip: string;
+    city: string;
+    vatNumber?: string; // BTW nummer
+    email: string;
+  };
+  items: InvoiceItem[];
+  totals: {
+    subtotalExcl: number;
+    vat9: number;
+    vat21: number;
+    totalIncl: number;
+  };
+  status: 'DRAFT' | 'SENT' | 'PAID' | 'OVERDUE' | 'CREDITED';
+  dates: {
+    created: string;
+    issued?: string;
+    due: string;
+    paid?: string;
+  };
+  notes?: string; // Internal
+  footerText?: string; // Public on PDF
+}
+
+// ... (Rest of existing types) ...
+
 export interface ShowType {
   id: string;
   name: string;
@@ -74,25 +122,6 @@ export interface ShowDefinition {
   profiles: ShowProfile[];
 }
 
-export interface EventDate {
-  date: string;
-  showId: string;
-  profileId?: string;
-  availability: Availability;
-  doorTime: string;
-  startTime?: string;
-  endTime?: string;
-  capacity?: number;
-  bookedCount?: number;
-  pricing?: {
-    standard?: number;
-    premium?: number;
-    addonPreDrink?: number;
-    addonAfterDrink?: number;
-  };
-  _rawEvent?: any; // Helper for V2 compatibility
-}
-
 export interface AddonSelection {
   id: string;
   quantity: number;
@@ -118,6 +147,7 @@ export interface Customer {
   lastName: string;
   email: string;
   phone: string;
+  phoneCode?: string; // NEW: +31, +32 etc.
   address?: string; // Legacy string
   street?: string; 
   houseNumber?: string;
@@ -127,7 +157,7 @@ export interface Customer {
   companyName?: string;
   vatNumber?: string;
   billingAddress?: Address;
-  billingInstructions?: string; 
+  billingInstructions?: string; // NEW: Notes for invoice
   isBusiness?: boolean;
   notes?: string; // NEW: Internal CRM notes
   noShowCount?: number; // NEW: Risk tracking
@@ -211,6 +241,8 @@ export interface Reservation {
   linkedBookingIds?: string[]; // NEW: Group Linking
   deletedAt?: string; // NEW: Soft delete timestamp
   tableId?: string; // NEW: Floor Plan Assignment
+  alternativeDate?: string; // NEW: Requested alternative date for businesses (Deprecated in UI but kept for type safety)
+  cancellationReason?: string; // NEW: Mandatory reason when cancelled
 }
 
 export interface WaitlistEntry {
@@ -349,7 +381,7 @@ export interface ShowEvent extends BaseEvent {
   profileId: string;
   status: Availability;
   capacity: number;
-  bookedCount: number;
+  bookedCount?: number; // Optional: Computed, not stored
   pricing?: {
     standard?: number;
     premium?: number;
@@ -405,7 +437,7 @@ export interface BlackoutEvent extends BaseEvent {
 
 export type CalendarEvent = ShowEvent | PrivateEvent | RehearsalEvent | BlackoutEvent;
 
-export type EmailCategory = 'BOOKING' | 'VOUCHER' | 'WAITLIST' | 'SYSTEM';
+export type EmailCategory = 'BOOKING' | 'VOUCHER' | 'WAITLIST' | 'INVOICE' | 'SYSTEM';
 export type EmailTemplateKey = 
   | 'BOOKING_REQUEST_RECEIVED' 
   | 'BOOKING_CONFIRMED' 
@@ -422,7 +454,9 @@ export type EmailTemplateKey =
   | 'VOUCHER_ORDER_PAID_VOUCHER_CREATED'
   | 'VOUCHER_DELIVERY_DIGITAL'
   | 'VOUCHER_DELIVERY_PHYSICAL_PICKUP_READY'
-  | 'VOUCHER_DELIVERY_PHYSICAL_SHIPPED';
+  | 'VOUCHER_DELIVERY_PHYSICAL_SHIPPED'
+  | 'INVOICE_SENT'
+  | 'INVOICE_REMINDER';
 
 export interface EmailTemplate {
   id: string;
@@ -511,11 +545,10 @@ export interface Task {
 export interface UndoRecord {
   id: string;
   actionType: string;
-  entityType: 'RESERVATION' | 'WAITLIST' | 'VOUCHER_ORDER' | 'VOUCHER' | 'CUSTOMER';
+  entityType: 'RESERVATION' | 'WAITLIST' | 'VOUCHER_ORDER' | 'VOUCHER' | 'CUSTOMER' | 'INVOICE';
   entityId: string;
   beforeSnapshot: any;
-  // If the action created new entities (e.g. converting waitlist creates reservation), track them here to delete on undo
-  createdEntities?: { type: 'RESERVATION' | 'VOUCHER'; id: string }[];
+  createdEntities?: { type: 'RESERVATION' | 'VOUCHER' | 'INVOICE'; id: string }[];
   expiresAt: number;
 }
 

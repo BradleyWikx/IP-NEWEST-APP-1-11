@@ -1,9 +1,9 @@
 
 import { 
   EmailTemplate, EmailLog, EmailTemplateKey, EmailCategory, 
-  Reservation, VoucherOrder, WaitlistEntry, ShowDefinition, EventDate
+  Reservation, VoucherOrder, WaitlistEntry, ShowDefinition, ShowEvent, Invoice
 } from '../types';
-import { emailTemplateRepo, emailLogRepo, showRepo, calendarRepo } from './storage';
+import { emailTemplateRepo, emailLogRepo, showRepo, getEvents } from './storage';
 import { logAuditAction } from './auditLogger';
 
 // --- Rendering Logic ---
@@ -32,7 +32,7 @@ export const renderTemplate = (
 // --- Context Building Helpers ---
 
 const getBookingContext = (booking: Reservation) => {
-  const events = calendarRepo.getLegacyEvents();
+  const events = getEvents(); // Returns ShowEvent[]
   const shows = showRepo.getAll();
   const event = events.find(e => e.date === booking.date);
   const show = shows.find(s => s.id === booking.showId);
@@ -48,8 +48,8 @@ const getBookingContext = (booking: Reservation) => {
     showName: show?.name || 'Inspiration Point Show',
     showDate: new Date(booking.date).toLocaleDateString('nl-NL'),
     showDateLong: new Date(booking.date).toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
-    showTime: event?.startTime || '19:30',
-    doorTime: event?.doorTime || '18:30',
+    showTime: event?.times.start || '19:30', // UPDATED
+    doorTime: event?.times.doorsOpen || '18:30', // UPDATED
     amountDue: (booking.financials.finalTotal || 0).toFixed(2),
     totalAmount: (booking.financials.total || 0).toFixed(2),
     packageName: booking.packageType === 'premium' ? 'Premium' : 'Standard',
@@ -81,6 +81,17 @@ const getVoucherOrderContext = (order: VoucherOrder) => {
   };
 };
 
+const getInvoiceContext = (invoice: Invoice) => {
+  return {
+    invoiceId: invoice.id,
+    amountDue: invoice.totals.totalIncl.toFixed(2),
+    dueDate: new Date(invoice.dates.due).toLocaleDateString('nl-NL'),
+    customerName: invoice.customerSnapshot.name,
+    companyName: invoice.customerSnapshot.companyName || '',
+    invoiceDate: new Date(invoice.dates.created).toLocaleDateString('nl-NL')
+  };
+};
+
 // --- Public API ---
 
 /**
@@ -90,7 +101,7 @@ const getVoucherOrderContext = (order: VoucherOrder) => {
  */
 export const triggerEmail = (
   key: EmailTemplateKey, 
-  entity: { type: 'RESERVATION' | 'VOUCHER_ORDER' | 'WAITLIST' | 'CUSTOMER', id: string, data: any },
+  entity: { type: 'RESERVATION' | 'VOUCHER_ORDER' | 'WAITLIST' | 'CUSTOMER' | 'INVOICE', id: string, data: any },
   extraContext: Record<string, any> = {}
 ): EmailLog | null => {
   const template = emailTemplateRepo.getAll().find(t => t.key === key);
@@ -121,6 +132,10 @@ export const triggerEmail = (
     const v = entity.data as VoucherOrder;
     context = getVoucherOrderContext(v);
     toEmail = v.customerEmail || '';
+  } else if (entity.type === 'INVOICE') {
+    const inv = entity.data as Invoice;
+    context = getInvoiceContext(inv);
+    toEmail = inv.customerSnapshot.email;
   }
 
   // Merge extra context (e.g. voucher codes)
@@ -208,6 +223,8 @@ export const getAvailableVariables = (category: EmailCategory): string[] => {
       return [...common, '{{orderId}}', '{{totalAmount}}', '{{itemCount}}', '{{deliveryMethod}}', '{{voucherCode}}', '{{voucherValue}}'];
     case 'WAITLIST':
       return [...common, '{{waitlistId}}', '{{date}}', '{{partySize}}'];
+    case 'INVOICE':
+      return ['{{invoiceId}}', '{{amountDue}}', '{{dueDate}}', '{{customerName}}', '{{companyName}}', '{{invoiceDate}}'];
     default:
       return common;
   }

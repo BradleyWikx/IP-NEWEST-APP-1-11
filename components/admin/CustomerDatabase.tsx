@@ -1,41 +1,55 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { 
   Users, Search, Mail, Phone, Calendar, 
-  ChevronRight, Star, AlertCircle, ShoppingBag, 
-  ArrowUpRight, Ticket, X, Edit3, Save, MapPin, 
-  Merge, RefreshCw, AlertTriangle, CheckCircle2, Trash2,
-  Clock, MessageSquare, DollarSign
+  ChevronRight, Star, Ticket, Edit3, MapPin, 
+  Merge, AlertTriangle, CheckCircle2, Trash2,
+  Clock, Euro, StickyNote, ArrowUpRight
 } from 'lucide-react';
 import { Button, Input, Card, Badge, ResponsiveDrawer } from '../UI';
 import { Customer, Reservation, BookingStatus } from '../../types';
-import { loadData, saveData, STORAGE_KEYS, customerRepo, bookingRepo, getAuditLogs, getEmailLogs } from '../../utils/storage';
+import { customerRepo, bookingRepo, getAuditLogs, getEmailLogs, saveData, STORAGE_KEYS } from '../../utils/storage';
 import { logAuditAction } from '../../utils/auditLogger';
 import { calculateCustomerMetrics, getCustomerSegments, getSegmentStyle, getSegmentLabel, CustomerSegment } from '../../utils/customerLogic';
 import { undoManager } from '../../utils/undoManager';
-import { formatGuestName } from '../../utils/formatters';
+import { formatGuestName, formatCurrency } from '../../utils/formatters';
+
+// --- INTERFACES ---
+
+interface CustomerProfile extends Customer {
+  totalBookings: number;
+  totalSpend: number;
+  averageSpend: number;
+  lastBookingDate: string | null;
+  history: Reservation[];
+  segments: CustomerSegment[];
+  rawTags: string[];
+}
 
 // --- TIMELINE COMPONENT ---
 
-const CustomerTimeline = ({ customerId, emails }: { customerId: string, emails: string[] }) => {
+const CustomerTimeline = ({ customerId, emails, history }: { customerId: string, emails: string[], history: Reservation[] }) => {
     const [events, setEvents] = useState<any[]>([]);
+    const navigate = useNavigate();
 
     useEffect(() => {
-        const bookings = bookingRepo.getAll(true).filter(r => r.customerId === customerId);
-        const audits = getAuditLogs().filter(l => l.entityId === customerId || (l.entityType === 'RESERVATION' && bookings.some(b => b.id === l.entityId)));
+        // Collect Systems Logs & Emails
+        // Note: history is passed as prop to avoid recalculating
+        const audits = getAuditLogs().filter(l => l.entityId === customerId || (l.entityType === 'RESERVATION' && history.some(b => b.id === l.entityId)));
         const emailLogs = getEmailLogs().filter(l => emails.includes(l.to));
         
-        // Normalize
+        // Normalize for timeline
         const timeline = [
-            ...bookings.map(b => ({
+            ...history.map(b => ({
                 id: b.id,
                 date: b.createdAt,
                 type: 'BOOKING',
                 title: `Boeking: ${new Date(b.date).toLocaleDateString()}`,
-                desc: `${b.partySize}p - ${b.status}`,
+                desc: `${b.partySize}p - ${b.status} - ${formatCurrency(b.financials.finalTotal)}`,
                 icon: Ticket,
-                color: 'blue'
+                color: b.status === 'CANCELLED' ? 'red' : 'emerald',
+                action: () => navigate(`/admin/reservations?open=${b.id}`)
             })),
             ...audits.map(a => ({
                 id: a.id,
@@ -58,23 +72,25 @@ const CustomerTimeline = ({ customerId, emails }: { customerId: string, emails: 
         ];
 
         setEvents(timeline.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-    }, [customerId, emails]);
+    }, [customerId, emails, history]);
 
     return (
         <div className="space-y-6 pl-4 border-l border-slate-800 ml-2">
             {events.map(ev => {
                 const Icon = ev.icon;
                 return (
-                    <div key={ev.id} className="relative pl-6">
-                        <div className={`absolute -left-[25px] p-1 rounded-full bg-slate-900 border-2 border-${ev.color}-500 text-${ev.color}-500`}>
+                    <div key={ev.id} className="relative pl-6 group">
+                        <div className={`absolute -left-[25px] p-1 rounded-full bg-slate-950 border-2 border-${ev.color}-500/50 text-${ev.color}-500 ring-4 ring-slate-950`}>
                             <Icon size={12} />
                         </div>
                         <div className="flex flex-col">
                             <span className="text-[10px] text-slate-500 font-mono mb-0.5">
-                                {new Date(ev.date).toLocaleString()}
+                                {new Date(ev.date).toLocaleString('nl-NL')}
                             </span>
-                            <span className="text-sm font-bold text-white">{ev.title}</span>
-                            <span className="text-xs text-slate-400">{ev.desc}</span>
+                            <span className={`text-sm font-bold ${ev.action ? 'text-white group-hover:text-amber-500 cursor-pointer' : 'text-slate-300'}`} onClick={ev.action}>
+                                {ev.title}
+                            </span>
+                            <span className="text-xs text-slate-500">{ev.desc}</span>
                         </div>
                     </div>
                 );
@@ -84,14 +100,7 @@ const CustomerTimeline = ({ customerId, emails }: { customerId: string, emails: 
     );
 };
 
-interface CustomerProfile extends Customer {
-  totalBookings: number;
-  totalSpend: number;
-  lastBookingDate: string | null;
-  history: Reservation[];
-  segments: CustomerSegment[]; // Replaced raw tags with computed segments
-  rawTags: string[]; // Keep legacy tags
-}
+// --- MAIN COMPONENT ---
 
 export const CustomerDatabase = () => {
   const [activeTab, setActiveTab] = useState<'LIST' | 'MAINTENANCE'>('LIST');
@@ -99,6 +108,7 @@ export const CustomerDatabase = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerProfile | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   
   // Edit Mode State
   const [isEditing, setIsEditing] = useState(false);
@@ -112,7 +122,7 @@ export const CustomerDatabase = () => {
     const rawCustomers = customerRepo.getAll();
     const reservations = bookingRepo.getAll();
 
-    // 1. Build Map of Customers (dedup by ID or Email)
+    // 1. Build Map of Customers (dedup by ID)
     const profileMap = new Map<string, CustomerProfile>();
 
     // Initial population from Customer list
@@ -121,6 +131,7 @@ export const CustomerDatabase = () => {
         ...c,
         totalBookings: 0,
         totalSpend: 0,
+        averageSpend: 0,
         lastBookingDate: null,
         history: [],
         segments: [],
@@ -128,12 +139,12 @@ export const CustomerDatabase = () => {
       });
     });
 
-    // 2. Aggregate Reservations
+    // 2. Aggregate Reservations (Attach to customers, create temp if missing)
     reservations.forEach((r) => {
       const res = r as any; 
       let profile = res.customerId ? profileMap.get(res.customerId) : undefined;
       
-      // If customer exists but only in reservation (not in seed list), create entry
+      // If customer exists but only in reservation (legacy data), create transient entry
       if (!profile && res.customer) {
         // Try finding by email match first to avoid dupes in this transient map
         const existingByEmail = Array.from(profileMap.values()).find(
@@ -160,6 +171,7 @@ export const CustomerDatabase = () => {
             notes: res.customer.notes,
             totalBookings: 0,
             totalSpend: 0,
+            averageSpend: 0,
             lastBookingDate: null,
             history: [],
             segments: [],
@@ -171,31 +183,38 @@ export const CustomerDatabase = () => {
 
       if (profile) {
         profile.history.push(res);
-        // Tag aggregation
+        // Basic Tag aggregation (dietary etc)
         if (res.notes?.dietary && !profile.rawTags.includes('DIETARY')) profile.rawTags.push('DIETARY');
-        if ((res.voucherCode || res.financials?.voucherCode) && !profile.rawTags.includes('VOUCHER')) profile.rawTags.push('VOUCHER');
       }
     });
 
     // 3. Compute Metrics & Segments
     const profiles = Array.from(profileMap.values()).map(p => {
-      // Sort history
+      // Sort history new -> old
       p.history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
       
       // Calculate Metrics
       const metrics = calculateCustomerMetrics(p.history);
       p.totalBookings = metrics.bookingCount;
       p.totalSpend = metrics.totalSpend;
+      p.averageSpend = metrics.averageSpend;
       p.lastBookingDate = metrics.lastBookingDate ? metrics.lastBookingDate.toISOString() : null;
       
       // Assign Segments
-      p.segments = getCustomerSegments(metrics);
-      if(p.notes?.includes('VIP')) p.segments.push('VIP'); // Legacy manual override check
+      // Check legacy notes for VIP override
+      const manualTags = p.notes?.includes('VIP') ? ['VIP'] : [];
+      p.segments = getCustomerSegments(metrics, manualTags);
 
       return p;
     });
 
-    const sorted = profiles.sort((a, b) => b.totalSpend - a.totalSpend);
+    // Default sort: Most recent activity
+    const sorted = profiles.sort((a, b) => {
+       const dateA = a.lastBookingDate ? new Date(a.lastBookingDate).getTime() : 0;
+       const dateB = b.lastBookingDate ? new Date(b.lastBookingDate).getTime() : 0;
+       return dateB - dateA;
+    });
+
     setCustomers(sorted);
 
     // Deep Linking: Auto Select
@@ -207,12 +226,21 @@ export const CustomerDatabase = () => {
     }
   };
 
+  // --- ACTIONS ---
+
   const handleSaveCustomer = () => {
     if (!editForm || !selectedCustomer) return;
-    customerRepo.update(editForm.id, () => editForm);
+    
+    // Check if new (transient) or existing
+    const existing = customerRepo.getById(editForm.id);
+    if (existing) {
+        customerRepo.update(editForm.id, () => editForm);
+    } else {
+        customerRepo.add(editForm);
+    }
     
     logAuditAction('UPDATE_CUSTOMER', 'CUSTOMER', editForm.id, {
-      description: 'Customer details updated',
+      description: 'Customer details updated manually',
       after: editForm
     });
 
@@ -239,18 +267,19 @@ export const CustomerDatabase = () => {
     }
   };
 
-  const filteredCustomers = customers.filter(c => 
-    c.lastName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    c.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.companyName?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const startNewBooking = () => {
+      if (!selectedCustomer) return;
+      navigate('/admin/reservations/new');
+      // In a real app, we'd pass the customer ID to pre-fill the wizard
+      // Currently the wizard supports prefill via state if we implement it there
+  };
 
   // --- DUPLICATE LOGIC ---
   const potentialDuplicates = useMemo(() => {
     const grouped = new Map<string, CustomerProfile[]>();
     customers.forEach(c => {
         const key = c.email.toLowerCase().trim();
-        if (!key) return;
+        if (!key || key.includes('placeholder')) return;
         if (!grouped.has(key)) grouped.set(key, []);
         grouped.get(key)!.push(c);
     });
@@ -261,7 +290,7 @@ export const CustomerDatabase = () => {
   }, [customers]);
 
   const handleMerge = (targetId: string, sourceId: string) => {
-    if (!confirm("Weet je zeker dat je deze klanten wilt samenvoegen? Dit kan niet ongedaan worden gemaakt.")) return;
+    if (!confirm("Weet je zeker dat je deze klanten wilt samenvoegen? Alle boekingen worden overgezet.")) return;
 
     const sourceCustomer = customers.find(c => c.id === sourceId);
     const targetCustomer = customers.find(c => c.id === targetId);
@@ -274,7 +303,7 @@ export const CustomerDatabase = () => {
         bookingRepo.update(res.id, (r) => ({
             ...r,
             customerId: targetId,
-            customer: { ...targetCustomer } // Update embedded snapshot
+            customer: { ...targetCustomer, id: targetId } // Update embedded snapshot
         }));
     });
 
@@ -290,22 +319,35 @@ export const CustomerDatabase = () => {
     refreshData();
   };
 
+  // --- FILTERING ---
+  const filteredCustomers = customers.filter(c => 
+    c.lastName.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    c.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    c.companyName?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
   return (
     <div className="h-full flex flex-col space-y-6">
       {/* Header */}
       <div className="flex justify-between items-end">
         <div>
-          <h2 className="text-3xl font-serif text-white">Klantenbestand</h2>
-          <p className="text-slate-500 text-sm">CRM en boekingshistorie.</p>
+          <h2 className="text-3xl font-serif text-white">Klantenbestand v2.0</h2>
+          <p className="text-slate-500 text-sm">CRM, geschiedenis & segmentatie.</p>
+        </div>
+        <div className="flex space-x-2">
+            <Button variant="secondary" onClick={() => setActiveTab('MAINTENANCE')} className="flex items-center text-xs">
+                {potentialDuplicates.length > 0 ? (
+                    <span className="flex items-center text-amber-500"><AlertTriangle size={14} className="mr-1"/> {potentialDuplicates.length} Duplicaten</span>
+                ) : (
+                    <span>Onderhoud</span>
+                )}
+            </Button>
         </div>
       </div>
 
       <div className="flex space-x-1 border-b border-slate-800">
         <button onClick={() => setActiveTab('LIST')} className={`px-6 py-3 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'LIST' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Lijst</button>
-        <button onClick={() => setActiveTab('MAINTENANCE')} className={`px-6 py-3 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'MAINTENANCE' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>
-            Onderhoud
-            {potentialDuplicates.length > 0 && <span className="ml-2 bg-red-500 text-white px-1.5 py-0.5 rounded-full text-[9px]">{potentialDuplicates.length}</span>}
-        </button>
+        <button onClick={() => setActiveTab('MAINTENANCE')} className={`px-6 py-3 text-xs font-bold uppercase tracking-widest border-b-2 transition-colors ${activeTab === 'MAINTENANCE' ? 'border-amber-500 text-white' : 'border-transparent text-slate-500 hover:text-slate-300'}`}>Onderhoud</button>
       </div>
 
       {activeTab === 'LIST' && (
@@ -325,33 +367,38 @@ export const CustomerDatabase = () => {
             <div className="flex-grow bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden flex flex-col">
                 <div className="overflow-x-auto flex-grow">
                 <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-950 text-slate-500 text-[10px] uppercase tracking-widest font-bold sticky top-0">
+                    <thead className="bg-slate-950 text-slate-500 text-[10px] uppercase tracking-widest font-bold sticky top-0 border-b border-slate-800">
                     <tr>
                         <th className="p-4">Naam / Bedrijf</th>
                         <th className="p-4">Contact</th>
                         <th className="p-4 text-center">Boekingen</th>
-                        <th className="p-4 text-right">Totaal Besteed</th>
-                        <th className="p-4">Segmenten</th>
+                        <th className="p-4 text-right">LTV (Spend)</th>
+                        <th className="p-4">Status</th>
                         <th className="p-4 text-right">Actie</th>
                     </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800">
                     {filteredCustomers.length === 0 ? <tr><td colSpan={6} className="p-8 text-center text-slate-500">Geen klanten gevonden.</td></tr> :
                     filteredCustomers.map(c => (
-                        <tr key={c.id} className="hover:bg-slate-800/50 cursor-pointer group" onClick={() => { setSelectedCustomer(c); setIsEditing(false); }}>
+                        <tr key={c.id} className="hover:bg-slate-800/50 cursor-pointer group transition-colors" onClick={() => { setSelectedCustomer(c); setIsEditing(false); }}>
                         <td className="p-4">
-                            <div className="font-bold text-white">{formatGuestName(c.firstName, c.lastName)}</div>
-                            {c.isBusiness && <div className="text-xs text-amber-500 uppercase font-bold">{c.companyName}</div>}
+                            <div className="font-bold text-white text-base">{formatGuestName(c.firstName, c.lastName)}</div>
+                            {c.companyName && (
+                                <div className="text-xs text-blue-400 font-bold flex items-center mt-0.5">
+                                    <ArrowUpRight size={10} className="mr-1"/> {c.companyName}
+                                </div>
+                            )}
                         </td>
                         <td className="p-4">
                             <div className="text-slate-300 flex items-center text-xs mb-1"><Mail size={12} className="mr-2 opacity-50"/>{c.email}</div>
-                            <div className="text-slate-400 flex items-center text-xs"><Phone size={12} className="mr-2 opacity-50"/>{c.phone}</div>
+                            <div className="text-slate-400 flex items-center text-xs"><Phone size={12} className="mr-2 opacity-50"/>{c.phone || '-'}</div>
                         </td>
                         <td className="p-4 text-center">
-                            <span className="font-bold text-white bg-slate-800 px-2 py-1 rounded-full text-xs">{c.totalBookings}</span>
+                            <span className="font-bold text-white bg-slate-800 px-2 py-1 rounded-lg text-xs">{c.totalBookings}</span>
+                            {c.lastBookingDate && <div className="text-[10px] text-slate-500 mt-1">{new Date(c.lastBookingDate).toLocaleDateString()}</div>}
                         </td>
                         <td className="p-4 text-right text-slate-300 font-mono">
-                            €{c.totalSpend.toLocaleString()}
+                            {formatCurrency(c.totalSpend)}
                         </td>
                         <td className="p-4">
                             <div className="flex gap-1 flex-wrap">
@@ -370,6 +417,9 @@ export const CustomerDatabase = () => {
                     ))}
                     </tbody>
                 </table>
+                </div>
+                <div className="p-3 border-t border-slate-800 bg-slate-950 text-xs text-slate-500 text-center">
+                    {filteredCustomers.length} klanten getoond
                 </div>
             </div>
         </>
@@ -436,21 +486,25 @@ export const CustomerDatabase = () => {
       <ResponsiveDrawer
         isOpen={!!selectedCustomer}
         onClose={() => setSelectedCustomer(null)}
-        title={isEditing ? "Klant Bewerken" : "Klant Details"}
-        widthClass="md:w-[800px]"
+        title={isEditing ? "Klant Bewerken" : "Klant Profiel"}
+        widthClass="md:w-[900px]"
       >
         {selectedCustomer && (
           <div className="space-y-8 pb-12">
             
-            {/* Action Header inside Drawer */}
+            {/* Header / Action Bar */}
             {!isEditing && (
                 <div className="flex justify-between items-start border-b border-slate-800 pb-6">
                     <div>
-                        <div className="flex items-center space-x-2 mb-1">
-                            <h2 className="text-2xl font-serif text-white">{selectedCustomer.salutation || 'Dhr.'} {formatGuestName(selectedCustomer.firstName, selectedCustomer.lastName)}</h2>
-                            {selectedCustomer.segments.includes('VIP') && <Star size={16} className="text-amber-500 fill-amber-500" />}
+                        <div className="flex items-center space-x-3 mb-1">
+                            <h2 className="text-3xl font-serif text-white">{selectedCustomer.salutation || 'Dhr.'} {formatGuestName(selectedCustomer.firstName, selectedCustomer.lastName)}</h2>
+                            {selectedCustomer.companyName && (
+                                <span className="px-2 py-1 bg-blue-900/20 text-blue-400 text-xs font-bold rounded border border-blue-900/50 uppercase">
+                                    {selectedCustomer.companyName}
+                                </span>
+                            )}
                         </div>
-                        <div className="flex gap-2 mt-2">
+                        <div className="flex gap-2 mt-3">
                             {selectedCustomer.segments.map(seg => (
                                 <span key={seg} className={`px-2 py-0.5 rounded border text-[9px] font-bold uppercase ${getSegmentStyle(seg)}`}>
                                     {getSegmentLabel(seg)}
@@ -459,10 +513,13 @@ export const CustomerDatabase = () => {
                         </div>
                     </div>
                     <div className="flex gap-2">
-                        <Button onClick={() => { setEditForm(selectedCustomer); setIsEditing(true); }} variant="secondary" className="h-8 text-xs">
+                        <Button onClick={startNewBooking} className="bg-emerald-600 hover:bg-emerald-700 text-xs h-9">
+                            <Ticket size={14} className="mr-2"/> Nieuwe Boeking
+                        </Button>
+                        <Button onClick={() => { setEditForm(selectedCustomer); setIsEditing(true); }} variant="secondary" className="h-9 text-xs">
                             <Edit3 size={14} className="mr-2"/> Bewerken
                         </Button>
-                        <Button onClick={handleDeleteCustomer} variant="ghost" className="h-8 text-xs text-red-500 hover:bg-red-900/20 px-2">
+                        <Button onClick={handleDeleteCustomer} variant="ghost" className="h-9 w-9 p-0 text-red-500 hover:bg-red-900/20">
                             <Trash2 size={14} />
                         </Button>
                     </div>
@@ -504,51 +561,58 @@ export const CustomerDatabase = () => {
                     </div>
                  </div>
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 h-full">
                     
-                    {/* Left: Info */}
-                    <div className="space-y-6">
+                    {/* Left: Info (4 cols) */}
+                    <div className="lg:col-span-4 space-y-6">
                        {/* Quick Stats */}
-                       <div className="grid grid-cols-3 gap-3">
-                          <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 text-center">
+                       <div className="grid grid-cols-2 gap-3">
+                          <div className="p-4 bg-slate-900 rounded-xl border border-slate-800 text-center">
                             <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Boekingen</p>
-                            <p className="text-lg font-bold text-white">{selectedCustomer.totalBookings}</p>
+                            <p className="text-2xl font-serif text-white">{selectedCustomer.totalBookings}</p>
                           </div>
-                          <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 text-center">
-                            <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Omzet</p>
-                            <p className="text-lg font-bold text-emerald-500">€{selectedCustomer.totalSpend.toLocaleString()}</p>
+                          <div className="p-4 bg-slate-900 rounded-xl border border-slate-800 text-center">
+                            <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">LTV</p>
+                            <p className="text-2xl font-serif text-emerald-500">{formatCurrency(selectedCustomer.totalSpend)}</p>
                           </div>
-                          <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 text-center">
-                            <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Laatste</p>
-                            <p className="text-xs font-bold text-white mt-1">{selectedCustomer.lastBookingDate ? new Date(selectedCustomer.lastBookingDate).toLocaleDateString() : '-'}</p>
+                          <div className="col-span-2 p-3 bg-slate-900 rounded-xl border border-slate-800 flex justify-between items-center px-4">
+                             <span className="text-[10px] text-slate-500 font-bold uppercase">Gem. Besteding</span>
+                             <span className="font-mono text-white">{formatCurrency(selectedCustomer.averageSpend)}</span>
+                          </div>
+                          <div className="col-span-2 p-3 bg-slate-900 rounded-xl border border-slate-800 flex justify-between items-center px-4">
+                             <span className="text-[10px] text-slate-500 font-bold uppercase">Laatste Bezoek</span>
+                             <span className="font-mono text-white text-xs">{selectedCustomer.lastBookingDate ? new Date(selectedCustomer.lastBookingDate).toLocaleDateString() : '-'}</span>
                           </div>
                        </div>
 
-                       <div className="space-y-4 text-sm">
+                       <div className="space-y-4 text-sm bg-slate-900/50 p-4 rounded-xl border border-slate-800">
+                           <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2">Contact Info</h4>
                            <div className="flex items-center space-x-3 text-slate-300">
-                                <Mail size={16} className="text-slate-500" /> <span>{selectedCustomer.email}</span>
+                                <Mail size={16} className="text-slate-500 shrink-0" /> <span className="truncate">{selectedCustomer.email}</span>
                            </div>
                            <div className="flex items-center space-x-3 text-slate-300">
-                                <Phone size={16} className="text-slate-500" /> <span>{selectedCustomer.phone}</span>
+                                <Phone size={16} className="text-slate-500 shrink-0" /> <span>{selectedCustomer.phone || '-'}</span>
                            </div>
                            <div className="flex items-center space-x-3 text-slate-300">
-                                <MapPin size={16} className="text-slate-500" /> 
+                                <MapPin size={16} className="text-slate-500 shrink-0" /> 
                                 <span>{selectedCustomer.street} {selectedCustomer.houseNumber}, {selectedCustomer.city}</span>
                            </div>
                        </div>
 
                        {selectedCustomer.notes && (
                          <div className="p-4 bg-amber-900/10 border border-amber-900/30 rounded-xl">
-                           <h4 className="text-xs font-bold text-amber-500 uppercase mb-2">Interne Notities</h4>
+                           <h4 className="text-xs font-bold text-amber-500 uppercase mb-2 flex items-center"><StickyNote size={12} className="mr-1"/> Interne Notities</h4>
                            <p className="text-sm text-amber-100 whitespace-pre-wrap">{selectedCustomer.notes}</p>
                          </div>
                        )}
                     </div>
 
-                    {/* Right: Interactive Timeline */}
-                    <div className="border-l border-slate-800 pl-6 -ml-6 md:pl-0 md:ml-0 md:border-l-0">
-                       <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Tijdlijn Interacties</h3>
-                       <CustomerTimeline customerId={selectedCustomer.id} emails={[selectedCustomer.email]} />
+                    {/* Right: Interactive Timeline (8 cols) */}
+                    <div className="lg:col-span-8 border-t lg:border-t-0 lg:border-l border-slate-800 pt-6 lg:pt-0 lg:pl-8">
+                       <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-6 flex items-center">
+                           <Clock size={14} className="mr-2"/> Tijdlijn Interacties
+                       </h3>
+                       <CustomerTimeline customerId={selectedCustomer.id} emails={[selectedCustomer.email]} history={selectedCustomer.history} />
                     </div>
                 </div>
             )}

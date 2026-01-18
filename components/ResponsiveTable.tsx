@@ -3,7 +3,7 @@ import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { Card } from './UI';
 
 interface Column<T> {
-  header: string;
+  header: React.ReactNode; // Changed from string to allow Checkboxes
   accessor: (item: T) => React.ReactNode;
   className?: string; // For hiding on mobile e.g., "hidden md:table-cell"
 }
@@ -71,22 +71,24 @@ export const ResponsiveTable = <T extends any>({
   }, [isLoading, isVirtual]);
 
   // Virtualization Logic
-  const { virtualItems, totalHeight, paddingTop, paddingBottom, isDesktop } = useMemo(() => {
-    if (!isVirtual || data.length === 0) {
-      return { virtualItems: data, totalHeight: 0, paddingTop: 0, paddingBottom: 0, isDesktop: true };
+  const { virtualItems, paddingTop, paddingBottom, isDesktop } = useMemo(() => {
+    // Determine simplified breakpoint
+    const isDesk = typeof window !== 'undefined' ? window.innerWidth >= 768 : true; 
+
+    // OPTIMIZATION: If list is small (< 50), disable virtual logic to prevent UX glitches
+    // This ensures users always see the full list for typical day-to-day usage without scroll popping
+    if (!isVirtual || data.length === 0 || data.length <= 50) {
+      return { virtualItems: data, paddingTop: 0, paddingBottom: 0, isDesktop: isDesk };
     }
 
-    // Determine simplified breakpoint (In real app, use useMediaQuery hook)
-    const isDesk = window.innerWidth >= 768; 
     const itemHeight = isDesk ? ROW_HEIGHT_DESKTOP : ROW_HEIGHT_MOBILE;
     
-    const totalH = data.length * itemHeight;
     const startIndex = Math.floor(scrollTop / itemHeight);
     
-    // Buffer: Render 5 extra items above and below to prevent white flashes
-    const effectiveStart = Math.max(0, startIndex - 5);
-    const visibleCount = containerHeight > 0 ? Math.ceil(containerHeight / itemHeight) : 10; // Fallback to 10 if height not ready
-    const effectiveEnd = Math.min(data.length, startIndex + visibleCount + 5);
+    // Buffer: Render 10 extra items above and below (Increased from 5)
+    const effectiveStart = Math.max(0, startIndex - 10);
+    const visibleCount = containerHeight > 0 ? Math.ceil(containerHeight / itemHeight) : 15; 
+    const effectiveEnd = Math.min(data.length, startIndex + visibleCount + 10);
 
     const items = data.slice(effectiveStart, effectiveEnd);
     const topPad = effectiveStart * itemHeight;
@@ -94,7 +96,6 @@ export const ResponsiveTable = <T extends any>({
 
     return { 
       virtualItems: items, 
-      totalHeight: totalH, 
       paddingTop: topPad, 
       paddingBottom: bottomPad,
       isDesktop: isDesk
@@ -116,7 +117,7 @@ export const ResponsiveTable = <T extends any>({
   const Container = isVirtual ? 'div' : React.Fragment;
   const containerProps = isVirtual ? {
     ref: containerRef,
-    className: "overflow-y-auto custom-scrollbar border border-slate-800 rounded-2xl bg-slate-900",
+    className: "overflow-y-auto custom-scrollbar border border-slate-800 rounded-2xl bg-slate-900 relative",
     style: { height: virtualHeight }
   } : {};
 
@@ -136,7 +137,7 @@ export const ResponsiveTable = <T extends any>({
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800 text-sm">
-              {isVirtual && paddingTop > 0 && (
+              {paddingTop > 0 && (
                 <tr><td colSpan={columns.length} style={{ height: paddingTop }} /></tr>
               )}
               
@@ -145,7 +146,7 @@ export const ResponsiveTable = <T extends any>({
                   key={keyExtractor(item)} 
                   onClick={() => onRowClick && onRowClick(item)}
                   className={`group transition-colors ${onRowClick ? 'cursor-pointer hover:bg-slate-800/50' : ''}`}
-                  style={{ height: isVirtual ? ROW_HEIGHT_DESKTOP : undefined }}
+                  style={{ height: isVirtual && data.length > 50 ? ROW_HEIGHT_DESKTOP : undefined }}
                 >
                   {columns.map((col, idx) => (
                     <td key={idx} className={`p-4 ${col.className || ''}`}>
@@ -155,7 +156,7 @@ export const ResponsiveTable = <T extends any>({
                 </tr>
               ))}
 
-              {isVirtual && paddingBottom > 0 && (
+              {paddingBottom > 0 && (
                 <tr><td colSpan={columns.length} style={{ height: paddingBottom }} /></tr>
               )}
             </tbody>
@@ -165,7 +166,7 @@ export const ResponsiveTable = <T extends any>({
 
       {/* Mobile Card View */}
       <div className="md:hidden space-y-4 p-1">
-        {isVirtual && <div style={{ height: paddingTop }} />}
+        {paddingTop > 0 && <div style={{ height: paddingTop }} />}
         
         {virtualItems.map((item) => (
           <Card 
@@ -191,7 +192,7 @@ export const ResponsiveTable = <T extends any>({
           </Card>
         ))}
 
-        {isVirtual && <div style={{ height: paddingBottom }} />}
+        {paddingBottom > 0 && <div style={{ height: paddingBottom }} />}
       </div>
     </Container>
   );

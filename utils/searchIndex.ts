@@ -1,4 +1,3 @@
-
 import { 
   bookingRepo,
   getCustomers, 
@@ -116,11 +115,11 @@ export const buildSearchIndex = (): SearchItem[] => {
         id: `evt-${e.date}`,
         category: 'EVENT',
         title: show.name,
-        subtitle: `${dateStr} • ${e.startTime}`,
-        keywords: [e.date, show.name, e.availability, 'show', 'event'],
+        subtitle: `${dateStr} • ${e.times.start}`,
+        keywords: [e.date, show.name, e.status, 'show', 'event'],
         link: '/admin/calendar',
         actionId: e.date, // Calendar uses dateStr to find event
-        status: e.availability
+        status: e.status
       });
     });
 

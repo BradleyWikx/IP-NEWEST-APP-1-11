@@ -8,11 +8,11 @@ import { Card, Button } from '../UI';
 import { ImportWizard } from './ImportWizard';
 import { ImportSchemaField } from '../../utils/csvHelpers';
 import { 
-  customerRepo, bookingRepo, calendarRepo, showRepo, 
+  customerRepo, bookingRepo, getEvents, showRepo, 
   saveData, STORAGE_KEYS 
 } from '../../utils/storage';
 import { logAuditAction } from '../../utils/auditLogger';
-import { Customer, Reservation, BookingStatus, AdminPriceOverride } from '../../types';
+import { Customer, Reservation, BookingStatus, AdminPriceOverride, ShowEvent } from '../../types';
 import { calculateBookingTotals, getEffectivePricing } from '../../utils/pricing';
 import { generateTemplate } from '../../utils/templateGenerator';
 
@@ -123,7 +123,7 @@ export const DataImporter = () => {
   };
 
   const handleReservationImport = async (data: any[]) => {
-    const events = calendarRepo.getLegacyEvents(); // or getEvents()
+    const events = getEvents(); // Returns ShowEvent[]
     const shows = showRepo.getAll();
     const customers = customerRepo.getAll();
     const emailMap = new Map(customers.map(c => [c.email.toLowerCase(), c]));
@@ -160,8 +160,6 @@ export const DataImporter = () => {
     for (const [idx, row] of data.entries()) {
       // 1. Validate Event
       // Ensure date matches an existing SHOW event
-      const event = events.find(e => e.date === row.date && e.availability !== 'CLOSED'); // Or allow closed for admin import? 
-      // Let's be strict: Needs to be a SHOW type, availability check optional for admin import but event must exist.
       const rawEvent = events.find(e => e.date === row.date);
       
       if (!rawEvent) {
@@ -299,7 +297,7 @@ export const DataImporter = () => {
         },
         adminPriceOverride: adminOverride,
         optionExpiresAt: row.optionExpiresAt ? new Date(row.optionExpiresAt).toISOString() : undefined,
-        startTime: rawEvent.startTime
+        startTime: rawEvent.times.start
       };
 
       newReservations.push(reservation);

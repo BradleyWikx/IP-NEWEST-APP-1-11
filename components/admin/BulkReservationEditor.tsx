@@ -6,7 +6,7 @@ import {
   Copy, X, Check, Building2, MapPin, Phone, Mail, User, AlertCircle, Wine
 } from 'lucide-react';
 import { Button, Input, Card } from '../UI';
-import { Reservation, ShowDefinition, EventDate, BookingStatus, Customer } from '../../types';
+import { Reservation, ShowDefinition, ShowEvent, BookingStatus, Customer } from '../../types';
 import { bookingRepo, customerRepo } from '../../utils/storage';
 import { calculateBookingTotals, getEffectivePricing } from '../../utils/pricing';
 import { MerchandisePicker, MerchandiseSummaryList } from '../MerchandisePicker';
@@ -16,7 +16,7 @@ import { MOCK_ADDONS } from '../../mock/data';
 const DIETARY_OPTIONS = ['Glutenvrij', 'Lactosevrij', 'Notenallergie', 'Vegetarisch', 'Veganistisch', 'Geen Vis', 'Halal'];
 
 interface BulkEditorProps {
-  event: EventDate;
+  event: ShowEvent;
   show: ShowDefinition;
   onClose: () => void;
   onSuccess: () => void;
@@ -294,7 +294,7 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
           celebrationText: draft.celebrationText,
           internal: 'Bulk Entry'
         },
-        startTime: event.startTime
+        startTime: event.times.start
       };
 
       newReservations.push(res);
@@ -330,7 +330,7 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
             <span className="text-amber-500 mr-2">{new Date(event.date).toLocaleDateString()}</span> 
             Bulk Invoer
           </h2>
-          <p className="text-slate-500 text-xs">{show.name} • {event.startTime}</p>
+          <p className="text-slate-500 text-xs">{show.name} • {event.times.start}</p>
         </div>
         <div className="flex space-x-2">
           <Button variant="ghost" onClick={onClose} className="h-8 text-xs">Annuleren</Button>

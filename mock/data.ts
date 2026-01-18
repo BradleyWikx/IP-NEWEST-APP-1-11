@@ -75,15 +75,4 @@ export const MOCK_MERCHANDISE: (MerchandiseItem & { description: string, active:
 ];
 
 // --- TRANSACTIONAL MOCK DATA (REMOVED) ---
-
-export type Availability = 'OPEN' | 'CLOSED' | 'WAITLIST';
-
-export interface EventDate {
-  date: string; 
-  showId: string;
-  availability: Availability;
-  doorTime: string;
-}
-
-export const MOCK_EVENT_DATES: EventDate[] = [];
 export const MOCK_RESERVATIONS = [];

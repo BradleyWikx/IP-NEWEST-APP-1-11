@@ -1,12 +1,12 @@
 
 import { 
-  ShowDefinition, EventDate, Reservation, Customer, 
+  ShowDefinition, Reservation, Customer, 
   WaitlistEntry, Voucher, VoucherOrder, MerchandiseItem, 
   ChangeRequest, Subscriber, AuditLogEntry, VoucherSaleConfig,
   CalendarEvent, ShowEvent, EmailTemplate, EmailLog,
   AdminNotification, NotificationType, NotificationSeverity,
   Task, TaskType, TaskStatus, PromoCodeRule, AdminNote,
-  BookingStatus
+  BookingStatus, Invoice
 } from '../types';
 import { logAuditAction } from './auditLogger';
 
@@ -29,7 +29,8 @@ export const KEYS = {
   EMAIL_TEMPLATES: 'grand_stage_email_templates',
   EMAIL_LOGS: 'grand_stage_email_logs',
   PROMOS: 'grand_stage_promos', 
-  ADMIN_NOTES: 'grand_stage_admin_notes'
+  ADMIN_NOTES: 'grand_stage_admin_notes',
+  INVOICES: 'grand_stage_invoices' // NEW
 };
 
 // Helper to simulate network delay
@@ -94,11 +95,11 @@ class Repository<T extends { id?: string; code?: string } | any> {
     }
   }
 
-  // --- Async Methods (Future Proofing) ---
-  // These simulate API calls with latency and error handling
+  // --- Async Methods (Optimized) ---
+  // Delays removed for writes to prevent race conditions in this demo architecture
 
   async getAllAsync(includeArchived: boolean = false): Promise<T[]> {
-    await delay(300 + Math.random() * 200); // Simulate 300-500ms latency
+    await delay(300 + Math.random() * 200); // Keep read delay for realism
     return this.getAll(includeArchived);
   }
 
@@ -108,17 +109,17 @@ class Repository<T extends { id?: string; code?: string } | any> {
   }
 
   async addAsync(item: T): Promise<void> {
-    await delay(400);
+    // No delay on write
     this.add(item);
   }
 
   async updateAsync(id: string, updater: (item: T) => T): Promise<void> {
-    await delay(400);
+    // No delay on write
     this.update(id, updater);
   }
 
   async deleteAsync(id: string): Promise<void> {
-    await delay(400);
+    // No delay on write
     this.delete(id);
   }
 }
@@ -219,7 +220,7 @@ class BookingRepository extends Repository<Reservation> {
   }
 
   async deleteAsync(id: string): Promise<void> {
-    await delay(400);
+    // No delay
     this.delete(id);
   }
 
@@ -264,26 +265,6 @@ class CalendarRepository extends Repository<CalendarEvent> {
   constructor() {
     super(KEYS.CALENDAR_EVENTS);
   }
-  
-  getLegacyEvents(): EventDate[] {
-    const all = this.getAll();
-    return all.filter(e => e.type === 'SHOW').map(e => {
-        const s = e as ShowEvent;
-        return {
-          date: s.date,
-          showId: s.showId,
-          profileId: s.profileId,
-          availability: s.status,
-          doorTime: s.times?.doorsOpen || '18:00',
-          startTime: s.times?.start || '',
-          endTime: s.times?.end,
-          capacity: s.capacity,
-          bookedCount: s.bookedCount,
-          pricing: s.pricing,
-          _rawEvent: s
-        };
-    });
-  }
 }
 
 // --- Settings Repository ---
@@ -295,7 +276,7 @@ class SettingsRepository {
     return {
       isEnabled: true,
       products: [],
-      freeAmount: { enabled: true, min: 10, max: 500, step: 5 },
+      freeAmount: { enabled: true, min: 50, max: 1000, step: 1 }, // UPDATED DEFAULT
       bundling: { allowCombinedIssuance: true },
       delivery: { pickup: { enabled: true }, shipping: { enabled: true, fee: 4.95 }, digitalFee: 2.50 }
     };
@@ -346,11 +327,12 @@ export const promoRepo = new Repository<PromoCodeRule>(KEYS.PROMOS);
 export const notesRepo = new Repository<AdminNote>(KEYS.ADMIN_NOTES);
 export const tasksRepo = new TasksRepository();
 export const settingsRepo = new SettingsRepository();
+export const invoiceRepo = new Repository<Invoice>(KEYS.INVOICES); // NEW
 
 // --- Exported Getters ---
 export const getShowDefinitions = () => showRepo.getAll();
 export const getCalendarEvents = () => calendarRepo.getAll();
-export const getEvents = () => calendarRepo.getLegacyEvents();
+export const getEvents = (): ShowEvent[] => calendarRepo.getAll().filter(e => e.type === 'SHOW') as ShowEvent[];
 export const getReservations = () => bookingRepo.getAll();
 export const getCustomers = () => customerRepo.getAll();
 export const getWaitlist = () => waitlistRepo.getAll();
@@ -366,6 +348,7 @@ export const getPromoRules = () => promoRepo.getAll();
 export const getNotifications = () => notificationsRepo.getAll();
 export const getTasks = () => tasksRepo.getAll();
 export const getNotes = () => notesRepo.getAll();
+export const getInvoices = () => invoiceRepo.getAll(); // NEW
 export const getShows = getShowDefinitions;
 
 // --- Helpers ---

@@ -12,8 +12,8 @@ import {
   ChevronLeft, ChevronRight, Check, ListPlus, FileText, DollarSign, Settings,
   List, Clock, XCircle, MoreHorizontal, Mail, UserPlus, Eye, PieChart, Filter
 } from 'lucide-react';
-import { EventDate, ShowDefinition, ShowEvent, CalendarEvent, EventType, RehearsalEvent, PrivateEvent, BlackoutEvent, PrivateEventPreferences, Reservation, WaitlistEntry, BookingStatus } from '../../types';
-import { getShowDefinitions, getCalendarEvents, saveData, STORAGE_KEYS, calendarRepo, bookingRepo, waitlistRepo } from '../../utils/storage';
+import { ShowDefinition, ShowEvent, CalendarEvent, EventType, RehearsalEvent, PrivateEvent, BlackoutEvent, PrivateEventPreferences, Reservation, WaitlistEntry, BookingStatus } from '../../types';
+import { getShowDefinitions, getCalendarEvents, saveData, STORAGE_KEYS, calendarRepo, bookingRepo, waitlistRepo, getShows } from '../../utils/storage';
 import { logAuditAction } from '../../utils/auditLogger';
 import { triggerEmail } from '../../utils/emailEngine';
 import { PreferencesForm } from './PreferencesForm';
@@ -22,6 +22,8 @@ import { toLocalISOString } from '../../utils/dateHelpers';
 import { undoManager } from '../../utils/undoManager';
 import { WaitlistModal } from '../WaitlistModal';
 import { CalendarBulkWizard } from './CalendarBulkWizard';
+import { DestructiveActionModal } from '../UI/DestructiveActionModal';
+import { calculateBookingTotals, getEffectivePricing } from '../../utils/pricing';
 
 // --- Types & Constants ---
 
@@ -38,7 +40,7 @@ const StatCard = ({ label, value, sub, icon: Icon, color }: any) => (
       <Icon size={24} />
     </div>
     <div>
-      <p className="text-[10px] uppercase font-bold text-slate-500 tracking-widest">{label}</p>
+      <p className={`text-[10px] uppercase font-bold text-slate-500 tracking-widest`}>{label}</p>
       <p className="text-2xl font-serif text-white leading-none mt-1">{value}</p>
       {sub && <p className="text-[10px] text-slate-400 mt-1">{sub}</p>}
     </div>
@@ -69,6 +71,7 @@ export const CalendarManager = () => {
   const [isEditingEvent, setIsEditingEvent] = useState(false);
   const [editFormData, setEditFormData] = useState<any>(null);
   const [showAddWaitlist, setShowAddWaitlist] = useState(false);
+  const [waitlistEntryToConvert, setWaitlistEntryToConvert] = useState<WaitlistEntry | null>(null);
   
   // Bulk Wizard State
   const [isBulkWizardOpen, setIsBulkWizardOpen] = useState(false);
@@ -165,8 +168,12 @@ export const CalendarManager = () => {
 
   const handleSaveEvent = () => {
     if (!editFormData) return;
-    calendarRepo.update(editFormData.id, () => editFormData);
-    logAuditAction('UPDATE_EVENT', 'CALENDAR', editFormData.id, { description: `Updated event details for ${editFormData.date}` });
+    
+    // Strip computed fields to prevent stale data storage
+    const { bookedCount, ...cleanData } = editFormData;
+    
+    calendarRepo.update(cleanData.id, () => cleanData);
+    logAuditAction('UPDATE_EVENT', 'CALENDAR', cleanData.id, { description: `Updated event details for ${cleanData.date}` });
     undoManager.showSuccess("Event opgeslagen.");
     refreshData();
     setIsEditingEvent(false);
@@ -187,30 +194,63 @@ export const CalendarManager = () => {
     }
   };
 
-  const handleWaitlistConvert = (entry: WaitlistEntry) => {
-    if (!confirm(`Wil je ${entry.contactName} (${entry.partySize}p) converteren naar een boeking?`)) return;
+  const confirmWaitlistConvert = () => {
+    if (!waitlistEntryToConvert || !selectedDay?.event) return;
     
-    // Create new reservation (simplified logic for brevity)
+    const entry = waitlistEntryToConvert;
+    
+    // Resolve Pricing
+    const show = getShows().find(s => s.id === selectedDay.event.showId);
+    let totals: any = { subtotal: 0, amountDue: 0 };
+    
+    if (show) {
+        const pricing = getEffectivePricing(selectedDay.event, show);
+        totals = calculateBookingTotals({
+            totalGuests: entry.partySize,
+            packageType: 'standard',
+            addons: [],
+            merchandise: [],
+            date: entry.date,
+            showId: show.id
+        }, pricing);
+    }
+
+    // Create new reservation
     const newRes: Reservation = {
         id: `RES-WL-${Date.now()}`,
         createdAt: new Date().toISOString(),
         customerId: entry.customerId,
         customer: { id: entry.customerId, firstName: entry.contactName.split(' ')[0], lastName: entry.contactName.split(' ').slice(1).join(' ') || 'Gast', email: entry.contactEmail, phone: entry.contactPhone || '' },
         date: entry.date,
-        showId: selectedDay.event.showId,
-        status: BookingStatus.OPTION,
+        showId: selectedDay.event.showId || 'unknown',
+        status: BookingStatus.CONFIRMED, // DIRECT CONFIRM
         partySize: entry.partySize,
         packageType: 'standard',
         addons: [], merchandise: [],
-        financials: { total: 0, subtotal: 0, discount: 0, finalTotal: 0, paid: 0, isPaid: false },
+        financials: { 
+            total: totals.subtotal || 0, 
+            subtotal: totals.subtotal || 0, 
+            discount: 0, 
+            finalTotal: totals.amountDue || 0, 
+            paid: 0, 
+            isPaid: false,
+            paymentDueAt: new Date(new Date().setDate(new Date().getDate() + 14)).toISOString()
+        },
         notes: { internal: `Converted from waitlist (${entry.notes || '-'})` },
-        startTime: selectedDay.event.times.start
+        startTime: selectedDay.event.times?.start || '19:30'
     };
     
     bookingRepo.add(newRes);
     waitlistRepo.delete(entry.id);
+    
+    // AUDIT
     logAuditAction('CONVERT_WAITLIST', 'RESERVATION', newRes.id, { description: 'Manual conversion from Calendar' });
-    undoManager.showSuccess("Wachtende omgezet naar OPTIE.");
+    
+    // EMAIL
+    triggerEmail('BOOKING_CONFIRMED', { type: 'RESERVATION', id: newRes.id, data: newRes });
+
+    undoManager.showSuccess("Wachtende geplaatst en bevestigd!");
+    setWaitlistEntryToConvert(null);
     refreshData();
   };
 
@@ -497,7 +537,7 @@ export const CalendarManager = () => {
                                   </div>
                                 </div>
                                 <Button 
-                                  onClick={() => handleWaitlistConvert(w)}
+                                  onClick={() => setWaitlistEntryToConvert(w)}
                                   className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white border-none text-[10px] font-bold uppercase tracking-wider shadow-lg"
                                 >
                                   Plaatsen
@@ -567,6 +607,29 @@ export const CalendarManager = () => {
           }}
         />
       )}
+
+      {/* CONFIRMATION MODAL FOR WAITLIST CONVERT */}
+      <DestructiveActionModal
+        isOpen={!!waitlistEntryToConvert}
+        onClose={() => setWaitlistEntryToConvert(null)}
+        onConfirm={confirmWaitlistConvert}
+        title="Bevestig Plaatsing"
+        description={
+            <div className="space-y-2">
+                <p>Weet je zeker dat je <strong>{waitlistEntryToConvert?.contactName}</strong> wilt omzetten naar een definitieve boeking?</p>
+                <div className="p-3 bg-emerald-900/20 border border-emerald-900/50 rounded-lg text-sm text-emerald-200">
+                    <ul className="list-disc pl-4 space-y-1">
+                        <li>Status wordt <strong>BEVESTIGD</strong></li>
+                        <li>Bevestigingsmail wordt verstuurd</li>
+                        <li>Wachtlijst item wordt verwijderd</li>
+                    </ul>
+                </div>
+            </div>
+        }
+        verificationText="PLAATSEN"
+        confirmButtonText="Definitief Boeken"
+        requireVerification={false}
+      />
 
     </div>
   );

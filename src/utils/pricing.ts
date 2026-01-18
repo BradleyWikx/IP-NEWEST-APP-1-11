@@ -1,6 +1,5 @@
-
 import { 
-  EventDate, 
+  ShowEvent, 
   ShowDefinition, 
   AddonSelection, 
   MerchandiseSelection,
@@ -23,7 +22,7 @@ export interface LineItem {
   quantity: number;
   unitPrice: number;
   total: number;
-  category: 'TICKET' | 'ADDON' | 'MERCH' | 'FEE' | 'DISCOUNT' | 'ADJUSTMENT';
+  category: 'TICKET' | 'ADDON' | 'MERCH' | 'FEE' | 'DISCOUNT' | 'ADJUSTMENT' | 'SHIPPING';
 }
 
 export interface PricingBreakdown {
@@ -55,7 +54,7 @@ export interface EffectivePricing {
  * Hierarchy: Event Date Override > Show Profile > Defaults
  */
 export const getEffectivePricing = (
-  event: EventDate, 
+  event: ShowEvent, 
   show: ShowDefinition
 ): EffectivePricing => {
   // 1. Identify Profile
@@ -342,4 +341,3 @@ export const recalculateReservationFinancials = (reservation: Reservation): Rese
     // paymentDueAt remains unchanged
   };
 };
-    

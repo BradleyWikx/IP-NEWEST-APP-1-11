@@ -39,6 +39,7 @@ import { DataImporter } from './components/admin/DataImporter';
 import { KitchenDashboard } from './components/admin/KitchenDashboard';
 import { TrashManager } from './components/admin/TrashManager'; 
 import { DemoControlPanel } from './components/admin/DemoControlPanel';
+import { InvoiceManager } from './components/admin/InvoiceManager'; // NEW
 
 import { ToastContainer } from './components/UI/Toast';
 
@@ -118,6 +119,7 @@ const MainContent = () => {
                 <Route path="/planning" element={<PlanningManager />} />
                 <Route path="/reservations" element={<ReservationManager />} />
                 <Route path="/reservations/new" element={<AdminBookingWizard />} />
+                <Route path="/invoices" element={<InvoiceManager />} /> 
                 <Route path="/import" element={<DataImporter />} /> 
                 <Route path="/kitchen" element={<KitchenDashboard />} /> 
                 <Route path="/inbox" element={<ChangeRequestInbox />} />

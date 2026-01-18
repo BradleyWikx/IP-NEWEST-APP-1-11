@@ -5,7 +5,7 @@ import { useWizardPersistence } from './useWizardPersistence';
 import { bookingRepo, notificationsRepo, getEvents, getShowDefinitions, customerRepo, requestRepo, waitlistRepo, calendarRepo } from '../utils/storage';
 import { triggerEmail } from '../utils/emailEngine';
 import { logAuditAction } from '../utils/auditLogger';
-import { Reservation, BookingStatus, EventDate, ShowDefinition, WaitlistEntry } from '../types';
+import { Reservation, BookingStatus, ShowEvent, ShowDefinition, WaitlistEntry } from '../types';
 import { calculateBookingTotals, getEffectivePricing } from '../utils/pricing';
 import { calculateEventStatus } from '../utils/status';
 import { ReservationSchema } from '../utils/validation';
@@ -32,7 +32,7 @@ export const useBookingWizardLogic = () => {
   const { wizardData, updateWizard, resetWizard } = useWizardPersistence({
     date: location.state?.date || '',
     showId: location.state?.showId || '',
-    availability: location.state?.availability || 'OPEN',
+    status: location.state?.availability || 'OPEN',
     totalGuests: 2,
     packageType: 'standard',
     addons: [],
@@ -74,7 +74,7 @@ export const useBookingWizardLogic = () => {
   // Real-time Calculation State
   const [pricing, setPricing] = useState<any>(null);
   const [financials, setFinancials] = useState<any>({ subtotal: 0, amountDue: 0, items: [] });
-  const [eventData, setEventData] = useState<{ event: EventDate; show: ShowDefinition } | null>(null);
+  const [eventData, setEventData] = useState<{ event: ShowEvent; show: ShowDefinition } | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState(false);
   
   // Waitlist Logic
@@ -94,40 +94,55 @@ export const useBookingWizardLogic = () => {
     const events = getEvents();
     const shows = getShowDefinitions();
     const waitlist = waitlistRepo.getAll();
+    const allReservations = bookingRepo.getAll(); 
+
     const event = events.find(e => e.date === wizardData.date);
     const show = shows.find(s => s.id === wizardData.showId);
 
     if (event && show) {
       setEventData({ event, show });
       
-      // 24H Safety Check
+      // FIX: Use local date comparison to avoid timezone issues.
+      // Only block STRICTLY past dates. Allow today.
       const now = new Date();
-      const cutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-      const cutoffStr = cutoff.toISOString().split('T')[0];
+      const localTodayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       
-      if (wizardData.date < cutoffStr) {
-         setSubmitError("Online reserveren voor deze datum is gesloten. Neem telefonisch contact op.");
+      if (wizardData.date < localTodayStr) {
+         setSubmitError("Deze datum ligt in het verleden.");
          setIsWaitlistFull(true); 
          return; 
+      } else {
+         setSubmitError(null);
+         setIsWaitlistFull(false);
       }
 
       // Pricing
       const priceConfig = getEffectivePricing(event, show);
       setPricing(priceConfig);
       
-      // Only calculate totals if NOT in waitlist mode (efficiency)
-      // But we calculate anyway to prevent null reference errors, though it won't be used in Waitlist
+      // Calculate Financials
       const totals = calculateBookingTotals(wizardData, priceConfig);
       setFinancials(totals);
 
-      // Check Status via Smart Logic
+      // --- LIVE STATUS CHECK ---
       const wlCount = waitlist.filter(w => w.date === wizardData.date && w.status === 'PENDING').length;
       
+      const activeRes = allReservations.filter(r => 
+        r.date === wizardData.date && 
+        r.status !== 'CANCELLED' && 
+        r.status !== 'ARCHIVED' && 
+        r.status !== 'NOSHOW' &&
+        r.status !== 'WAITLIST'
+      );
+      const currentBooked = activeRes.reduce((sum, r) => sum + (Number(r.partySize) || 0), 0);
+
+      // 3. Determine Status using DYNAMIC CAPACITY from event
+      const dynamicCapacity = Number(event.capacity) || CAPACITY_TARGET;
       const calculatedStatus = calculateEventStatus(
-          event.bookedCount || 0,
-          event.capacity || CAPACITY_TARGET,
+          currentBooked, 
+          dynamicCapacity, 
           wlCount,
-          event.availability
+          event.status // Passed manual status ('WAITLIST', 'CLOSED' or 'OPEN')
       );
 
       if (calculatedStatus === 'WAITLIST') {
@@ -158,8 +173,6 @@ export const useBookingWizardLogic = () => {
     const c = wizardData.customer;
 
     if (step === 5) { // Details Step
-      // Use Zod partially here or standard logic, keep standard logic for real-time feedback
-      // Zod validation runs on full submit
       if (!c.firstName) errors.firstName = "Voornaam is verplicht.";
       if (!c.lastName) errors.lastName = "Achternaam is verplicht.";
       if (!c.street) errors.street = "Straatnaam is verplicht.";
@@ -287,21 +300,21 @@ export const useBookingWizardLogic = () => {
     
     await new Promise(resolve => setTimeout(resolve, 1500));
 
-    // --- ATOMIC CAPACITY CHECK (RACE CONDITION PREVENTION) ---
-    // Only strictly enforce this for regular bookings, not waitlist entries.
-    // WAITLIST LITE MODE: Bypass check entirely.
+    // --- ATOMIC CAPACITY CHECK ---
     if (!isWaitlistMode) {
       try {
         const freshEvents = await calendarRepo.getAllAsync(); // Use Async
-        const targetEvent = freshEvents.find(e => e.date === wizardData.date);
+        // Find specific SHOW event safely
+        const rawEvent = freshEvents.find(e => e.date === wizardData.date && e.type === 'SHOW');
+        // Explicitly cast to ShowEvent to ensure TS knows about 'capacity'
+        const targetEvent = rawEvent as ShowEvent | undefined;
         
         if (!targetEvent || targetEvent.bookingEnabled === false) {
            throw new Error("De status van dit event is gewijzigd. Probeer het opnieuw.");
         }
 
-        if (targetEvent.type === 'SHOW') {
-           const freshReservations = await bookingRepo.getAllAsync(); // Use Async
-           const currentBookedCount = freshReservations
+        const freshReservations = await bookingRepo.getAllAsync(); // Use Async
+        const currentBookedCount = freshReservations
              .filter(r => 
                r.date === wizardData.date && 
                r.status !== 'CANCELLED' && 
@@ -309,15 +322,16 @@ export const useBookingWizardLogic = () => {
                r.status !== 'NOSHOW' && 
                r.status !== 'WAITLIST'
              )
-             .reduce((sum, r) => sum + r.partySize, 0);
+             .reduce((sum, r) => sum + (Number(r.partySize) || 0), 0);
            
-           const maxCapacity = targetEvent.capacity || CAPACITY_TARGET;
+        // Use the event's specific capacity, fallback to default if missing/zero
+        const maxCapacity = Number(targetEvent.capacity) || CAPACITY_TARGET;
+        const newGuests = Number(wizardData.totalGuests) || 0;
            
-           if (currentBookedCount + wizardData.totalGuests > maxCapacity) {
-              setSubmitError("Helaas, in de tussentijd is de capaciteit overschreden. Er zijn niet genoeg plaatsen meer.");
+        if (currentBookedCount + newGuests > maxCapacity) {
+              setSubmitError(`Helaas, capaciteit overschreden: ${currentBookedCount + newGuests}/${maxCapacity} bezet. Probeer een andere datum.`);
               setIsSubmitting(false);
               return; // STOP
-           }
         }
       } catch (err: any) {
          setSubmitError(err.message || "Er is een fout opgetreden bij de capaciteitscontrole.");
@@ -350,7 +364,7 @@ export const useBookingWizardLogic = () => {
 
           waitlistRepo.add(newEntry);
           
-          logAuditAction('CREATE_WAITLIST', 'WAITLIST', waitlistId, { description: 'Via Booking Wizard (Overflow)' });
+          logAuditAction('CREATE_WAITLIST', 'WAITLIST', waitlistId, { description: 'Via Booking Wizard (Overflow/Waitlist Mode)' });
           triggerEmail('WAITLIST_JOINED', { type: 'WAITLIST', id: waitlistId, data: newEntry });
           notificationsRepo.createFromEvent('NEW_WAITLIST', newEntry);
 
@@ -395,7 +409,7 @@ export const useBookingWizardLogic = () => {
           financials: finalFinancials, 
           notes: wizardData.notes,
           idempotencyKey: wizardData.idempotencyKey,
-          startTime: eventData?.event?.startTime
+          startTime: eventData?.event?.times?.start || '19:30'
         };
 
         // --- ZOD VALIDATION ---

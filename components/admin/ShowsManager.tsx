@@ -6,6 +6,7 @@ import {
   MoreHorizontal, CheckCircle2, AlertCircle, Copy, Info
 } from 'lucide-react';
 import { Button, Input, Card, Badge } from '../UI';
+import { DestructiveActionModal } from '../UI/DestructiveActionModal';
 import { ShowDefinition, ShowProfile } from '../../types';
 import { getShowDefinitions, saveData, STORAGE_KEYS, bookingRepo } from '../../utils/storage';
 import { logAuditAction } from '../../utils/auditLogger';
@@ -121,6 +122,9 @@ const ShowEditorDrawer = ({ show, onSave, onClose }: ShowEditorProps) => {
   );
   const [tagsInput, setTagsInput] = useState(show?.tags.join(', ') || '');
   const [error, setError] = useState<string | null>(null);
+  
+  // Confirmation State
+  const [itemToDelete, setItemToDelete] = useState<{ type: 'PROFILE', index: number } | null>(null);
 
   const handleSave = () => {
     if (!formData.name || !formData.activeFrom) {
@@ -154,12 +158,13 @@ const ShowEditorDrawer = ({ show, onSave, onClose }: ShowEditorProps) => {
     setFormData({ ...formData, profiles: newProfiles });
   };
 
-  const deleteProfile = (index: number) => {
-    if (confirm('Profiel verwijderen?')) {
+  const confirmDeleteProfile = () => {
+    if (itemToDelete && itemToDelete.type === 'PROFILE') {
         setFormData({
-        ...formData,
-        profiles: formData.profiles.filter((_, i) => i !== index)
+            ...formData,
+            profiles: formData.profiles.filter((_, i) => i !== itemToDelete.index)
         });
+        setItemToDelete(null);
     }
   };
 
@@ -266,7 +271,7 @@ const ShowEditorDrawer = ({ show, onSave, onClose }: ShowEditorProps) => {
                       key={profile.id || idx} 
                       profile={profile} 
                       onChange={(updated) => updateProfile(idx, updated)}
-                      onDelete={() => deleteProfile(idx)}
+                      onDelete={() => setItemToDelete({ type: 'PROFILE', index: idx })}
                       isNew={!show && idx === formData.profiles.length - 1} // Auto open new profiles if creating fresh
                     />
                   ))}
@@ -280,6 +285,17 @@ const ShowEditorDrawer = ({ show, onSave, onClose }: ShowEditorProps) => {
            <Button variant="ghost" onClick={onClose}>Annuleren</Button>
            <Button onClick={handleSave} className="flex items-center"><Save size={18} className="mr-2"/> Opslaan</Button>
         </div>
+
+        <DestructiveActionModal 
+            isOpen={!!itemToDelete}
+            onClose={() => setItemToDelete(null)}
+            onConfirm={confirmDeleteProfile}
+            title="Profiel Verwijderen"
+            description={<p>Weet je zeker dat je dit prijsprofiel wilt verwijderen? Dit kan invloed hebben op toekomstige berekeningen als je deze show opnieuw inplant.</p>}
+            verificationText="DELETE"
+            requireVerification={false}
+            confirmButtonText="Verwijderen"
+        />
       </div>
     </>
   );
@@ -292,6 +308,8 @@ export const ShowsManager = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [editingShow, setEditingShow] = useState<ShowDefinition | null>(null);
+  
+  const [showDeleteModal, setShowDeleteModal] = useState<string | null>(null);
 
   const loadShows = () => {
     setShows(getShowDefinitions());
@@ -330,6 +348,8 @@ export const ShowsManager = () => {
             if (affectedRes.length > 0) {
               const confirmMsg = `Let op: Het profiel "${newProf.name}" heeft een nieuwe starttijd (${newProf.timing.startTime}).\n\nEr zijn ${affectedRes.length} toekomstige reserveringen gevonden op de oude tijd (${oldProf.timing.startTime}).\n\nWil je deze boekingen automatisch updaten?`;
               
+              // NOTE: Native confirm kept for complex logic flow warning, but deletion is the critical one to replace
+              // For full compliance, this could also be a modal, but let's focus on deletion first as per request.
               if (window.confirm(confirmMsg)) {
                 // Batch update
                 affectedRes.forEach(r => {
@@ -375,13 +395,14 @@ export const ShowsManager = () => {
     undoManager.showSuccess("Show opgeslagen.");
   };
 
-  const handleDeleteShow = (id: string) => {
-    if (confirm("Weet u zeker dat u deze show en alle profielen wilt verwijderen?")) {
-      const updatedList = shows.filter(s => s.id !== id);
+  const confirmDeleteShow = () => {
+    if (showDeleteModal) {
+      const updatedList = shows.filter(s => s.id !== showDeleteModal);
       saveData(STORAGE_KEYS.SHOWS, updatedList);
       setShows(updatedList);
-      logAuditAction('DELETE_SHOW', 'SYSTEM', id, { description: 'Deleted show definition' });
+      logAuditAction('DELETE_SHOW', 'SYSTEM', showDeleteModal, { description: 'Deleted show definition' });
       undoManager.showSuccess("Show verwijderd.");
+      setShowDeleteModal(null);
     }
   };
 
@@ -405,7 +426,7 @@ export const ShowsManager = () => {
          <div className="relative flex-grow">
            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
            <input 
-             className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500"
+             className="w-full bg-slate-900 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500"
              placeholder="Zoek show op naam..."
              value={searchTerm}
              onChange={e => setSearchTerm(e.target.value)}
@@ -468,7 +489,7 @@ export const ShowsManager = () => {
                   <Button variant="secondary" onClick={() => { setEditingShow(show); setIsDrawerOpen(true); }} className="h-9 px-4 text-xs">
                     <Edit3 size={14} className="mr-2" /> Bewerken
                   </Button>
-                  <Button variant="ghost" onClick={() => handleDeleteShow(show.id)} className="h-9 w-9 p-0 text-slate-500 hover:text-red-500">
+                  <Button variant="ghost" onClick={() => setShowDeleteModal(show.id)} className="h-9 w-9 p-0 text-slate-500 hover:text-red-500">
                     <Trash2 size={16} />
                   </Button>
                </div>
@@ -484,6 +505,16 @@ export const ShowsManager = () => {
           onClose={() => { setIsDrawerOpen(false); setEditingShow(null); }} 
         />
       )}
+
+      <DestructiveActionModal 
+        isOpen={!!showDeleteModal}
+        onClose={() => setShowDeleteModal(null)}
+        onConfirm={confirmDeleteShow}
+        title="Show Verwijderen"
+        description={<p>Weet u zeker dat u deze show en alle bijbehorende profielen wilt verwijderen?</p>}
+        verificationText="DELETE"
+        confirmButtonText="Verwijderen"
+      />
     </div>
   );
 };

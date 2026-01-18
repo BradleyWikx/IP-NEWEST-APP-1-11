@@ -12,6 +12,7 @@ import { undoManager } from '../../utils/undoManager';
 import { logAuditAction } from '../../utils/auditLogger';
 import { triggerEmail } from '../../utils/emailEngine';
 import { calculateBookingTotals, getEffectivePricing } from '../../utils/pricing';
+import { DestructiveActionModal } from '../UI/DestructiveActionModal';
 
 // --- Types ---
 
@@ -38,6 +39,9 @@ export const WaitlistManager = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [suggestions, setSuggestions] = useState<MatchSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  
+  // Confirmation Modal State
+  const [conversionTarget, setConversionTarget] = useState<{ entry: WaitlistEntry, group: DateGroup } | null>(null);
 
   // --- DATA LOADING & GROUPING ---
 
@@ -107,7 +111,14 @@ export const WaitlistManager = () => {
 
   // --- ACTIONS: CONVERT WAITLIST ---
 
-  const handleConvert = (entry: WaitlistEntry, group: DateGroup) => {
+  const initiateConvert = (entry: WaitlistEntry, group: DateGroup) => {
+      setConversionTarget({ entry, group });
+  };
+
+  const executeConvert = () => {
+    if (!conversionTarget) return;
+    const { entry, group } = conversionTarget;
+
     setIsProcessing(true);
 
     // 1. Resolve Pricing
@@ -142,7 +153,7 @@ export const WaitlistManager = () => {
       },
       date: entry.date,
       showId: show.id,
-      status: BookingStatus.CONFIRMED, // Direct confirm
+      status: BookingStatus.CONFIRMED, // Direct confirm per user request
       partySize: entry.partySize,
       packageType: 'standard', 
       addons: [],
@@ -174,6 +185,7 @@ export const WaitlistManager = () => {
     undoManager.showSuccess(`Wachtende geplaatst! Bevestiging verstuurd.`);
     refreshData();
     setIsProcessing(false);
+    setConversionTarget(null);
   };
 
   // --- ACTIONS: MATCH LOGIC ---
@@ -360,7 +372,7 @@ export const WaitlistManager = () => {
                            
                            {/* Match Action */}
                            <Button 
-                             onClick={() => handleConvert(w, selectedGroup)} 
+                             onClick={() => initiateConvert(w, selectedGroup)} 
                              disabled={isProcessing}
                              className="w-full h-8 text-xs bg-emerald-600 hover:bg-emerald-700 border-none flex items-center justify-center shadow-lg"
                            >
@@ -436,7 +448,7 @@ export const WaitlistManager = () => {
              </div>
              
              {suggestions.map((s, idx) => (
-                 <div key={idx} className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex justify-between items-center">
+                 <div key={idx} className="bg-slate-900 p-4 rounded-xl border border-slate-800 flex justify-between items-center">
                      <div>
                          <p className="font-bold text-white text-sm">{new Date(s.waitlistEntry.date).toLocaleDateString()}</p>
                          <div className="flex items-center space-x-2 mt-1">
@@ -458,6 +470,29 @@ export const WaitlistManager = () => {
              )}
          </div>
       </ResponsiveDrawer>
+
+      {/* CONFIRMATION MODAL */}
+      <DestructiveActionModal
+        isOpen={!!conversionTarget}
+        onClose={() => setConversionTarget(null)}
+        onConfirm={executeConvert}
+        title="Bevestig Plaatsing"
+        description={
+            <div className="space-y-2">
+                <p>Weet je zeker dat je <strong>{conversionTarget?.entry.contactName}</strong> wilt omzetten naar een definitieve boeking?</p>
+                <div className="p-3 bg-emerald-900/20 border border-emerald-900/50 rounded-lg text-sm text-emerald-200">
+                    <ul className="list-disc pl-4 space-y-1">
+                        <li>Status wordt <strong>BEVESTIGD</strong></li>
+                        <li>Bevestigingsmail wordt verstuurd</li>
+                        <li>Wachtlijst item wordt verwijderd</li>
+                    </ul>
+                </div>
+            </div>
+        }
+        verificationText="PLAATSEN"
+        confirmButtonText="Definitief Boeken"
+        requireVerification={false}
+      />
     </div>
   );
 };

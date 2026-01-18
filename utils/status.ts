@@ -5,9 +5,9 @@ import { bookingRepo, waitlistRepo, calendarRepo } from './storage';
 // --- 1. CONFIGURATION ---
 
 export const CAPACITY_RULES = {
-  ONLINE_LIMIT: 220,      // Drempel voor directe online boekingen
-  HARD_LIMIT: 230,        // Fysieke zaalcapaciteit (incl. admin/VIP)
-  WAITLIST_LIMIT: 10      // Maximaal aantal inschrijvingen (bookings, niet pax) op wachtlijst
+  ONLINE_BUFFER: 10,      // Keep 10 spots free for admin/door/VIP (Dynamic Limit = Capacity - 10)
+  HARD_LIMIT_DEFAULT: 230,// Fallback if no capacity set
+  WAITLIST_LIMIT: 10      // Max waitlist entries
 };
 
 // --- 2. DATA FETCHING (INTERNAL) ---
@@ -20,10 +20,11 @@ const getLiveStats = (date: string) => {
     r.status !== BookingStatus.CANCELLED && 
     r.status !== BookingStatus.ARCHIVED && 
     r.status !== BookingStatus.NOSHOW &&
-    r.status !== BookingStatus.WAITLIST // Waitlist items reserveren geen stoelen
+    r.status !== BookingStatus.WAITLIST
   );
   
-  const totalPax = activeRes.reduce((sum, r) => sum + r.partySize, 0);
+  // FIX: Cast partySize to Number to prevent string concatenation
+  const totalPax = activeRes.reduce((sum, r) => sum + (Number(r.partySize) || 0), 0);
 
   // 2. Waitlist
   const allWaitlist = waitlistRepo.getAll();
@@ -35,60 +36,53 @@ const getLiveStats = (date: string) => {
   // 3. Manual Override (Event Check)
   const event = calendarRepo.getAll().find(e => e.date === date);
   const manualStatus = event && event.type === 'SHOW' ? event.status : undefined;
+  
+  // Dynamic Capacity check
+  const capacity = event && event.type === 'SHOW' && event.capacity ? Number(event.capacity) : CAPACITY_RULES.HARD_LIMIT_DEFAULT;
 
-  return { totalPax, waitlistCount: pendingWaitlist.length, manualStatus };
+  return { totalPax, waitlistCount: pendingWaitlist.length, manualStatus, capacity };
 };
 
 // --- 3. CORE LOGIC ---
 
-/**
- * Bepaalt de live status van een datum op basis van de regels.
- * @param date ISO Date string (YYYY-MM-DD)
- */
 export const getEventStatus = (date: string): Availability => {
   if (!date) return 'CLOSED';
 
-  const { totalPax, waitlistCount, manualStatus } = getLiveStats(date);
+  const { totalPax, waitlistCount, manualStatus, capacity } = getLiveStats(date);
 
-  // 1. Admin Override heeft altijd voorrang
+  // 1. Admin Override (Highest Priority)
   if (manualStatus === 'CLOSED') return 'CLOSED';
+  if (manualStatus === 'WAITLIST') return 'WAITLIST';
 
-  // 2. Waitlist Vol? -> CLOSED
+  // 2. Waitlist Full?
   if (waitlistCount >= CAPACITY_RULES.WAITLIST_LIMIT) {
     return 'CLOSED';
   }
 
-  // 3. Online Limiet Bereikt? -> WAITLIST
-  // Zelfs als er fysiek nog plek is (220-230), gaat de shop dicht en de wachtlijst open.
-  if (totalPax >= CAPACITY_RULES.ONLINE_LIMIT) {
+  // 3. Online Limit Calculation (Capacity - Buffer)
+  const onlineLimit = capacity - CAPACITY_RULES.ONLINE_BUFFER;
+
+  if (totalPax >= onlineLimit) {
     return 'WAITLIST';
   }
 
-  // 4. Anders -> OPEN
   return 'OPEN';
 };
 
-/**
- * Checkt of een specifieke nieuwe groep nog past.
- * @param date ISO Date string
- * @param partySize Aantal personen
- */
 export const canBook = (date: string, partySize: number): boolean => {
   const status = getEventStatus(date);
-  
-  // Als status niet OPEN is, kan er sowieso niet direct geboekt worden
   if (status !== 'OPEN') return false;
 
-  const { totalPax } = getLiveStats(date);
+  const { totalPax, capacity } = getLiveStats(date);
+  const onlineLimit = capacity - CAPACITY_RULES.ONLINE_BUFFER;
   
-  // Check of deze specifieke groep de limiet overschrijdt
-  return (totalPax + partySize) <= CAPACITY_RULES.ONLINE_LIMIT;
+  return (totalPax + partySize) <= onlineLimit;
 };
 
-// --- 4. ADVISOR (VOOR ADMIN) ---
+// --- 4. ADVISOR ---
 
 export const getNextAction = (date: string): { action: string, priority: 'LOW' | 'MEDIUM' | 'HIGH' } => {
-  const { totalPax, waitlistCount } = getLiveStats(date);
+  const { totalPax, waitlistCount, capacity } = getLiveStats(date);
   const status = getEventStatus(date);
 
   if (status === 'CLOSED') {
@@ -99,22 +93,23 @@ export const getNextAction = (date: string): { action: string, priority: 'LOW' |
   }
 
   if (status === 'WAITLIST') {
-    const spotsFree = CAPACITY_RULES.HARD_LIMIT - totalPax;
+    const spotsFree = capacity - totalPax;
     if (spotsFree > 0 && waitlistCount > 0) {
       return { action: `${spotsFree} plekken vrijgekomen! Nodig wachtlijst uit.`, priority: 'HIGH' };
     }
     return { action: 'Houdt wachtlijst in de gaten.', priority: 'MEDIUM' };
   }
 
-  // OPEN
-  const toFill = CAPACITY_RULES.ONLINE_LIMIT - totalPax;
+  const onlineLimit = capacity - CAPACITY_RULES.ONLINE_BUFFER;
+  const toFill = onlineLimit - totalPax;
+  
   if (toFill > 50) return { action: 'Promoot deze avond (veel plek).', priority: 'MEDIUM' };
   if (toFill < 20) return { action: 'Bijna vol. Laatste plekken.', priority: 'HIGH' };
 
   return { action: 'Loopt volgens planning.', priority: 'LOW' };
 };
 
-// --- 5. UI HELPERS (LEGACY SUPPORT) ---
+// --- 5. UI HELPERS ---
 
 export const getStatusColor = (status: BookingStatus | string): string => {
   switch (status) {
@@ -152,14 +147,17 @@ export const getStatusStyles = (status: BookingStatus | string) => {
   return `bg-${color}-900/20 text-${color}-500 border-${color}-900/50 border`;
 };
 
-// Backwards compatibility alias if needed by imports
+// Corrected logic: Use passed capacity parameter
 export const calculateEventStatus = (booked: number, capacity: number, wl: number, manual?: Availability) => {
-  // Dit is een legacy wrapper. We gebruiken nu de live data, dus de params (behalve manual) worden genegeerd 
-  // als we getEventStatus(date) zouden aanroepen. 
-  // Echter, oude componenten roepen dit statisch aan. We emuleren de logica:
-  
+  // CRITICAL FIX: Manual Waitlist overrides capacity checks
   if (manual === 'CLOSED') return 'CLOSED';
+  if (manual === 'WAITLIST') return 'WAITLIST';
+  
   if (wl >= CAPACITY_RULES.WAITLIST_LIMIT) return 'CLOSED';
-  if (booked >= CAPACITY_RULES.ONLINE_LIMIT) return 'WAITLIST';
+  
+  // Use the actual capacity passed in, minus buffer
+  const effectiveLimit = capacity - CAPACITY_RULES.ONLINE_BUFFER;
+  
+  if (booked >= effectiveLimit) return 'WAITLIST';
   return 'OPEN';
 };

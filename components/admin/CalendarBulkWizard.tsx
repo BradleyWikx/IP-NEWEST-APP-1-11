@@ -10,6 +10,7 @@ import { ShowDefinition, CalendarEvent, EventType, ShowEvent, BookingStatus } fr
 import { getShowDefinitions, calendarRepo, bookingRepo } from '../../utils/storage';
 import { logAuditAction } from '../../utils/auditLogger';
 import { undoManager } from '../../utils/undoManager';
+import { toLocalISOString } from '../../utils/dateHelpers';
 
 interface Props {
   onClose: () => void;
@@ -103,7 +104,8 @@ export const CalendarBulkWizard: React.FC<Props> = ({ onClose, onSuccess, presel
     // Days
     for (let d = 1; d <= lastDayOfMonth.getDate(); d++) {
         const date = new Date(year, month, d);
-        const dateStr = date.toISOString().split('T')[0];
+        // FIX: Use local ISO string to prevent timezone rollback
+        const dateStr = toLocalISOString(date);
         days.push({ date, dateStr });
     }
 
@@ -155,8 +157,13 @@ export const CalendarBulkWizard: React.FC<Props> = ({ onClose, onSuccess, presel
   const applyRangeSelection = () => {
     if (!toolRangeStart || !toolRangeEnd) return;
     
-    const start = new Date(toolRangeStart);
-    const end = new Date(toolRangeEnd);
+    // FIX: Parse strings manually to create LOCAL midnight dates, preventing UTC shifting
+    const [startYear, startMonth, startDay] = toolRangeStart.split('-').map(Number);
+    const [endYear, endMonth, endDay] = toolRangeEnd.split('-').map(Number);
+    
+    const start = new Date(startYear, startMonth - 1, startDay);
+    const end = new Date(endYear, endMonth - 1, endDay);
+    
     const newSet = new Set(selectedDates);
     
     // Safety break
@@ -168,7 +175,8 @@ export const CalendarBulkWizard: React.FC<Props> = ({ onClose, onSuccess, presel
     let current = new Date(start);
     while (current <= end) {
         if (toolWeekdays.includes(current.getDay())) {
-            newSet.add(current.toISOString().split('T')[0]);
+            // FIX: Use toLocalISOString to ensure YYYY-MM-DD matches the loop variable exactly
+            newSet.add(toLocalISOString(current));
         }
         current.setDate(current.getDate() + 1);
     }
@@ -219,7 +227,7 @@ export const CalendarBulkWizard: React.FC<Props> = ({ onClose, onSuccess, presel
                 profileId: selectedProfileId,
                 status: status as any,
                 capacity: capacity,
-                bookedCount: 0, 
+                // bookedCount removed
                 pricing: undefined
             } as ShowEvent);
         } else {

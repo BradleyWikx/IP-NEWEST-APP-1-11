@@ -124,6 +124,40 @@ export const PlanningManager = () => {
         const show = event && event.type === 'SHOW' ? shows.find(s => s.id === (event as any).showId) : null;
         const dayRes = reservations.filter(r => r.date === dStr && isOperational(r.status));
         
+        // --- AGGREGATION LOGIC ---
+        const dietaryAgg = {
+            standard: {} as Record<string, number>, // e.g. { "Glutenvrij": 8 }
+            specials: [] as { text: string, guestName: string }[] // e.g. [{ text: "Zonder Cayenne", guest: "Jansen" }]
+        };
+
+        dayRes.forEach(r => {
+            // 1. Aggregate Standard Counts (Checkboxes)
+            if (r.notes.structuredDietary) {
+                Object.entries(r.notes.structuredDietary).forEach(([type, rawCount]) => {
+                    const count = rawCount as number;
+                    if (count > 0) {
+                        dietaryAgg.standard[type] = (dietaryAgg.standard[type] || 0) + count;
+                    }
+                });
+            }
+
+            // 2. Collect Specific Comments (Text Input)
+            if (r.notes.comments) {
+                dietaryAgg.specials.push({ 
+                    text: r.notes.comments, 
+                    guestName: r.customer.lastName 
+                });
+            }
+
+            // 3. Fallback for Legacy Data (If text exists but no structured counters)
+            if (r.notes.dietary && (!r.notes.structuredDietary || Object.keys(r.notes.structuredDietary).length === 0) && !r.notes.comments) {
+                 dietaryAgg.specials.push({ 
+                    text: r.notes.dietary, 
+                    guestName: r.customer.lastName 
+                });
+            }
+        });
+
         const dayStats = {
             totalPax: dayRes.reduce((s, r) => s + r.partySize, 0),
             premiumPax: dayRes.filter(r => r.packageType === 'premium').reduce((s, r) => s + r.partySize, 0),
@@ -132,8 +166,7 @@ export const PlanningManager = () => {
             preDrinks: dayRes.reduce((s, r) => s + (r.addons.find(a => a.id === 'pre-drinks')?.quantity || 0), 0),
             afterDrinks: dayRes.reduce((s, r) => s + (r.addons.find(a => a.id === 'after-drinks')?.quantity || 0), 0),
             
-            dietary: dayRes.filter(r => r.notes.dietary).length,
-            dietarySummary: Array.from(new Set(dayRes.filter(r => r.notes.dietary).map(r => r.notes.dietary))).join(', ')
+            dietaryAgg // New Aggregated Structure
         };
         
         days.push({ date: d, dStr, event, show, stats: dayStats });
@@ -452,7 +485,7 @@ export const PlanningManager = () => {
 
       </div>
       ) : (
-      // --- WEEK REPORT LAYOUT ---
+      // --- WEEK REPORT LAYOUT (UPDATED FOR FULL DETAILS) ---
       <div className="bg-white text-black min-h-[297mm] shadow-2xl rounded-sm print:shadow-none print:w-full print:fixed print:top-0 print:left-0 print:m-0 print:h-auto print:z-[9999] overflow-hidden">
          <div className="p-8 border-b-4 border-black print:p-6">
             <h1 className="text-4xl font-black uppercase tracking-tighter mb-2">Week Overzicht</h1>
@@ -478,13 +511,16 @@ export const PlanningManager = () => {
                   {weekOverview.length === 0 && (
                       <tr><td colSpan={6} className="p-12 text-center text-gray-400 italic">Geen events deze week.</td></tr>
                   )}
-                  {weekOverview.map((day, i) => (
+                  {weekOverview.map((day, i) => {
+                     const hasDiets = Object.keys(day.stats.dietaryAgg.standard).length > 0 || day.stats.dietaryAgg.specials.length > 0;
+                     
+                     return (
                      <tr key={day.dStr} className={`border-b border-gray-300 break-inside-avoid ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
-                        <td className="p-3 font-bold border-r border-gray-300">
+                        <td className="p-3 font-bold border-r border-gray-300 align-top">
                            <div className="uppercase text-xs text-gray-500">{day.date.toLocaleDateString('nl-NL', {weekday:'short'})}</div>
                            <div className="text-lg text-slate-900">{day.date.getDate()} {day.date.toLocaleDateString('nl-NL', {month:'short'})}</div>
                         </td>
-                        <td className="p-3 border-r border-gray-300">
+                        <td className="p-3 border-r border-gray-300 align-top">
                            {day.event?.type === 'SHOW' ? (
                               <>
                                  <div className="font-bold text-slate-900">{day.show?.name || 'Onbekende Show'}</div>
@@ -494,16 +530,15 @@ export const PlanningManager = () => {
                               <span className="text-gray-400 italic">{day.event?.title || 'Geen Event'}</span>
                            )}
                         </td>
-                        <td className="p-3 text-center border-r border-gray-300 font-black text-lg text-slate-900">
+                        <td className="p-3 text-center border-r border-gray-300 font-black text-lg text-slate-900 align-top">
                            {day.stats.totalPax > 0 ? day.stats.totalPax : <span className="text-gray-300">-</span>}
                         </td>
-                        <td className="p-3 border-r border-gray-300 text-xs text-slate-700">
+                        <td className="p-3 border-r border-gray-300 text-xs text-slate-700 align-top">
                            {day.stats.totalPax > 0 && (
                               <div className="space-y-1">
                                  <div className="flex justify-between"><span>STD:</span> <strong>{day.stats.totalPax - day.stats.premiumPax}</strong></div>
                                  <div className="flex justify-between text-amber-600"><span>PREM:</span> <strong>{day.stats.premiumPax}</strong></div>
                                  
-                                 {/* NEW: Pre/After Drinks Breakdown */}
                                  {(day.stats.preDrinks > 0 || day.stats.afterDrinks > 0) && <div className="border-t border-gray-200 my-1"/>}
                                  
                                  {day.stats.preDrinks > 0 && (
@@ -515,17 +550,38 @@ export const PlanningManager = () => {
                               </div>
                            )}
                         </td>
-                        <td className="p-3 border-r border-gray-300 text-xs">
-                           {day.stats.dietary > 0 ? (
-                              <div className="text-red-600 font-bold">
-                                 {day.stats.dietary}x Dieet
-                                 <div className="text-[10px] font-normal text-gray-600 mt-1 line-clamp-2">{day.stats.dietarySummary}</div>
+                        <td className="p-3 border-r border-gray-300 text-xs align-top">
+                           {hasDiets ? (
+                              <div className="space-y-2">
+                                 {/* Standard Aggregated */}
+                                 {Object.entries(day.stats.dietaryAgg.standard).length > 0 && (
+                                     <div className="flex flex-wrap gap-2 mb-2">
+                                         {Object.entries(day.stats.dietaryAgg.standard).map(([type, count]) => (
+                                             <span key={type} className="inline-block bg-red-100 text-red-800 border border-red-200 px-1.5 py-0.5 rounded font-bold">
+                                                 {count}x {type}
+                                             </span>
+                                         ))}
+                                     </div>
+                                 )}
+                                 
+                                 {/* Specials List */}
+                                 {day.stats.dietaryAgg.specials.length > 0 && (
+                                     <ul className="space-y-1 border-t border-gray-200 pt-1 mt-1">
+                                         {day.stats.dietaryAgg.specials.map((note, idx) => (
+                                            <li key={idx} className="text-slate-700">
+                                               <span className="text-red-600 font-bold mr-1">⚠</span>
+                                               <span className="italic">{note.text}</span>
+                                               <span className="text-[10px] text-gray-500 uppercase ml-1">({note.guestName})</span>
+                                            </li>
+                                         ))}
+                                     </ul>
+                                 )}
                               </div>
                            ) : (
                               <span className="text-gray-300">-</span>
                            )}
                         </td>
-                        <td className="p-3 text-right">
+                        <td className="p-3 text-right align-top">
                            {day.event?.type === 'SHOW' ? (
                               <span className={`text-xs font-bold uppercase px-2 py-1 rounded ${day.event.status === 'OPEN' ? 'bg-emerald-100 text-emerald-800' : day.event.status === 'WAITLIST' ? 'bg-orange-100 text-orange-800' : 'bg-red-100 text-red-800'}`}>
                                  {day.event.status}
@@ -535,7 +591,7 @@ export const PlanningManager = () => {
                            )}
                         </td>
                      </tr>
-                  ))}
+                  )})}
                </tbody>
             </table>
          </div>

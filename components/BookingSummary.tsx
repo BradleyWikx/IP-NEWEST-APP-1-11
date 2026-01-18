@@ -2,10 +2,9 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Input, Button } from './UI';
 import { Ticket, Users, Tag, Wallet, ShoppingBag, X, Check, Loader2 } from 'lucide-react';
-import { getEvents, getShowDefinitions, getVouchers } from '../utils/storage';
+import { getEvents, getShowDefinitions, getVouchers, getPromoRules } from '../utils/storage';
 import { getEffectivePricing, calculateBookingTotals } from '../utils/pricing';
 import { ShowDefinition } from '../types';
-import { MOCK_PROMO_CODES } from '../mock/data';
 
 interface BookingSummaryProps {
   data: any;
@@ -38,7 +37,9 @@ export const BookingSummary = ({ data, onUpdate }: BookingSummaryProps) => {
           addons: data.addons,
           merchandise: data.merchandise,
           promo: data.promo,
-          voucherCode: data.voucherCode
+          voucherCode: data.voucherCode,
+          date: data.date,
+          showId: data.showId
         }, pricing);
         
         setFinancials(totals);
@@ -56,9 +57,12 @@ export const BookingSummary = ({ data, onUpdate }: BookingSummaryProps) => {
 
     const upperCode = code.trim().toUpperCase();
 
-    // 1. Check Promo Codes
-    if (MOCK_PROMO_CODES[upperCode]) {
-        if (onUpdate) onUpdate({ promo: upperCode, voucherCode: '' }); // Clear voucher if promo applied (simplification)
+    // 1. Check Promo Codes (Live from Storage)
+    const promoRules = getPromoRules();
+    const validPromo = promoRules.find(p => p.code.toUpperCase() === upperCode && p.enabled);
+
+    if (validPromo) {
+        if (onUpdate) onUpdate({ promo: upperCode, voucherCode: '' }); // Clear voucher if promo applied
         setIsChecking(false);
         setCode('');
         return;

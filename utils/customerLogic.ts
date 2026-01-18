@@ -6,41 +6,51 @@ export interface CustomerMetrics {
   bookingCount: number;
   lastBookingDate: Date | null;
   firstBookingDate: Date | null;
+  averageSpend: number;
 }
 
-export type CustomerSegment = 'BIG_SPENDER' | 'REGULAR' | 'SLEEPING' | 'NEW' | 'VIP';
+export type CustomerSegment = 'BIG_SPENDER' | 'REGULAR' | 'SLEEPING' | 'NEW' | 'VIP' | 'ONE_TIMER';
 
 export const calculateCustomerMetrics = (history: Reservation[]): CustomerMetrics => {
-  const activeBookings = history.filter(r => r.status !== 'CANCELLED');
+  const activeBookings = history.filter(r => r.status !== 'CANCELLED' && r.status !== 'REQUEST');
   
   const totalSpend = activeBookings.reduce((sum, r) => sum + (r.financials.finalTotal || r.financials.total || 0), 0);
   const bookingCount = activeBookings.length;
+  const averageSpend = bookingCount > 0 ? totalSpend / bookingCount : 0;
   
   let lastBookingDate: Date | null = null;
   let firstBookingDate: Date | null = null;
 
   if (activeBookings.length > 0) {
-    // Sort chronological
+    // Sorteer op datum
     const sorted = [...activeBookings].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     firstBookingDate = new Date(sorted[0].date);
     lastBookingDate = new Date(sorted[sorted.length - 1].date);
   }
 
-  return { totalSpend, bookingCount, lastBookingDate, firstBookingDate };
+  return { totalSpend, bookingCount, lastBookingDate, firstBookingDate, averageSpend };
 };
 
-export const getCustomerSegments = (metrics: CustomerMetrics): CustomerSegment[] => {
+export const getCustomerSegments = (metrics: CustomerMetrics, manualTags: string[] = []): CustomerSegment[] => {
   const segments: CustomerSegment[] = [];
   const now = new Date();
 
-  // Big Spender (> 500 EUR)
-  if (metrics.totalSpend > 500) {
+  // Legacy manual override
+  if (manualTags.includes('VIP')) segments.push('VIP');
+
+  // Big Spender (> 1000 EUR totaal of > 150 EUR gemiddeld)
+  if (metrics.totalSpend > 1000 || metrics.averageSpend > 150) {
     segments.push('BIG_SPENDER');
   }
 
   // Regular (> 3 bookings)
-  if (metrics.bookingCount > 3) {
+  if (metrics.bookingCount >= 3) {
     segments.push('REGULAR');
+  }
+
+  // One Timer (1 booking, in verleden)
+  if (metrics.bookingCount === 1 && metrics.lastBookingDate && metrics.lastBookingDate < now) {
+    segments.push('ONE_TIMER');
   }
 
   // Sleeping (Last booking > 1 year ago)
@@ -71,6 +81,7 @@ export const getSegmentStyle = (segment: CustomerSegment): string => {
     case 'VIP': return 'bg-amber-900/30 text-amber-400 border-amber-900/50';
     case 'SLEEPING': return 'bg-slate-800 text-slate-500 border-slate-700';
     case 'NEW': return 'bg-purple-900/30 text-purple-400 border-purple-900/50';
+    case 'ONE_TIMER': return 'bg-slate-900 text-slate-600 border-slate-800';
     default: return 'bg-slate-900 text-slate-400';
   }
 };
@@ -82,6 +93,7 @@ export const getSegmentLabel = (segment: CustomerSegment): string => {
     case 'VIP': return 'VIP';
     case 'SLEEPING': return 'Slapend';
     case 'NEW': return 'Nieuw';
+    case 'ONE_TIMER': return 'Eenmalig';
     default: return segment;
   }
 };

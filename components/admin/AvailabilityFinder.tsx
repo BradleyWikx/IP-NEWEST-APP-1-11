@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Search, Calendar, Users, Filter, ChevronRight, AlertTriangle, Clock } from 'lucide-react';
 import { Card, Button, Badge } from '../UI';
-import { calendarRepo, getShowDefinitions } from '../../utils/storage';
+import { calendarRepo, getShowDefinitions, bookingRepo } from '../../utils/storage';
 import { ShowDefinition, Availability, CalendarEvent } from '../../types';
 
 interface AvailabilityFinderProps {
@@ -18,10 +18,13 @@ export const AvailabilityFinder: React.FC<AvailabilityFinderProps> = ({ onSelect
   
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [shows, setShows] = useState<ShowDefinition[]>([]);
+  // Use reservations directly to calc occupancy
+  const [reservations, setReservations] = useState<any[]>([]);
 
   useEffect(() => {
     setEvents(calendarRepo.getAll());
     setShows(getShowDefinitions());
+    setReservations(bookingRepo.getAll());
   }, []);
 
   const results = useMemo(() => {
@@ -32,6 +35,14 @@ export const AvailabilityFinder: React.FC<AvailabilityFinderProps> = ({ onSelect
     const endDate = new Date();
     endDate.setDate(endDate.getDate() + parseInt(dateRange));
     const endDateStr = endDate.toISOString().split('T')[0];
+
+    // Pre-calc map for faster lookup in loop
+    const occupancyMap: Record<string, number> = {};
+    reservations.forEach(r => {
+        if (r.status !== 'CANCELLED' && r.status !== 'ARCHIVED' && r.status !== 'WAITLIST') {
+            occupancyMap[r.date] = (occupancyMap[r.date] || 0) + r.partySize;
+        }
+    });
 
     return events
       .filter(e => {
@@ -52,8 +63,8 @@ export const AvailabilityFinder: React.FC<AvailabilityFinderProps> = ({ onSelect
       })
       .map(e => {
         const show = shows.find(s => s.id === (e as any).showId);
-        // Calculate Occupancy
-        const occupancy = (e as any).bookedCount || 0;
+        // Calculate Occupancy Live
+        const occupancy = occupancyMap[e.date] || 0;
         const capacity = (e as any).capacity || 230;
         const remaining = Math.max(0, capacity - occupancy);
         
@@ -76,7 +87,7 @@ export const AvailabilityFinder: React.FC<AvailabilityFinderProps> = ({ onSelect
         };
       })
       .sort((a, b) => b.score - a.score); // Best fit first
-  }, [events, shows, partySize, dateRange, showTypeFilter, dayFilter]);
+  }, [events, shows, partySize, dateRange, showTypeFilter, dayFilter, reservations]);
 
   return (
     <div className="space-y-6">

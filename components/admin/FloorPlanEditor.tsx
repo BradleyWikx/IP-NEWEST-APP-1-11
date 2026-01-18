@@ -28,13 +28,15 @@ interface FloorPlanEditorProps {
   reservations?: Reservation[]; // For Host Mode
   onAssignTable?: (reservationId: string, tableId: string) => void;
   onTableClick?: (tableId: string, reservation?: Reservation) => void;
+  onTableDrop?: (tableId: string, guestId: string) => void; // NEW: Handle Drop
 }
 
 export const FloorPlanEditor: React.FC<FloorPlanEditorProps> = ({ 
   mode, 
   reservations = [], 
   onAssignTable,
-  onTableClick 
+  onTableClick,
+  onTableDrop
 }) => {
   const [tables, setTables] = useState<Table[]>([]);
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
@@ -102,17 +104,27 @@ export const FloorPlanEditor: React.FC<FloorPlanEditorProps> = ({
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
+    e.dataTransfer.dropEffect = mode === 'HOST' ? 'copy' : 'move';
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    if (mode === 'HOST') return;
+  const handleDrop = (e: React.DragEvent, targetTableId?: string) => {
     e.preventDefault();
     setIsDragging(false);
+
+    // HOST MODE DROP (Guest on Table)
+    if (mode === 'HOST') {
+        const guestId = e.dataTransfer.getData('guestId');
+        if (guestId && targetTableId && onTableDrop) {
+            onTableDrop(targetTableId, guestId);
+        }
+        return;
+    }
+
+    // EDIT MODE DROP (Table positioning)
     const id = e.dataTransfer.getData('text/plain');
     const rect = canvasRef.current?.getBoundingClientRect();
     
-    if (rect) {
+    if (rect && id && !targetTableId) {
       const x = ((e.clientX - rect.left) / rect.width) * 100;
       const y = ((e.clientY - rect.top) / rect.height) * 100;
       updateTable(id, { x, y });
@@ -125,8 +137,9 @@ export const FloorPlanEditor: React.FC<FloorPlanEditorProps> = ({
     if (mode === 'EDIT') return selectedTableId === tableId ? 'bg-amber-500 text-black border-amber-600' : 'bg-slate-800 text-white border-slate-600';
     
     // HOST MODE
-    const res = reservations.find(r => r.tableId === tableId);
-    if (!res) return 'bg-slate-800/50 text-slate-500 border-slate-700 hover:bg-slate-800'; // Empty
+    const res = reservations.find(r => r.tableId === tableId && r.status !== BookingStatus.CANCELLED);
+    
+    if (!res) return 'bg-slate-800/50 text-slate-500 border-slate-700 hover:bg-slate-700/80'; // Empty
     
     if (res.status === BookingStatus.ARRIVED) return 'bg-emerald-600 text-white border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.4)]';
     if (res.status === BookingStatus.CONFIRMED) return 'bg-blue-600 text-white border-blue-500';
@@ -181,13 +194,18 @@ export const FloorPlanEditor: React.FC<FloorPlanEditorProps> = ({
 
               {/* Tables */}
               {tables.map(table => {
-                const res = reservations.find(r => r.tableId === table.id);
+                const res = reservations.find(r => r.tableId === table.id && r.status !== BookingStatus.CANCELLED);
                 
                 return (
                   <div
                     key={table.id}
                     draggable={mode === 'EDIT'}
                     onDragStart={(e) => handleDragStart(e, table.id)}
+                    onDragOver={(e) => {
+                        e.preventDefault();
+                        if (mode === 'HOST') e.dataTransfer.dropEffect = 'copy';
+                    }}
+                    onDrop={(e) => handleDrop(e, table.id)}
                     onClick={() => {
                         setSelectedTableId(table.id);
                         if (onTableClick) onTableClick(table.id, res);

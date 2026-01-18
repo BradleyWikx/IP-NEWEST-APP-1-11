@@ -79,14 +79,18 @@ export const CalendarLegend = () => (
 );
 
 export const DateTile: React.FC<CalendarDayProps> = ({ day, onClick, isAdmin, isDense, isSelected, isBulkMode }) => {
-  const { date, isCurrentMonth, isToday, event, show, status, theme, waitlistCount } = day;
+  const { date, isCurrentMonth, isToday, isPast, event, show, status, theme, waitlistCount } = day;
   
-  const opacity = isCurrentMonth ? 'opacity-100' : 'opacity-30 grayscale';
+  // Past dates are dimmed heavily.
+  const opacity = isPast 
+    ? 'opacity-20 grayscale pointer-events-none' 
+    : (isCurrentMonth ? 'opacity-100' : 'opacity-30 grayscale');
+
   const isWeekend = date.getDay() === 0 || date.getDay() === 6;
   const isShow = event?.type === 'SHOW';
   
   const heightClass = isDense ? 'min-h-[70px] md:min-h-[90px]' : 'min-h-[80px] md:min-h-[120px]';
-  const hoverClass = !isBulkMode ? (event || isAdmin ? 'cursor-pointer hover:border-slate-500 transition-all' : 'cursor-default') : '';
+  const hoverClass = !isBulkMode && !isPast ? (event || isAdmin ? 'cursor-pointer hover:border-slate-500 transition-all' : 'cursor-default') : '';
   
   // Calculate Occupancy Ratio
   const booked = (event as any)?.bookedCount || 0;
@@ -136,7 +140,6 @@ export const DateTile: React.FC<CalendarDayProps> = ({ day, onClick, isAdmin, is
     } else if (status === 'OPEN') {
       accentBorder = `border-l-2 border-l-${theme.primary}-500`;
       
-      // NEW: Urgency Badge
       if (isAlmostFull) {
         badge = (
           <div className="absolute top-0 right-0 bg-amber-500 text-black text-[8px] md:text-[9px] px-2 py-0.5 rounded-bl-lg font-bold uppercase tracking-wider z-20 shadow-md flex items-center animate-pulse">
@@ -187,7 +190,7 @@ export const DateTile: React.FC<CalendarDayProps> = ({ day, onClick, isAdmin, is
 
   return (
     <div 
-      onClick={() => onClick(day)}
+      onClick={() => !isPast && onClick(day)}
       className={`
         relative ${heightClass} p-2 border-b border-r flex flex-col justify-between transition-all duration-200 overflow-hidden
         ${opacity} ${finalBg} ${finalBorder} ${hoverClass} ${accentBorder}
@@ -231,10 +234,11 @@ export const DateTile: React.FC<CalendarDayProps> = ({ day, onClick, isAdmin, is
 };
 
 export const AgendaItem: React.FC<CalendarDayProps> = ({ day, onClick, isAdmin }) => {
-  const { date, event, show, theme, status, waitlistCount } = day;
+  const { date, event, show, theme, status, waitlistCount, isPast } = day;
   
   const isShow = event?.type === 'SHOW';
-  if (!event || (!isAdmin && !isShow)) return null;
+  // Filter out past events in agenda view for non-admins (though hook handles this too)
+  if (!event || (!isAdmin && (!isShow || isPast))) return null;
 
   const dayName = date.toLocaleDateString('nl-NL', { weekday: 'short' });
   const dayNum = date.getDate();
@@ -343,6 +347,7 @@ export const CalendarGrid = ({ days, onDayClick, isAdmin, isDense, isBulkMode, s
 export const CalendarAgenda = ({ days, onDayClick, isAdmin }: any) => {
   const listDays = days.filter((d: any) => d.isCurrentMonth);
   // Filter for items that actually have content to show
+  // Hook logic ensures past events are undefined for non-admins, effectively filtering them here
   const activeDays = listDays.filter((d: any) => d.event && (isAdmin || d.event.type === 'SHOW'));
 
   return (

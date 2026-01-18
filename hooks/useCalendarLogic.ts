@@ -3,7 +3,6 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { calendarRepo, getShowDefinitions, bookingRepo, waitlistRepo } from '../utils/storage';
 import { ShowDefinition, Availability, CalendarEvent, ShowEvent } from '../types';
 import { useIsMobile, useMediaQuery } from './useMediaQuery';
-import { toLocalISOString } from '../utils/dateHelpers';
 import { calculateEventStatus } from '../utils/status';
 
 interface DayData {
@@ -11,6 +10,7 @@ interface DayData {
   dateStr: string;
   isCurrentMonth: boolean;
   isToday: boolean;
+  isPast: boolean;
   event?: CalendarEvent;
   show?: ShowDefinition;
   status: Availability;
@@ -22,6 +22,11 @@ interface DayData {
     primary: string;
   };
 }
+
+// Helper for strict local date YYYY-MM-DD
+const toLocalDateStr = (d: Date) => {
+  return d.toLocaleDateString('en-CA'); // Returns YYYY-MM-DD in local time
+};
 
 export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER' = 'CUSTOMER') => {
   const [currentMonth, setCurrentMonth] = useState(initialDate ? new Date(initialDate) : new Date());
@@ -45,8 +50,6 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
     }
   }, [isMobile, isTablet]);
 
-  // Fix: Wrap refreshData in useCallback to maintain stable identity reference
-  // This prevents infinite useEffect loops in components that depend on refreshData
   const refreshData = useCallback(() => {
     const rawEvents = calendarRepo.getAll();
     const allReservations = bookingRepo.getAll();
@@ -62,7 +65,6 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
     setWaitlistCounts(wlCounts);
 
     // 2. Dynamically calculate booked count based on active reservations
-    // CRITICAL: REQUESTs must count to prevent overbooking while pending approval
     const enrichedEvents = rawEvents.map(event => {
       if (event.type === 'SHOW') {
         const bookingsForDate = allReservations.filter(r => 
@@ -71,11 +73,9 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
           r.status !== 'ARCHIVED' &&
           r.status !== 'NOSHOW' && 
           r.status !== 'WAITLIST'
-          // Implicitly includes: CONFIRMED, OPTION, ARRIVED, INVITED, and REQUEST
         );
         
-        // Sum total people
-        const realBookedCount = bookingsForDate.reduce((sum, r) => sum + r.partySize, 0);
+        const realBookedCount = bookingsForDate.reduce((sum, r) => sum + (Number(r.partySize) || 0), 0);
         
         return { 
           ...event, 
@@ -120,12 +120,12 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
     
     for (let i = 0; i < europeanStartDay; i++) {
       const d = new Date(year, month, -(europeanStartDay - 1 - i));
-      days.push(createDayData(d, false, visibleEvents, shows, waitlistCounts));
+      days.push(createDayData(d, false, visibleEvents, shows, waitlistCounts, mode));
     }
     
     for (let d = 1; d <= lastDay.getDate(); d++) {
       const date = new Date(year, month, d);
-      days.push(createDayData(date, true, visibleEvents, shows, waitlistCounts));
+      days.push(createDayData(date, true, visibleEvents, shows, waitlistCounts, mode));
     }
     
     const endDay = lastDay.getDay();
@@ -134,7 +134,7 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
     
     for (let i = 1; i <= padEnd; i++) {
       const d = new Date(year, month + 1, i);
-      days.push(createDayData(d, false, visibleEvents, shows, waitlistCounts));
+      days.push(createDayData(d, false, visibleEvents, shows, waitlistCounts, mode));
     }
     
     return days;
@@ -157,17 +157,26 @@ const createDayData = (
   isCurrentMonth: boolean, 
   events: CalendarEvent[], 
   shows: ShowDefinition[],
-  waitlistCounts: Record<string, number>
+  waitlistCounts: Record<string, number>,
+  mode: 'ADMIN' | 'CUSTOMER'
 ): DayData => {
-  const dateStr = toLocalISOString(date); 
-  const todayStr = toLocalISOString(new Date());
+  const dateStr = toLocalDateStr(date);
+  const todayStr = toLocalDateStr(new Date());
   
-  const event = events.find(e => e.date === dateStr);
+  const isPast = dateStr < todayStr;
+  const isToday = dateStr === todayStr;
+  
+  let event = events.find(e => e.date === dateStr);
   const wlCount = waitlistCounts[dateStr] || 0;
   
   let show = undefined;
   let theme = { bg: 'bg-slate-900', text: 'text-slate-500', border: 'border-slate-800', primary: 'slate' };
   let status: Availability = 'CLOSED';
+
+  // CUSTOMER RULE: Hide past events completely
+  if (mode === 'CUSTOMER' && isPast) {
+    event = undefined;
+  }
 
   if (event) {
     if (event.type === 'SHOW') {
@@ -175,10 +184,9 @@ const createDayData = (
       show = shows.find(s => s.id === showEvent.showId);
       const profile = show?.profiles.find(p => p.id === showEvent.profileId) || show?.profiles[0];
       
-      // STRICT STATUS CALCULATION
       status = calculateEventStatus(
-        showEvent.bookedCount, 
-        showEvent.capacity, 
+        showEvent.bookedCount || 0, 
+        Number(showEvent.capacity) || 230, 
         wlCount, 
         showEvent.status
       );
@@ -207,7 +215,8 @@ const createDayData = (
     date,
     dateStr,
     isCurrentMonth,
-    isToday: dateStr === todayStr,
+    isToday,
+    isPast,
     event,
     show,
     status,

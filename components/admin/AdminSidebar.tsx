@@ -25,7 +25,8 @@ import {
   Trash2,
   Database,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  FileText
 } from 'lucide-react';
 import { AdminRole } from '../../types';
 
@@ -78,6 +79,7 @@ const MENU_STRUCTURE: NavGroup[] = [
     title: 'Financiën & Product',
     items: [
       { label: 'Betalingen', icon: DollarSign, path: '/admin/payments', roles: ['ADMIN', 'EDITOR'] },
+      { label: 'Facturen', icon: FileText, path: '/admin/invoices', roles: ['ADMIN', 'EDITOR'] },
       { label: 'Vouchers', icon: Wallet, path: '/admin/vouchers', roles: ['ADMIN'] },
       { label: 'Merchandise', icon: ShoppingBag, path: '/admin/merchandise', roles: ['ADMIN'] },
       { label: 'Promoties', icon: Tag, path: '/admin/promos', roles: ['ADMIN', 'EDITOR'] },

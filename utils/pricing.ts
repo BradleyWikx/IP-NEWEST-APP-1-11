@@ -1,13 +1,12 @@
 
 import { 
-  EventDate, 
   ShowDefinition, 
   AddonSelection, 
   MerchandiseSelection,
   Reservation,
   ReservationFinancials,
   AdminPriceOverride,
-  LineItem
+  ShowEvent
 } from '../types';
 import { 
   MOCK_ADDONS, 
@@ -16,10 +15,16 @@ import {
 import { getVouchers, getEvents, getShowDefinitions } from './storage';
 import { calculatePromoDiscount, PricingContext } from '../logic/discountEngine';
 
-// --- Constants ---
-export const VOUCHER_SHIPPING_FEE = 4.00;
-
 // --- Interfaces ---
+
+export interface LineItem {
+  id: string;
+  label: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+  category: 'TICKET' | 'ADDON' | 'MERCH' | 'FEE' | 'DISCOUNT' | 'ADJUSTMENT' | 'SHIPPING';
+}
 
 export interface PricingBreakdown {
   subtotal: number;
@@ -46,23 +51,11 @@ export interface EffectivePricing {
 // --- Core Functions ---
 
 /**
- * Calculates total for voucher order including shipping
- */
-export const calculateVoucherTotal = (baseAmount: number, deliveryMethod: 'DIGITAL' | 'PICKUP' | 'POST') => {
-  const shipping = deliveryMethod === 'POST' ? VOUCHER_SHIPPING_FEE : 0;
-  return {
-    subtotal: baseAmount,
-    shipping,
-    total: baseAmount + shipping
-  };
-};
-
-/**
  * Determines the final base prices for a specific event date.
  * Hierarchy: Event Date Override > Show Profile > Defaults
  */
 export const getEffectivePricing = (
-  event: EventDate, 
+  event: ShowEvent, 
   show: ShowDefinition
 ): EffectivePricing => {
   // 1. Identify Profile
@@ -92,6 +85,20 @@ export const getEffectivePricing = (
 
   return pricing;
 };
+
+/**
+ * Calculates total for voucher order including shipping
+ */
+export const calculateVoucherTotal = (baseAmount: number, deliveryMethod: 'DIGITAL' | 'PICKUP' | 'POST') => {
+  const shipping = deliveryMethod === 'POST' ? 4.00 : 0; // Fixed fee for now, can be imported constant
+  return {
+    subtotal: baseAmount,
+    shipping,
+    total: baseAmount + shipping
+  };
+};
+
+export const VOUCHER_SHIPPING_FEE = 4.00;
 
 /**
  * Calculates the complete financial breakdown for a booking.

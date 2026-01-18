@@ -4,7 +4,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   Calendar, Users, CheckCircle2, AlertCircle, ShoppingBag, 
   CreditCard, FileText, User, Tag, ArrowRight, Save, X, RotateCcw,
-  Zap, Search, ChevronDown, ChevronUp
+  Zap, Search, ChevronDown, ChevronUp, AlertTriangle, Building2, MapPin, Phone, Mail
 } from 'lucide-react';
 import { Button, Card, Input, Stepper } from '../UI';
 import { AvailabilityFinder } from './AvailabilityFinder';
@@ -16,10 +16,26 @@ import {
 import { calculateBookingTotals, getEffectivePricing } from '../../utils/pricing';
 import { triggerEmail } from '../../utils/emailEngine';
 import { logAuditAction } from '../../utils/auditLogger';
-import { Reservation, BookingStatus, EventDate, ShowDefinition, Customer } from '../../types';
+import { Reservation, BookingStatus, ShowEvent, ShowDefinition, Customer } from '../../types';
 import { MOCK_ADDONS } from '../../mock/data';
+import { toLocalISOString } from '../../utils/dateHelpers';
 
 const STEPS = ['Datum & Show', 'Details & Extra\'s', 'Klantgegevens', 'Status & Betaling'];
+
+const PHONE_CODES = [
+  { code: '+31', label: 'NL (+31)' },
+  { code: '+32', label: 'BE (+32)' },
+  { code: '+49', label: 'DE (+49)' },
+  { code: '+44', label: 'UK (+44)' },
+  { code: '+33', label: 'FR (+33)' },
+];
+
+const COUNTRIES = [
+  { code: 'NL', label: 'Nederland' },
+  { code: 'BE', label: 'België' },
+  { code: 'DE', label: 'Duitsland' },
+  { code: 'OTHER', label: 'Anders' },
+];
 
 export const AdminBookingWizard = () => {
   const navigate = useNavigate();
@@ -40,9 +56,9 @@ export const AdminBookingWizard = () => {
     merchandise: [] as { id: string; quantity: number }[],
     customer: {
       salutation: 'Dhr.',
-      firstName: '', lastName: '', email: '', phone: '',
+      firstName: '', lastName: '', email: '', phone: '', phoneCode: '+31',
       street: '', houseNumber: '', zip: '', city: '', country: 'NL',
-      companyName: ''
+      companyName: '', billingInstructions: ''
     },
     notes: { dietary: '', isCelebrating: false, celebrationText: '', internal: '' },
     // Admin Specifics
@@ -54,17 +70,21 @@ export const AdminBookingWizard = () => {
     isPaid: false,
     paymentMethod: 'FACTUUR',
     sendEmail: true,
-    ignoreAddonThresholds: false
+    ignoreAddonThresholds: false,
+    alternativeDate: ''
   });
 
   // Local state for expiry picker
   const [expiryType, setExpiryType] = useState('1WEEK');
 
   // Derived Data
-  const [selectedEvent, setSelectedEvent] = useState<EventDate | null>(null);
+  const [selectedEvent, setSelectedEvent] = useState<ShowEvent | null>(null);
   const [selectedShow, setSelectedShow] = useState<ShowDefinition | null>(null);
   const [financials, setFinancials] = useState<any>(null);
   const [showMobileSummary, setShowMobileSummary] = useState(false);
+  
+  // Capacity Check
+  const [capacityData, setCapacityData] = useState<{ booked: number, max: number } | null>(null);
 
   // Customer Search State
   const [customerQuery, setCustomerQuery] = useState('');
@@ -94,7 +114,7 @@ export const AdminBookingWizard = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [step, formData]); // Re-bind on state change for valid submit
 
-  // --- CALCULATIONS ---
+  // --- CALCULATIONS & DATA FETCH ---
   useEffect(() => {
     if (formData.date && formData.showId) {
       const events = getEvents();
@@ -105,6 +125,20 @@ export const AdminBookingWizard = () => {
       if (event && show) {
         setSelectedEvent(event);
         setSelectedShow(show);
+        
+        // --- LIVE CAPACITY CHECK ---
+        const allRes = bookingRepo.getAll();
+        const activeRes = allRes.filter(r => 
+            r.date === formData.date && 
+            r.status !== 'CANCELLED' && 
+            r.status !== 'ARCHIVED' && 
+            r.status !== 'NOSHOW' &&
+            r.status !== 'WAITLIST'
+        );
+        const booked = activeRes.reduce((s, r) => s + r.partySize, 0);
+        // FIX: Force Number type to prevent string comparison errors
+        setCapacityData({ booked, max: Number(event.capacity) || 230 });
+        // --- END CHECK ---
         
         const pricingProfile = getEffectivePricing(event, show);
         
@@ -161,10 +195,10 @@ export const AdminBookingWizard = () => {
         
         if (expiryType === '1WEEK') {
             newDate.setDate(today.getDate() + 7);
-            setFormData(prev => ({ ...prev, optionExpiry: newDate.toISOString().split('T')[0] }));
+            setFormData(prev => ({ ...prev, optionExpiry: toLocalISOString(newDate) }));
         } else if (expiryType === '2WEEKS') {
             newDate.setDate(today.getDate() + 14);
-            setFormData(prev => ({ ...prev, optionExpiry: newDate.toISOString().split('T')[0] }));
+            setFormData(prev => ({ ...prev, optionExpiry: toLocalISOString(newDate) }));
         }
         // If CUSTOM, we don't auto-update, let user pick
     }
@@ -179,16 +213,31 @@ export const AdminBookingWizard = () => {
         lastName: customer.lastName,
         email: customer.email,
         phone: customer.phone,
+        phoneCode: customer.phoneCode || '+31',
         street: customer.street || '',
         houseNumber: customer.houseNumber || '',
         zip: customer.zip || '',
         city: customer.city || '',
         country: customer.country || 'NL',
-        companyName: customer.companyName || ''
+        companyName: customer.companyName || '',
+        billingInstructions: customer.billingInstructions || ''
       }
     }));
     setShowSuggestions(false);
     setCustomerQuery('');
+  };
+
+  const handleQuickAddress = () => {
+    setFormData(prev => ({
+      ...prev,
+      customer: {
+        ...prev.customer,
+        street: 'N.t.b.',
+        houseNumber: '.',
+        zip: '0000XX',
+        city: 'N.t.b.'
+      }
+    }));
   };
 
   // --- ACTIONS ---
@@ -201,6 +250,8 @@ export const AdminBookingWizard = () => {
   const handleSubmit = async () => {
     if (!financials) return;
 
+    const fullPhone = `${formData.customer.phoneCode} ${formData.customer.phone}`;
+
     // 1. Create Reservation Object
     const resId = `RES-${Date.now()}`;
     const newReservation: Reservation = {
@@ -210,6 +261,7 @@ export const AdminBookingWizard = () => {
       customer: {
         id: `CUST-${Date.now()}`,
         ...formData.customer,
+        phone: fullPhone,
         address: `${formData.customer.street} ${formData.customer.houseNumber}, ${formData.customer.city}`
       },
       date: formData.date,
@@ -219,6 +271,7 @@ export const AdminBookingWizard = () => {
       packageType: formData.packageType,
       addons: formData.addons,
       merchandise: formData.merchandise,
+      alternativeDate: formData.alternativeDate,
       financials: {
         total: financials.subtotal,
         subtotal: financials.subtotal,
@@ -233,7 +286,7 @@ export const AdminBookingWizard = () => {
       },
       notes: formData.notes,
       optionExpiresAt: formData.status === 'OPTION' && formData.optionExpiry ? formData.optionExpiry : undefined,
-      startTime: selectedEvent?.startTime || '19:30'
+      startTime: selectedEvent?.times?.start || '19:30'
     };
 
     // 2. Save
@@ -363,13 +416,26 @@ export const AdminBookingWizard = () => {
              <Card className="p-6 bg-slate-900 border-slate-800">
                <h3 className="text-lg font-bold text-white mb-4 flex items-center"><Users className="mr-2 text-amber-500"/> Basis</h3>
                <div className="grid grid-cols-2 gap-4">
-                  <Input 
-                    label="Aantal Personen" 
-                    type="number" 
-                    autoFocus={!!prefill?.date}
-                    value={formData.totalGuests}
-                    onChange={(e: any) => setFormData({...formData, totalGuests: parseInt(e.target.value) || 1})}
-                  />
+                  <div className="space-y-1">
+                      <Input 
+                        label="Aantal Personen" 
+                        type="number" 
+                        autoFocus={!!prefill?.date}
+                        value={formData.totalGuests}
+                        onChange={(e: any) => setFormData({...formData, totalGuests: parseInt(e.target.value) || 1})}
+                      />
+                      {/* CAPACITY WARNING */}
+                      {capacityData && (capacityData.booked + formData.totalGuests) > capacityData.max && (
+                          <div className="flex items-center text-xs text-amber-500 bg-amber-900/20 p-2 rounded border border-amber-900/50 mt-2">
+                             <AlertTriangle size={14} className="mr-2 shrink-0" />
+                             <span>
+                                Let op: <strong>{capacityData.booked}/{capacityData.max}</strong> bezet. 
+                                Nieuw totaal: <strong>{capacityData.booked + formData.totalGuests}</strong> (Overboeking)
+                             </span>
+                          </div>
+                      )}
+                  </div>
+                  
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Arrangement</label>
                     <select 
@@ -507,16 +573,94 @@ export const AdminBookingWizard = () => {
                       <Input label="Achternaam" value={formData.customer.lastName} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, lastName: e.target.value}})} />
                    </div>
                    <div className="md:col-span-2">
-                      <Input label="Email" value={formData.customer.email} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, email: e.target.value}})} />
+                      <Input label="Email" value={formData.customer.email} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, email: e.target.value}})} className="col-span-2" />
                    </div>
                    
-                   <div className="md:col-span-2">
-                      <Input label="Telefoon" value={formData.customer.phone} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, phone: e.target.value}})} />
-                   </div>
-                   <div className="md:col-span-2">
-                     <Input label="Bedrijf (Optioneel)" value={formData.customer.companyName} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, companyName: e.target.value}})} />
+                   {/* Phone Row */}
+                   <div className="md:col-span-2 flex gap-2">
+                      <div className="w-1/3">
+                          <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-2">Code</label>
+                          <select 
+                              className="w-full px-2 py-3 bg-black/40 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500 appearance-none"
+                              value={formData.customer.phoneCode}
+                              onChange={(e) => setFormData({...formData, customer: {...formData.customer, phoneCode: e.target.value}})}
+                          >
+                              {PHONE_CODES.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
+                          </select>
+                      </div>
+                      <div className="flex-grow">
+                          <Input label="Telefoon" value={formData.customer.phone} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, phone: e.target.value}})} />
+                      </div>
                    </div>
                 </div>
+
+                <div className="pt-4 border-t border-slate-800">
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center">
+                        <MapPin size={14} className="mr-2"/> Adresgegevens
+                    </h4>
+                    <Button variant="secondary" onClick={handleQuickAddress} className="h-6 text-[10px] px-2 bg-slate-800 border-slate-700">
+                        Adres Later Invullen
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-4 gap-4">
+                     <div className="col-span-4 md:col-span-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-2">Land</label>
+                        <select 
+                            className="w-full px-4 py-3 bg-black/40 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500 appearance-none"
+                            value={formData.customer.country || 'NL'}
+                            onChange={(e) => setFormData({...formData, customer: { ...formData.customer, country: e.target.value }})}
+                        >
+                            {COUNTRIES.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
+                        </select>
+                     </div>
+                     <div className="col-span-3">
+                       <Input label="Straat *" value={formData.customer.street} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, street: e.target.value}})} />
+                     </div>
+                     <div className="col-span-1">
+                       <Input label="Huisnr *" value={formData.customer.houseNumber} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, houseNumber: e.target.value}})} />
+                     </div>
+                     <div className="col-span-1">
+                       <Input label="Postcode *" value={formData.customer.zip} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, zip: e.target.value}})} />
+                     </div>
+                     <div className="col-span-3">
+                       <Input label="Woonplaats *" value={formData.customer.city} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, city: e.target.value}})} />
+                     </div>
+                  </div>
+               </div>
+
+                {/* Business Toggle */}
+               <div className="pt-2 border-t border-slate-800">
+                  <label className="flex items-center space-x-3 cursor-pointer p-2 rounded hover:bg-slate-950/50 transition-colors w-fit">
+                     <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${formData.customer.companyName ? 'bg-blue-500 border-blue-500' : 'border-slate-600 bg-slate-900'}`}>
+                        {formData.customer.companyName && <CheckCircle2 size={14} className="text-white"/>}
+                     </div>
+                     <input 
+                       type="checkbox" 
+                       className="hidden"
+                       checked={!!formData.customer.companyName}
+                       onChange={(e) => setFormData({...formData, customer: { ...formData.customer, companyName: e.target.checked ? 'Bedrijf' : '' }})}
+                     />
+                     <span className="font-bold text-white text-sm flex items-center"><Building2 size={16} className="mr-2 text-blue-500"/> Zakelijke boeking?</span>
+                  </label>
+
+                  {formData.customer.companyName && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 animate-in slide-in-from-top-2">
+                          <Input 
+                             label="Bedrijfsnaam" 
+                             value={formData.customer.companyName === 'Bedrijf' ? '' : formData.customer.companyName} 
+                             onChange={(e: any) => setFormData({...formData, customer: { ...formData.customer, companyName: e.target.value }})}
+                             placeholder="Bedrijfsnaam BV"
+                          />
+                          <Input 
+                             label="Opmerkingen Factuur" 
+                             value={formData.customer.billingInstructions || ''} 
+                             onChange={(e: any) => setFormData({...formData, customer: { ...formData.customer, billingInstructions: e.target.value }})}
+                             placeholder="Kostenplaats, PO-nummer, etc."
+                          />
+                      </div>
+                  )}
+               </div>
              </Card>
 
              <Card className="p-6 bg-slate-900 border-slate-800 space-y-4">

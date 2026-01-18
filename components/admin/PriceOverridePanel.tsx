@@ -1,5 +1,6 @@
+
 import React, { useState, useEffect } from 'react';
-import { Reservation, AdminPriceOverride, ShowDefinition, EventDate } from '../../types';
+import { Reservation, AdminPriceOverride, ShowDefinition } from '../../types';
 import { Button, Input, Card } from '../UI';
 import { AlertCircle, CheckCircle2, RotateCcw, Save, DollarSign, Calculator } from 'lucide-react';
 import { getEffectivePricing, calculateBookingTotals } from '../../utils/pricing';

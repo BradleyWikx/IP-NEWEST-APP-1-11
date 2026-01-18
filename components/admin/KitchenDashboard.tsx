@@ -2,341 +2,341 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Users, Utensils, Wine, Clock, RefreshCw, 
-  ChefHat, AlertTriangle, ClipboardList, StickyNote, CheckCircle2, ArrowRight
+  ChefHat, AlertTriangle, Calendar, Printer, 
+  ChevronLeft, ChevronRight, BarChart3, Leaf, Wheat, Milk, Info,
+  CheckCircle2
 } from 'lucide-react';
-import { Card, Badge, Button } from '../UI';
+import { Card, Button } from '../UI';
 import { bookingRepo } from '../../utils/storage';
 import { Reservation, BookingStatus } from '../../types';
 import { MOCK_ADDONS } from '../../mock/data';
 
-// Local storage key for ticket statuses
-const KDS_STATUS_KEY = 'grand_stage_kds_status';
+// --- TYPES ---
 
-type TicketStatus = 'PREP' | 'COOKING' | 'READY' | 'SERVED';
-
-interface KitchenTicket {
-  id: string; // Reservation ID
-  tableNumber: string;
-  guestName: string;
-  pax: number;
-  time: string;
-  type: 'STANDARD' | 'PREMIUM';
-  dietary: string;
-  comments: string;
-  status: TicketStatus;
+interface DailyStats {
+  date: string;
+  totalPax: number;
+  standardPax: number;
+  premiumPax: number;
+  dietaryCounts: Record<string, number>;
+  dietaryDetails: { type: string; guest: string; table: string; note: string }[];
+  addons: Record<string, number>;
 }
 
-const STATUS_COLORS = {
-  PREP: 'bg-slate-800 border-slate-700',
-  COOKING: 'bg-blue-900/20 border-blue-500/50',
-  READY: 'bg-emerald-900/20 border-emerald-500/50',
-  SERVED: 'bg-slate-900 border-slate-800 opacity-50'
+// --- HELPER COMPONENTS ---
+
+const StatBox = ({ label, value, icon: Icon, color = "slate", sub }: any) => (
+  <Card className={`p-4 border-${color}-900/30 bg-${color}-900/10 flex items-center justify-between`}>
+    <div>
+      <p className={`text-[10px] font-bold uppercase tracking-widest text-${color}-400 mb-1`}>{label}</p>
+      <p className="text-3xl font-black text-white">{value}</p>
+      {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
+    </div>
+    <div className={`p-3 rounded-xl bg-${color}-900/20 text-${color}-500`}>
+      <Icon size={24} />
+    </div>
+  </Card>
+);
+
+interface AllergyCardProps {
+  type: string;
+  count: number;
+  details: { type: string; guest: string; table: string; note: string }[];
+}
+
+const AllergyCard: React.FC<AllergyCardProps> = ({ type, count, details }) => {
+  const [expanded, setExpanded] = useState(false);
+  
+  // Icon mapping
+  let Icon = AlertTriangle;
+  let colorClass = "text-red-500 bg-red-900/20 border-red-900/50";
+  
+  if (type.toLowerCase().includes('vega')) { Icon = Leaf; colorClass = "text-emerald-500 bg-emerald-900/20 border-emerald-900/50"; }
+  if (type.toLowerCase().includes('gluten')) { Icon = Wheat; colorClass = "text-amber-500 bg-amber-900/20 border-amber-900/50"; }
+  if (type.toLowerCase().includes('lacto')) { Icon = Milk; colorClass = "text-blue-400 bg-blue-900/20 border-blue-900/50"; }
+
+  return (
+    <div className={`rounded-xl border transition-all ${colorClass} ${expanded ? 'row-span-2' : ''}`}>
+      <div 
+        className="p-4 flex items-center justify-between cursor-pointer"
+        onClick={() => setExpanded(!expanded)}
+      >
+        <div className="flex items-center space-x-3">
+          <Icon size={20} />
+          <span className="font-bold text-white uppercase tracking-wider">{type}</span>
+        </div>
+        <span className="text-2xl font-black">{count}x</span>
+      </div>
+      
+      {expanded && (
+        <div className="px-4 pb-4 pt-0 border-t border-white/10 mt-2">
+          <p className="text-[10px] font-bold uppercase text-white/50 mb-2 pt-2">Tafels & Gasten</p>
+          <div className="space-y-1 max-h-40 overflow-y-auto custom-scrollbar">
+            {details.map((d, i) => (
+              <div key={i} className="flex justify-between text-xs text-white/90">
+                <span>{d.guest} {d.table !== '?' ? `(Tafel ${d.table})` : ''}</span>
+                {d.note && <span className="italic opacity-70">- {d.note}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
-const DANGER_KEYWORDS = ['NOTEN', 'PINDA', 'SCHAALDIER', 'KREEFT', 'GARNAAL', 'GLUTEN', 'LACTOSE', 'ALLERGIE'];
-
 export const KitchenDashboard = () => {
+  const [selectedDate, setSelectedDate] = useState(new Date());
   const [loading, setLoading] = useState(false);
-  const [lastRefreshed, setLastRefreshed] = useState(new Date());
-  
-  // Data State
-  const [tickets, setTickets] = useState<KitchenTicket[]>([]);
-  const [productionSummary, setProductionSummary] = useState<{name: string, count: number}[]>([]);
-  const [addonSummary, setAddonSummary] = useState<{name: string, count: number}[]>([]);
-  const [dangerAlerts, setDangerAlerts] = useState<{keyword: string, count: number, tables: string[]}[]>([]);
-  
-  const today = new Date().toISOString().split('T')[0];
+  const [stats, setStats] = useState<DailyStats | null>(null);
+  const [forecast, setForecast] = useState<{date: Date, count: number}[]>([]);
 
   useEffect(() => {
     refreshData();
-    const interval = setInterval(refreshData, 10000); // Polling every 10s
-    
-    // Listen for local changes to sync multiple tabs
+    const interval = setInterval(refreshData, 30000); // 30s poll
     window.addEventListener('storage-update', refreshData);
     return () => {
-        clearInterval(interval);
-        window.removeEventListener('storage-update', refreshData);
+      clearInterval(interval);
+      window.removeEventListener('storage-update', refreshData);
     };
-  }, []);
+  }, [selectedDate]);
 
   const refreshData = () => {
     setLoading(true);
-    const all = bookingRepo.getAll();
-    const statusMap = JSON.parse(localStorage.getItem(KDS_STATUS_KEY) || '{}');
-    
-    // Filter for TODAY + Active
-    const relevant = all.filter(r => 
-      r.date === today && 
-      r.status !== BookingStatus.CANCELLED && 
-      r.status !== BookingStatus.NOSHOW &&
-      r.status !== BookingStatus.ARCHIVED
+    const allReservations = bookingRepo.getAll();
+    const dateStr = selectedDate.toISOString().split('T')[0];
+
+    // 1. PROCESS DAILY STATS
+    const activeRes = allReservations.filter(r => 
+      r.date === dateStr && 
+      !['CANCELLED', 'ARCHIVED', 'NOSHOW', 'WAITLIST'].includes(r.status)
     );
 
-    // 1. Build Interactive Tickets
-    const newTickets: KitchenTicket[] = relevant.map(r => ({
-        id: r.id,
-        tableNumber: (r as any).tableNumber || '?',
-        guestName: r.customer.lastName,
-        pax: r.partySize,
-        time: r.startTime || '19:30',
-        type: (r.packageType === 'premium' ? 'PREMIUM' : 'STANDARD') as 'STANDARD' | 'PREMIUM',
-        dietary: r.notes.dietary || '',
-        comments: r.notes.comments || '',
-        status: (statusMap[r.id] as TicketStatus) || 'PREP'
-    })).sort((a,b) => {
-        // Sort served to bottom
-        if (a.status === 'SERVED' && b.status !== 'SERVED') return 1;
-        if (a.status !== 'SERVED' && b.status === 'SERVED') return -1;
-        return a.time.localeCompare(b.time);
-    });
+    const newStats: DailyStats = {
+      date: dateStr,
+      totalPax: 0,
+      standardPax: 0,
+      premiumPax: 0,
+      dietaryCounts: {},
+      dietaryDetails: [],
+      addons: {}
+    };
 
-    // 2. Production Summary (Mise-en-place)
-    const productionMap = new Map<string, number>();
-    const dangerMap = new Map<string, { count: number, tables: Set<string> }>();
+    activeRes.forEach(r => {
+      newStats.totalPax += r.partySize;
+      if (r.packageType === 'premium') newStats.premiumPax += r.partySize;
+      else newStats.standardPax += r.partySize;
 
-    relevant.forEach(r => {
-      // Structured Diets
+      // Process Addons (Flatten logic)
+      r.addons.forEach(addon => {
+        const def = MOCK_ADDONS.find(a => a.id === addon.id);
+        const name = def ? def.name : addon.id;
+        newStats.addons[name] = (newStats.addons[name] || 0) + addon.quantity;
+      });
+
+      // Process Dietary (Structured + Comments)
+      const tableNum = (r as any).tableNumber || (r.tableId ? r.tableId.replace('TAB-', '') : '?');
+      const guestName = r.customer.companyName || r.customer.lastName;
+
+      // 1. Structured
       if (r.notes.structuredDietary) {
-        Object.entries(r.notes.structuredDietary).forEach(([key, count]) => {
+        Object.entries(r.notes.structuredDietary).forEach(([type, count]) => {
           if (count > 0) {
-             productionMap.set(key, (productionMap.get(key) || 0) + count);
-             
-             // Check Danger Keywords
-             const upperKey = key.toUpperCase();
-             const matchedKeyword = DANGER_KEYWORDS.find(k => upperKey.includes(k));
-             if (matchedKeyword) {
-                 const entry = dangerMap.get(matchedKeyword) || { count: 0, tables: new Set() };
-                 entry.count += count;
-                 entry.tables.add((r as any).tableNumber || '?');
-                 dangerMap.set(matchedKeyword, entry);
-             }
+            newStats.dietaryCounts[type] = (newStats.dietaryCounts[type] || 0) + count;
+            // Add entry for detail view
+            for(let i=0; i<count; i++) {
+                newStats.dietaryDetails.push({ 
+                    type, 
+                    guest: guestName, 
+                    table: tableNum, 
+                    note: '' 
+                });
+            }
           }
         });
       }
-      
-      // Free Text check for Danger
-      if (r.notes.dietary) {
-          const upperNote = r.notes.dietary.toUpperCase();
-          DANGER_KEYWORDS.forEach(k => {
-              if (upperNote.includes(k) && !Object.keys(r.notes.structuredDietary || {}).some(sk => sk.toUpperCase().includes(k))) {
-                  const entry = dangerMap.get(k) || { count: 0, tables: new Set() };
-                  entry.count += 1; // Assume 1 if in text and not structured
-                  entry.tables.add((r as any).tableNumber || '?');
-                  dangerMap.set(k, entry);
-              }
-          });
+
+      // 2. Free Text (If present and NOT just summarizing structured)
+      // Simple logic: if text exists, add it as a "Special Note" category
+      if (r.notes.dietary && (!r.notes.structuredDietary || Object.keys(r.notes.structuredDietary).length === 0)) {
+         const type = "Overig / Specifiek";
+         newStats.dietaryCounts[type] = (newStats.dietaryCounts[type] || 0) + 1; // Count as 1 entry/group
+         newStats.dietaryDetails.push({
+             type,
+             guest: guestName,
+             table: tableNum,
+             note: r.notes.dietary
+         });
       }
     });
 
-    const prodList = Array.from(productionMap.entries()).map(([name, count]) => ({ name, count }));
+    setStats(newStats);
+
+    // 2. PROCESS FORECAST (Next 7 days)
+    const nextWeek = [];
+    for (let i = 1; i <= 7; i++) {
+      const d = new Date(selectedDate);
+      d.setDate(d.getDate() + i);
+      const dStr = d.toISOString().split('T')[0];
+      
+      const dayCount = allReservations
+        .filter(r => r.date === dStr && !['CANCELLED', 'ARCHIVED', 'NOSHOW', 'WAITLIST'].includes(r.status))
+        .reduce((sum, r) => sum + r.partySize, 0);
+      
+      nextWeek.push({ date: d, count: dayCount });
+    }
+    setForecast(nextWeek);
     
-    // 3. Danger Alerts
-    const dangerList = Array.from(dangerMap.entries()).map(([keyword, data]) => ({
-        keyword,
-        count: data.count,
-        tables: Array.from(data.tables).sort()
-    }));
-
-    // 4. Addon Summary
-    const addonMap = new Map<string, number>();
-    relevant.forEach(r => {
-        r.addons.forEach(a => {
-            const def = MOCK_ADDONS.find(ad => ad.id === a.id);
-            const name = def ? def.name : a.id;
-            addonMap.set(name, (addonMap.get(name) || 0) + a.quantity);
-        });
-    });
-    const addList = Array.from(addonMap.entries()).map(([name, count]) => ({ name, count }));
-
-    setTickets(newTickets);
-    setProductionSummary(prodList);
-    setAddonSummary(addList);
-    setDangerAlerts(dangerList);
-    setLastRefreshed(new Date());
     setTimeout(() => setLoading(false), 300);
   };
 
-  const updateTicketStatus = (id: string, newStatus: TicketStatus) => {
-    const statusMap = JSON.parse(localStorage.getItem(KDS_STATUS_KEY) || '{}');
-    statusMap[id] = newStatus;
-    localStorage.setItem(KDS_STATUS_KEY, JSON.stringify(statusMap));
-    
-    // Optimistic Update
-    setTickets(prev => prev.map(t => t.id === id ? { ...t, status: newStatus } : t));
-    
-    // Trigger event for other tabs
-    window.dispatchEvent(new Event('storage-update'));
-  };
+  const handlePrint = () => window.print();
 
   return (
     <div className="min-h-screen bg-black text-slate-100 p-4 md:p-8 font-sans">
       
-      {/* Header */}
-      <div className="flex justify-between items-center mb-6 border-b border-slate-800 pb-4">
+      {/* HEADER */}
+      <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 print:hidden">
         <div className="flex items-center space-x-4">
-          <div className="p-3 bg-red-900/20 rounded-xl border border-red-900/50 text-red-500">
+          <div className="p-3 bg-slate-900 rounded-xl border border-slate-800 text-amber-500">
             <ChefHat size={32} />
           </div>
           <div>
-            <h1 className="text-3xl font-black uppercase tracking-tight text-white">Kitchen Display</h1>
-            <p className="text-slate-500 text-lg font-mono">
-              {new Date().toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long' })}
-            </p>
+            <h1 className="text-3xl font-black uppercase tracking-tight text-white">Keuken Rapportage</h1>
+            <p className="text-slate-500 text-sm">Buffet & Productie Overzicht</p>
           </div>
         </div>
-        <div className="flex items-center space-x-4">
-           <div className="text-right">
-             <div className="text-xs font-bold text-slate-500 uppercase tracking-widest">Auto Update</div>
-             <div className="text-emerald-500 font-mono text-sm flex items-center justify-end">
-               <Clock size={12} className="mr-1.5" />
-               {lastRefreshed.toLocaleTimeString()}
-             </div>
+
+        <div className="flex items-center bg-slate-900 rounded-xl p-1 border border-slate-800">
+           <button onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate()-1); setSelectedDate(d); }} className="p-3 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white"><ChevronLeft size={20}/></button>
+           <div className="px-6 text-center">
+              <div className="text-xs font-bold text-slate-500 uppercase tracking-widest">{selectedDate.toLocaleDateString('nl-NL', { weekday: 'long' })}</div>
+              <div className="text-xl font-bold text-white">{selectedDate.toLocaleDateString('nl-NL', { day: 'numeric', month: 'long' })}</div>
            </div>
-           <button onClick={refreshData} className="p-3 bg-slate-900 rounded-full hover:bg-slate-800 text-slate-400 hover:text-white transition-colors">
-             <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
-           </button>
+           <button onClick={() => { const d = new Date(selectedDate); d.setDate(d.getDate()+1); setSelectedDate(d); }} className="p-3 hover:bg-slate-800 rounded-lg text-slate-400 hover:text-white"><ChevronRight size={20}/></button>
+        </div>
+
+        <div className="flex space-x-2">
+           <Button onClick={refreshData} variant="ghost" className="h-12 w-12 p-0 rounded-xl border-slate-800 text-slate-400">
+             <RefreshCw size={20} className={loading ? 'animate-spin' : ''}/>
+           </Button>
+           <Button onClick={handlePrint} className="h-12 bg-white text-black hover:bg-slate-200 border-none px-6 font-bold shadow-lg shadow-white/10">
+             <Printer size={18} className="mr-2"/> Print Lijst
+           </Button>
         </div>
       </div>
 
-      {/* DANGER MATRIX BANNER */}
-      {dangerAlerts.length > 0 && (
-        <div className="mb-6 p-4 rounded-xl bg-orange-900/40 border-l-4 border-orange-500 flex items-start animate-in slide-in-from-top-4 shadow-lg">
-            <AlertTriangle className="text-orange-500 mr-4 mt-1 shrink-0" size={24} />
-            <div className="flex-grow">
-                <h3 className="text-lg font-bold text-white mb-2 uppercase tracking-wide">⚠️ Kritieke Allergieën</h3>
-                <div className="flex flex-wrap gap-3">
-                    {dangerAlerts.map(alert => (
-                        <span key={alert.keyword} className="bg-red-600 text-white px-3 py-1 rounded font-bold text-sm shadow-md border border-red-400">
-                            {alert.count}x {alert.keyword} <span className="opacity-75 font-normal text-xs ml-1">(Tafels: {alert.tables.join(', ')})</span>
-                        </span>
-                    ))}
-                </div>
-            </div>
-        </div>
-      )}
+      {/* PRINT HEADER ONLY */}
+      <div className="hidden print:block mb-8 border-b-4 border-black pb-4 text-black">
+         <h1 className="text-4xl font-black uppercase">Keuken Productie</h1>
+         <p className="text-xl">{selectedDate.toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 h-full">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
-        {/* LEFT COLUMN: Production Summaries (Sticky) */}
-        <div className="lg:col-span-1 space-y-6">
-            <Card className="bg-slate-900 border-slate-800 p-0 overflow-hidden">
-                <div className="p-4 border-b border-slate-800 bg-slate-950 flex justify-between items-center">
-                    <h3 className="font-bold text-white text-sm uppercase tracking-wide flex items-center">
-                        <ClipboardList size={16} className="mr-2 text-emerald-500"/> Mise-en-place
-                    </h3>
-                </div>
-                <div className="p-4 space-y-2 max-h-[40vh] overflow-y-auto custom-scrollbar">
-                    {productionSummary.length === 0 ? <p className="text-slate-500 italic text-xs">Geen bijzonderheden.</p> : 
-                        productionSummary.map((item, i) => (
-                            <div key={i} className="flex justify-between items-center p-2 bg-slate-800/50 rounded border border-slate-700/50">
-                                <span className="text-sm text-slate-300">{item.name}</span>
-                                <span className="font-black text-emerald-400">{item.count}x</span>
-                            </div>
-                        ))
-                    }
-                </div>
-            </Card>
+        {/* MAIN CONTENT (Left 2/3) */}
+        <div className="lg:col-span-2 space-y-8">
+           
+           {/* TOP STATS */}
+           <div className="grid grid-cols-3 gap-4">
+              <StatBox label="Totaal Pax" value={stats?.totalPax} icon={Users} color="emerald" sub="Productie Aantal" />
+              <StatBox label="Dieetwensen" value={Object.values(stats?.dietaryCounts || {}).reduce((a: number, b: number) => a + b, 0)} icon={AlertTriangle} color="red" sub="Speciale Aandacht" />
+              <StatBox label="Add-ons" value={Object.values(stats?.addons || {}).reduce((a: number, b: number) => a + b, 0)} icon={Wine} color="blue" sub="Drank/Extra" />
+           </div>
 
-            <Card className="bg-slate-900 border-slate-800 p-0 overflow-hidden">
-                <div className="p-4 border-b border-slate-800 bg-slate-950 flex justify-between items-center">
-                    <h3 className="font-bold text-white text-sm uppercase tracking-wide flex items-center">
-                        <Wine size={16} className="mr-2 text-blue-500"/> Drank & Extra
-                    </h3>
-                </div>
-                <div className="p-4 space-y-2 max-h-[30vh] overflow-y-auto custom-scrollbar">
-                    {addonSummary.length === 0 ? <p className="text-slate-500 italic text-xs">Geen extra's.</p> : 
-                        addonSummary.map((item, i) => (
-                            <div key={i} className="flex justify-between items-center p-2 bg-slate-800/50 rounded border border-slate-700/50">
-                                <span className="text-sm text-slate-300">{item.name}</span>
-                                <span className="font-bold text-blue-400">{item.count}x</span>
-                            </div>
-                        ))
-                    }
-                </div>
-            </Card>
+           {/* DIETARY MATRIX */}
+           <div className="space-y-4">
+              <div className="flex items-center space-x-2 mb-2">
+                 <AlertTriangle className="text-amber-500" size={20} />
+                 <h2 className="text-xl font-bold text-white uppercase tracking-wider print:text-black">Allergieën & Dieetwensen</h2>
+              </div>
+              
+              {Object.keys(stats?.dietaryCounts || {}).length === 0 ? (
+                 <div className="p-8 border-2 border-dashed border-slate-800 rounded-2xl text-center text-slate-500 bg-slate-900/30 print:border-gray-300 print:text-black">
+                    <CheckCircle2 size={32} className="mx-auto mb-2 opacity-50"/>
+                    <p>Geen dieetwensen voor deze dag.</p>
+                 </div>
+              ) : (
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {Object.entries(stats?.dietaryCounts || {}).map(([type, count]) => (
+                        <AllergyCard 
+                           key={type} 
+                           type={type} 
+                           count={count as number} 
+                           details={(stats?.dietaryDetails || []).filter(d => d.type === type)}
+                        />
+                    ))}
+                 </div>
+              )}
+           </div>
+
+           {/* ADDONS / BAR INFO */}
+           <div className="space-y-4 pt-4 border-t border-slate-800 print:border-black">
+              <div className="flex items-center space-x-2 mb-2">
+                 <Wine className="text-blue-500" size={20} />
+                 <h2 className="text-xl font-bold text-white uppercase tracking-wider print:text-black">Bar & Extra's</h2>
+              </div>
+              
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                 <div className="p-4 bg-slate-900 rounded-xl border border-slate-800 print:border-gray-300 print:bg-white print:text-black">
+                    <p className="text-[10px] text-slate-500 uppercase font-bold print:text-gray-600">Standard</p>
+                    <p className="text-2xl font-bold text-white print:text-black">{stats?.standardPax}</p>
+                 </div>
+                 <div className="p-4 bg-amber-900/10 rounded-xl border border-amber-900/30 print:border-gray-300 print:bg-white print:text-black">
+                    <p className="text-[10px] text-amber-500 uppercase font-bold print:text-gray-600">Premium</p>
+                    <p className="text-2xl font-bold text-amber-500 print:text-black">{stats?.premiumPax}</p>
+                 </div>
+                 {Object.entries(stats?.addons || {}).map(([name, count]) => (
+                    <div key={name} className="p-4 bg-blue-900/10 rounded-xl border border-blue-900/30 print:border-gray-300 print:bg-white print:text-black">
+                        <p className="text-[10px] text-blue-400 uppercase font-bold print:text-gray-600">{name}</p>
+                        <p className="text-2xl font-bold text-blue-400 print:text-black">{count as number}</p>
+                    </div>
+                 ))}
+              </div>
+           </div>
+
         </div>
 
-        {/* RIGHT COLUMN: Interactive Tickets */}
-        <div className="lg:col-span-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                {tickets.map(ticket => (
-                    <div 
-                        key={ticket.id} 
-                        className={`
-                            relative flex flex-col p-4 rounded-xl border-2 transition-all duration-300
-                            ${STATUS_COLORS[ticket.status]}
-                        `}
-                    >
-                        {/* Header */}
-                        <div className="flex justify-between items-start mb-3 border-b border-white/10 pb-2">
-                            <div>
-                                <span className="text-xs font-mono text-slate-400 block">{ticket.time}</span>
-                                <h4 className="font-black text-xl text-white">Tafel {ticket.tableNumber}</h4>
-                            </div>
-                            <div className="text-right">
-                                <span className="block font-bold text-2xl text-white">{ticket.pax}p</span>
-                                <Badge status={ticket.type === 'PREMIUM' ? 'CONFIRMED' : 'ARCHIVED'} className="scale-75 origin-right">
-                                    {ticket.type}
-                                </Badge>
-                            </div>
-                        </div>
-
-                        {/* Content */}
-                        <div className="flex-grow space-y-3 mb-4">
-                            <p className="text-sm font-bold text-slate-200 truncate">{ticket.guestName}</p>
-                            
-                            {ticket.dietary && (
-                                <div className="bg-red-900/30 border border-red-500/50 p-2 rounded text-red-200 text-sm font-bold flex items-start">
-                                    <AlertTriangle size={14} className="mr-2 mt-0.5 shrink-0" />
-                                    {ticket.dietary}
-                                </div>
-                            )}
-                            
-                            {ticket.comments && (
-                                <div className="bg-amber-900/30 border border-amber-500/50 p-2 rounded text-amber-200 text-xs italic flex items-start">
-                                    <StickyNote size={14} className="mr-2 mt-0.5 shrink-0" />
-                                    "{ticket.comments}"
-                                </div>
-                            )}
-                            
-                            {!ticket.dietary && !ticket.comments && (
-                                <div className="text-slate-500 text-xs italic py-2">Standaard order</div>
-                            )}
-                        </div>
-
-                        {/* Actions */}
-                        <div className="mt-auto pt-2 border-t border-white/10">
-                            {ticket.status === 'PREP' && (
-                                <Button onClick={() => updateTicketStatus(ticket.id, 'COOKING')} className="w-full bg-blue-600 hover:bg-blue-500 border-none text-xs h-10">
-                                    Start Bereiding
-                                </Button>
-                            )}
-                            {ticket.status === 'COOKING' && (
-                                <Button onClick={() => updateTicketStatus(ticket.id, 'READY')} className="w-full bg-emerald-600 hover:bg-emerald-500 border-none text-xs h-10">
-                                    <CheckCircle2 size={16} className="mr-2"/> Klaar voor Pas
-                                </Button>
-                            )}
-                            {ticket.status === 'READY' && (
-                                <Button onClick={() => updateTicketStatus(ticket.id, 'SERVED')} variant="secondary" className="w-full text-xs h-10">
-                                    Uitgeserveerd
-                                </Button>
-                            )}
-                            {ticket.status === 'SERVED' && (
-                                <div className="text-center text-xs font-bold text-slate-500 uppercase tracking-widest py-2">
-                                    Afgerond
-                                </div>
-                            )}
-                        </div>
+        {/* SIDEBAR: WEEK FORECAST (Hidden on print) */}
+        <div className="space-y-6 print:hidden">
+           <Card className="p-6 bg-slate-900 border-slate-800">
+              <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-6 flex items-center">
+                 <Calendar size={16} className="mr-2"/> Week Productie
+              </h3>
+              
+              <div className="space-y-4">
+                 {forecast.map((day, i) => (
+                    <div key={i} className="flex items-center justify-between group">
+                       <div>
+                          <div className={`text-sm font-bold ${i===0 ? 'text-white' : 'text-slate-400'}`}>
+                             {day.date.toLocaleDateString('nl-NL', { weekday: 'long' })}
+                          </div>
+                          <div className="text-[10px] text-slate-600 font-mono">
+                             {day.date.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' })}
+                          </div>
+                       </div>
+                       <div className="flex items-center">
+                          <span className={`text-lg font-bold font-mono mr-3 ${day.count > 150 ? 'text-amber-500' : 'text-white'}`}>
+                             {day.count}
+                          </span>
+                          <div className="w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                             <div 
+                                className={`h-full ${day.count > 150 ? 'bg-amber-500' : 'bg-blue-600'}`} 
+                                style={{ width: `${Math.min(100, (day.count/230)*100)}%` }}
+                             />
+                          </div>
+                       </div>
                     </div>
-                ))}
-                
-                {tickets.length === 0 && (
-                    <div className="col-span-full py-20 text-center text-slate-500 border-2 border-dashed border-slate-800 rounded-2xl">
-                        <CheckCircle2 size={48} className="mx-auto mb-4 opacity-20" />
-                        <p>Geen bestellingen meer. Goed gewerkt!</p>
-                    </div>
-                )}
-            </div>
+                 ))}
+              </div>
+
+              <div className="mt-8 pt-6 border-t border-slate-800 text-xs text-slate-500">
+                 <p className="flex items-start">
+                    <Info size={14} className="mr-2 shrink-0 mt-0.5" />
+                    Gebaseerd op huidige reserveringen. Last-minute boekingen kunnen deze aantallen wijzigen.
+                 </p>
+              </div>
+           </Card>
         </div>
 
       </div>
