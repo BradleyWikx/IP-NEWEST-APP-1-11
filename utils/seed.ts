@@ -137,6 +137,9 @@ export const seedFullDatabase = async (onProgress?: (msg: string, progress: numb
 
   // Track customer ID to reuse them for realism
   const customerPool: string[] = [];
+  
+  // Track tables per date for sequential assignment
+  const tableCounters: Record<string, number> = {};
 
   while (currentDate <= endDate) {
     dayCount++;
@@ -147,7 +150,6 @@ export const seedFullDatabase = async (onProgress?: (msg: string, progress: numb
 
     const dateStr = toLocalYMD(currentDate);
     const isToday = dateStr === todayStr;
-    const isNextSat = dateStr === nextSatStr;
     const dayOfWeek = currentDate.getDay();
 
     let showDef: ShowDefinition | null = null;
@@ -200,7 +202,11 @@ export const seedFullDatabase = async (onProgress?: (msg: string, progress: numb
                  const pax = randomInt(2, 4);
                  const c = createRandomCustomer();
                  customers.push(c);
-                 reservations.push(createReservation(c, event, showDef, dateStr, pax, BookingStatus.ARRIVED, new Date().toISOString(), false));
+                 // Table assignment logic
+                 tableCounters[dateStr] = (tableCounters[dateStr] || 0) + 1;
+                 const tableId = `TAB-${tableCounters[dateStr]}`;
+                 
+                 reservations.push(createReservation(c, event, showDef, dateStr, pax, BookingStatus.ARRIVED, new Date().toISOString(), false, tableId));
                  currentOccupancy += pax;
              }
         }
@@ -222,15 +228,24 @@ export const seedFullDatabase = async (onProgress?: (msg: string, progress: numb
             }
             
             // Status Logic
-            let status = BookingStatus.CONFIRMED;
+            let status: BookingStatus = BookingStatus.CONFIRMED;
             if (!isPast) {
                 const r = Math.random();
-                if (r > 0.8) status = BookingStatus.OPTION;
-                else if (r > 0.95) status = BookingStatus.REQUEST;
+                if (r > 0.95) status = BookingStatus.REQUEST;
+                else if (r > 0.8) status = BookingStatus.OPTION;
             }
 
             const createdAt = new Date(currentDate.getTime() - randomInt(86400000 * 5, 86400000 * 60)).toISOString();
-            const r = createReservation(c, event, showDef, dateStr, partySize, status, createdAt, randomBool(0.15));
+            
+            // Assign sequential table number for confirmed/arrived/past bookings
+            let tableId: string | undefined = undefined;
+            // Note: status in this loop is restricted to CONFIRMED, REQUEST, OPTION.
+            if (status === BookingStatus.CONFIRMED) {
+                 tableCounters[dateStr] = (tableCounters[dateStr] || 0) + 1;
+                 tableId = `TAB-${tableCounters[dateStr]}`;
+            }
+
+            const r = createReservation(c, event, showDef, dateStr, partySize, status, createdAt, randomBool(0.15), tableId);
             
             reservations.push(r);
             currentOccupancy += partySize;
@@ -251,7 +266,11 @@ export const seedFullDatabase = async (onProgress?: (msg: string, progress: numb
       const c = createRandomCustomer(); 
       c.lastName = "Vergeetachtig";
       customers.push(c);
-      const res = createReservation(c, overdueEvent, SHOW_DEFS[0], overdueEvent.date, 4, BookingStatus.CONFIRMED, addDays(today, -20).toISOString(), false);
+      
+      tableCounters[overdueEvent.date] = (tableCounters[overdueEvent.date] || 0) + 1;
+      const tableId = `TAB-${tableCounters[overdueEvent.date]}`;
+
+      const res = createReservation(c, overdueEvent, SHOW_DEFS[0], overdueEvent.date, 4, BookingStatus.CONFIRMED, addDays(today, -20).toISOString(), false, tableId);
       // Hack financials to be unpaid and overdue
       res.financials.paid = 0;
       res.financials.isPaid = false;
@@ -403,7 +422,8 @@ function createReservation(
     partySize: number, 
     status: BookingStatus, 
     createdAt: string,
-    forceMerch: boolean
+    forceMerch: boolean,
+    tableId?: string
 ): Reservation {
     const isPremium = randomBool(0.3);
     const showEvent = event as ShowEvent;
@@ -441,12 +461,6 @@ function createReservation(
             date: createdAt, // Paid at booking time
             type: 'FINAL'
         });
-    }
-
-    // Determine Table (Mock)
-    let tableId: string | undefined = undefined;
-    if (status === BookingStatus.ARRIVED || (status === BookingStatus.CONFIRMED && date === toLocalYMD(new Date()))) {
-        tableId = `TAB-${randomInt(1, 30)}`;
     }
 
     return {

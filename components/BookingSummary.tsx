@@ -99,6 +99,10 @@ export const BookingSummary = ({ data, onUpdate }: BookingSummaryProps) => {
   const { subtotal, discountAmount, voucherApplied, amountDue, voucherLost, items } = financials;
   const activeCode = data.promo || data.voucherCode;
 
+  // Find ticket line item for display
+  const ticketLine = items.find((i: any) => i.category === 'TICKET');
+  const extraItems = items.filter((i:any) => i.category === 'ADDON' || i.category === 'MERCH');
+
   return (
     <Card className="bg-slate-900 border-slate-800 overflow-hidden shadow-2xl">
       <div className="bg-red-900/10 border-b border-red-900/20 p-6">
@@ -106,8 +110,9 @@ export const BookingSummary = ({ data, onUpdate }: BookingSummaryProps) => {
         <p className="font-serif text-xl text-white">Overzicht</p>
       </div>
 
-      <div className="p-6 space-y-5">
-        <div className="space-y-4">
+      <div className="p-6 space-y-6">
+        <div className="space-y-5">
+          {/* DATE & SHOW */}
           <div className="flex items-start space-x-4">
             <Ticket className="text-slate-500 mt-1 shrink-0" size={16} />
             <div>
@@ -116,23 +121,32 @@ export const BookingSummary = ({ data, onUpdate }: BookingSummaryProps) => {
             </div>
           </div>
 
+          {/* ARRANGEMENT (WITH PRICE) */}
           <div className="flex items-start space-x-4">
             <Users className="text-slate-500 mt-1 shrink-0" size={16} />
-            <div>
-              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Arrangement</p>
-              <p className="text-xs font-bold text-white capitalize">{data.packageType} ({data.totalGuests}p)</p>
+            <div className="w-full">
+              <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Arrangement</p>
+              <div className="flex justify-between items-start w-full">
+                  <div>
+                    <p className="text-xs font-bold text-white capitalize">{data.packageType} ({data.totalGuests}p)</p>
+                    {ticketLine && <p className="text-[10px] text-slate-500 mt-0.5">€{ticketLine.unitPrice.toFixed(2)} p.p.</p>}
+                  </div>
+                  {ticketLine && <span className="text-xs font-mono text-white font-bold">€{ticketLine.total.toFixed(2)}</span>}
+              </div>
             </div>
           </div>
 
-          {items.filter((i:any) => i.category === 'ADDON' || i.category === 'MERCH').length > 0 && (
+          {/* EXTRAS (WITH PRICE) */}
+          {extraItems.length > 0 && (
              <div className="flex items-start space-x-4">
                <ShoppingBag className="text-slate-500 mt-1 shrink-0" size={16} />
-               <div>
-                 <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Extra's</p>
-                 <div className="text-xs font-bold text-white space-y-0.5">
-                   {items.filter((i:any) => i.category === 'ADDON' || i.category === 'MERCH').map((item:any) => (
-                     <div key={item.id} className="flex justify-between w-full min-w-[150px]">
-                       <span>{item.quantity}x {item.label}</span>
+               <div className="w-full">
+                 <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Extra's</p>
+                 <div className="space-y-1">
+                   {extraItems.map((item:any) => (
+                     <div key={item.id} className="flex justify-between items-center w-full text-xs">
+                       <span className="text-slate-300">{item.quantity}x {item.label}</span>
+                       <span className="text-slate-300 font-mono">€{item.total.toFixed(2)}</span>
                      </div>
                    ))}
                  </div>
@@ -144,7 +158,7 @@ export const BookingSummary = ({ data, onUpdate }: BookingSummaryProps) => {
         <div className="pt-4 border-t border-slate-800 space-y-3">
           <div className="flex justify-between text-xs">
             <span className="text-slate-500">Subtotaal</span>
-            <span className="text-slate-300">€{subtotal.toFixed(2)}</span>
+            <span className="text-slate-300 font-mono">€{subtotal.toFixed(2)}</span>
           </div>
 
           {/* Unified Code Input Section */}

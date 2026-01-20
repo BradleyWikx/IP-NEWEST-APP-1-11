@@ -83,7 +83,18 @@ export const findAvailableShowDates = (query: AvailabilityQuery): RankedSlot[] =
   const candidates = events.filter(e => {
     // Must be a Show
     if (e.type !== 'SHOW') return false;
+    const showEvent = e as ShowEvent;
     
+    // Find Definition
+    const showDef = shows.find(s => s.id === showEvent.showId);
+    
+    // Check if Show is Active
+    if (!showDef || !showDef.isActive) return false;
+
+    // Check Show Definition Date Range (if set)
+    if (showDef.activeFrom && e.date < showDef.activeFrom) return false;
+    if (showDef.activeTo && e.date > showDef.activeTo) return false;
+
     // Date Range
     if (e.date < start || e.date > end) return false;
     
@@ -100,7 +111,6 @@ export const findAvailableShowDates = (query: AvailabilityQuery): RankedSlot[] =
 
     // Profile/Show Filter
     if (query.profileFilter && query.profileFilter !== 'ALL') {
-      const showEvent = e as ShowEvent;
       // Filter matches either Show ID (e.g. 'matinee') or specific Profile ID
       if (showEvent.showId !== query.profileFilter && showEvent.profileId !== query.profileFilter) {
         return false;

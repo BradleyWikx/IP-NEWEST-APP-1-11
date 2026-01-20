@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { Button, Input, Card } from '../UI';
 import { Reservation, ShowDefinition, ShowEvent, BookingStatus, Customer } from '../../types';
-import { bookingRepo, customerRepo } from '../../utils/storage';
+import { bookingRepo, customerRepo, getNextTableNumber } from '../../utils/storage';
 import { calculateBookingTotals, getEffectivePricing } from '../../utils/pricing';
 import { MerchandisePicker, MerchandiseSummaryList } from '../MerchandisePicker';
 import { logAuditAction } from '../../utils/auditLogger';
@@ -232,6 +232,9 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
 
     const newReservations: Reservation[] = [];
     const updatedCustomers: Customer[] = []; 
+    
+    // Get start table number for sequential assignment
+    let nextTableNumber = getNextTableNumber(event.date);
 
     validDrafts.forEach((draft, idx) => {
       let custId = draft.customerId;
@@ -262,6 +265,9 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
         date: event.date,
         showId: show.id
       }, pricing);
+      
+      // Auto Assign Table Number Sequentially
+      const tableId = `TAB-${nextTableNumber++}`;
 
       const res: Reservation = {
         id: `RES-BULK-${Date.now()}-${idx}`,
@@ -294,7 +300,8 @@ export const BulkReservationEditor: React.FC<BulkEditorProps> = ({ event, show, 
           celebrationText: draft.celebrationText,
           internal: 'Bulk Entry'
         },
-        startTime: event.times.start
+        startTime: event.times.start,
+        tableId // Assign sequential table
       };
 
       newReservations.push(res);

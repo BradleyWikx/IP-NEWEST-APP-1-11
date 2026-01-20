@@ -359,6 +359,25 @@ export const clearAllData = async () => {
   window.dispatchEvent(new Event('storage-update'));
 };
 
+/**
+ * Calculates the next sequential table number for a given date.
+ * Strictly strictly incremental (Max existing + 1).
+ */
+export const getNextTableNumber = (date: string): number => {
+    const all = bookingRepo.getAll();
+    const forDate = all.filter(r => r.date === date && r.tableId && r.status !== 'CANCELLED');
+    
+    // Extract numbers from "TAB-1", "TAB-10" etc.
+    const numbers = forDate.map(r => {
+        if (!r.tableId) return 0;
+        const num = parseInt(r.tableId.replace('TAB-', ''));
+        return isNaN(num) ? 0 : num;
+    });
+
+    if (numbers.length === 0) return 1;
+    return Math.max(...numbers) + 1;
+};
+
 // Legacy Load/Save wrappers to maintain compatibility
 export const loadData = <T>(key: string, fallback: T): T => {
   try {
