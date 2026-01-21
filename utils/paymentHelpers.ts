@@ -3,16 +3,31 @@ import { Reservation, BookingStatus } from '../types';
 
 export type PaymentStatus = 'PAID' | 'PAY_ON_NIGHT' | 'OVERDUE' | 'DUE_SOON' | 'UNPAID' | 'INVITED' | 'CANCELLED' | 'PARTIAL';
 
+/**
+ * Robustly checks if a reservation is fully paid based on amounts.
+ * Uses a small epsilon (0.01) to handle floating point inaccuracies.
+ * This replaces reliance on the stored 'isPaid' boolean.
+ */
+export const isReservationPaid = (reservation: Reservation): boolean => {
+  if (reservation.status === BookingStatus.INVITED) return true;
+  // If total is 0 or less, it's considered paid
+  if (reservation.financials.finalTotal <= 0.01) return true;
+  
+  return reservation.financials.paid >= (reservation.financials.finalTotal - 0.01);
+};
+
 export const getPaymentStatus = (reservation: Reservation): PaymentStatus => {
   if (reservation.status === BookingStatus.CANCELLED) return 'CANCELLED';
   if (reservation.status === BookingStatus.INVITED) return 'INVITED';
   
-  const { isPaid, paidAt, payOnNightAllowed, paymentDueAt, paid, finalTotal } = reservation.financials;
+  const { paidAt, payOnNightAllowed, paymentDueAt, paid, finalTotal } = reservation.financials;
 
-  if (isPaid) return 'PAID';
+  // Runtime calculation instead of relying on r.financials.isPaid
+  const isFullyPaid = isReservationPaid(reservation);
+
+  if (isFullyPaid) return 'PAID';
   
-  // Check for Partial Payment (Paid > 0 but not isPaid)
-  // We use a small epsilon for float comparison safety, though normally simple > 0 is fine here
+  // Check for Partial Payment (Paid > 0 but not fully paid)
   if (paid > 0.01 && paid < finalTotal) return 'PARTIAL';
 
   if (payOnNightAllowed) return 'PAY_ON_NIGHT';
@@ -33,9 +48,9 @@ export const getPaymentColor = (status: PaymentStatus): string => {
   switch (status) {
     case 'PAID': return 'emerald';
     case 'PAY_ON_NIGHT': return 'purple';
-    case 'PARTIAL': return 'orange'; // Orange for Partial
+    case 'PARTIAL': return 'orange';
     case 'OVERDUE': return 'red';
-    case 'DUE_SOON': return 'amber'; // Changed from orange to amber to distinguish from partial
+    case 'DUE_SOON': return 'amber';
     case 'INVITED': return 'blue';
     case 'CANCELLED': return 'slate';
     default: return 'slate';
@@ -60,7 +75,8 @@ export const getPaymentStats = (reservations: Reservation[]) => {
   });
 
   const dueNext7Days = activeReservations.filter(r => {
-    const { paymentDueAt, isPaid } = r.financials;
+    const { paymentDueAt } = r.financials;
+    const isPaid = isReservationPaid(r);
     if (isPaid || !paymentDueAt) return false;
     const due = new Date(paymentDueAt);
     return due >= now && due <= nextWeek;
@@ -71,15 +87,12 @@ export const getPaymentStats = (reservations: Reservation[]) => {
     return paidAt && paidAt.startsWith(todayStr);
   });
 
-  // For paid amount stats, we should sum up total payments made, but simple sum is sufficient for overview
-  const paidTodayAmount = paidToday.reduce((sum, r) => sum + (r.financials.finalTotal || r.financials.total), 0);
-
   return {
     overdueCount: overdue.length,
-    overdueAmount: overdue.reduce((sum, r) => sum + (r.financials.finalTotal - r.financials.paid), 0), // Calc remaining
+    overdueAmount: overdue.reduce((sum, r) => sum + (r.financials.finalTotal - r.financials.paid), 0),
     dueNext7DaysCount: dueNext7Days.length,
     dueNext7DaysAmount: dueNext7Days.reduce((sum, r) => sum + (r.financials.finalTotal - r.financials.paid), 0),
     paidTodayCount: paidToday.length,
-    paidTodayAmount
+    paidTodayAmount: paidToday.reduce((sum, r) => sum + (r.financials.finalTotal || r.financials.total), 0)
   };
 };

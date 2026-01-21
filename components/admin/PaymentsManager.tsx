@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   DollarSign, AlertCircle, CheckCircle2, Clock, 
@@ -9,7 +10,7 @@ import { DestructiveActionModal } from '../UI/DestructiveActionModal';
 import { Reservation, BookingStatus, PaymentRecord, Invoice } from '../../types';
 import { bookingRepo, saveData, STORAGE_KEYS, invoiceRepo } from '../../utils/storage';
 import { ResponsiveTable } from '../ResponsiveTable';
-import { getPaymentStatus, getPaymentColor } from '../../utils/paymentHelpers';
+import { getPaymentStatus, getPaymentColor, isReservationPaid } from '../../utils/paymentHelpers';
 import { undoManager } from '../../utils/undoManager';
 import { logAuditAction } from '../../utils/auditLogger';
 import { triggerEmail } from '../../utils/emailEngine';
@@ -38,7 +39,6 @@ export const PaymentsManager = () => {
   const [showBatchConfirm, setShowBatchConfirm] = useState(false);
   const [batchList, setBatchList] = useState<Reservation[]>([]);
   
-  // Added: need invoices state for checking if invoice exists
   const [invoices, setInvoices] = useState<Invoice[]>([]);
 
   useEffect(() => {
@@ -55,12 +55,12 @@ export const PaymentsManager = () => {
   useEffect(() => {
     if (selectedRes) {
         // Default amount is remaining balance
-        setPaymentAmount(selectedRes.financials.finalTotal - selectedRes.financials.paid);
+        setPaymentAmount(Math.max(0, selectedRes.financials.finalTotal - selectedRes.financials.paid));
     }
   }, [selectedRes]);
 
   const refreshData = () => {
-    // Filter out cancelled/archived unless they have payments involved (edge case, usually we ignore)
+    // Filter out cancelled/archived unless they have payments involved
     const all = bookingRepo.getAll().filter(r => 
         r.status !== BookingStatus.CANCELLED && 
         r.status !== BookingStatus.ARCHIVED &&
@@ -72,7 +72,8 @@ export const PaymentsManager = () => {
 
   // --- STATS ---
   const stats = useMemo(() => {
-    const open = reservations.filter(r => !r.financials.isPaid);
+    // Use runtime helper
+    const open = reservations.filter(r => !isReservationPaid(r));
     const overdue = open.filter(r => getPaymentStatus(r) === 'OVERDUE');
     
     // Revenue today
@@ -106,14 +107,16 @@ export const PaymentsManager = () => {
     const currentPayments = selectedRes.financials.payments || [];
     const updatedPayments = [...currentPayments, newPayment];
     const newPaidTotal = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
-    const isFullyPaid = newPaidTotal >= selectedRes.financials.finalTotal - 0.01; // Epsilon for floats
+    
+    // Runtime check instead of trusting previous state
+    const isFullyPaid = newPaidTotal >= selectedRes.financials.finalTotal - 0.01;
 
     const updates = {
       financials: {
         ...selectedRes.financials,
         payments: updatedPayments,
         paid: newPaidTotal,
-        isPaid: isFullyPaid,
+        isPaid: isFullyPaid, // Still updating for legacy compatibility, but logic relies on calc
         paidAt: isFullyPaid ? new Date().toISOString() : selectedRes.financials.paidAt,
         paymentMethod: isFullyPaid ? paymentMethod : selectedRes.financials.paymentMethod
       }
@@ -143,7 +146,7 @@ export const PaymentsManager = () => {
         klant: formatGuestName(r.customer.firstName, r.customer.lastName),
         totaal: r.financials.finalTotal.toFixed(2),
         betaald: r.financials.paid.toFixed(2),
-        status: r.financials.isPaid ? 'Betaald' : 'Open',
+        status: isReservationPaid(r) ? 'Betaald' : 'Open',
         laatste_betaling: r.financials.payments?.[r.financials.payments.length-1]?.date || '-',
         vervaldatum: r.financials.paymentDueAt || '-'
     }));
@@ -152,11 +155,10 @@ export const PaymentsManager = () => {
   };
 
   const handleBatchInvoice = () => {
-    // 1. Determine "This Week"
     const now = new Date();
     const startOfWeek = new Date(now);
-    const day = startOfWeek.getDay() || 7; // Get current day number, converting Sun(0) to 7
-    if (day !== 1) startOfWeek.setHours(-24 * (day - 1)); // Adjust backwards to Monday
+    const day = startOfWeek.getDay() || 7; 
+    if (day !== 1) startOfWeek.setHours(-24 * (day - 1)); 
     startOfWeek.setHours(0,0,0,0);
     
     const endOfWeek = new Date(startOfWeek);
@@ -166,11 +168,10 @@ export const PaymentsManager = () => {
     const startStr = startOfWeek.toISOString().split('T')[0];
     const endStr = endOfWeek.toISOString().split('T')[0];
 
-    // 2. Filter Reservations
     const candidates = reservations.filter(r => 
         r.date >= startStr && 
         r.date <= endStr && 
-        r.financials.paymentMethod === 'FACTUUR' // Only explicit invoices usually need printing
+        r.financials.paymentMethod === 'FACTUUR'
     );
 
     if (candidates.length === 0) {
@@ -183,7 +184,6 @@ export const PaymentsManager = () => {
   };
 
   const executeBatchInvoice = () => {
-    // Convert reservations to temporary invoices for printing
     const invoicesToPrint = batchList.map(r => createInvoiceFromReservation(r));
     printBatchInvoices(invoicesToPrint);
     setShowBatchConfirm(false);
@@ -191,9 +191,11 @@ export const PaymentsManager = () => {
 
   // --- FILTERING & PAGINATION ---
   const filteredList = reservations.filter(r => {
-    // Tab Filter
-    if (activeTab === 'OPEN' && r.financials.isPaid) return false;
-    if (activeTab === 'PAID' && !r.financials.isPaid) return false;
+    const paid = isReservationPaid(r);
+    
+    // Tab Filter with Runtime Logic
+    if (activeTab === 'OPEN' && paid) return false;
+    if (activeTab === 'PAID' && !paid) return false;
 
     // Search Filter
     if (searchTerm) {
@@ -314,7 +316,7 @@ export const PaymentsManager = () => {
                                     <span className="text-slate-500">/ {formatCurrency(total)}</span>
                                 </div>
                                 <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
-                                    <div className={`h-full ${paid >= total ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${pct}%` }} />
+                                    <div className={`h-full ${paid >= (total - 0.01) ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${pct}%` }} />
                                 </div>
                             </div>
                         );
@@ -323,6 +325,7 @@ export const PaymentsManager = () => {
                 {
                     header: activeTab === 'OPEN' ? 'Vervaldatum' : 'Status',
                     accessor: (r: Reservation) => {
+                        const isPaid = isReservationPaid(r);
                         if (activeTab === 'OPEN') {
                             const status = getPaymentStatus(r);
                             const due = r.financials.paymentDueAt ? new Date(r.financials.paymentDueAt) : null;
@@ -342,24 +345,27 @@ export const PaymentsManager = () => {
                 },
                 {
                     header: 'Acties',
-                    accessor: (r: Reservation) => (
-                        <div className="flex justify-end space-x-2">
-                           <Button 
-                                onClick={(e: any) => handleSendReminder(r, e)} 
-                                variant="ghost" 
-                                className="h-8 w-8 p-0 text-slate-500 hover:text-amber-500 hover:bg-amber-900/20"
-                                title="Stuur Herinnering"
-                           >
-                                <Mail size={16} />
-                           </Button>
-                           <Button 
-                                onClick={() => setSelectedRes(r)} 
-                                className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 border-none"
-                           >
-                                {r.financials.isPaid ? 'Details' : 'Betaal'}
-                           </Button>
-                        </div>
-                    )
+                    accessor: (r: Reservation) => {
+                        const isPaid = isReservationPaid(r);
+                        return (
+                            <div className="flex justify-end space-x-2">
+                            <Button 
+                                    onClick={(e: any) => handleSendReminder(r, e)} 
+                                    variant="ghost" 
+                                    className="h-8 w-8 p-0 text-slate-500 hover:text-amber-500 hover:bg-amber-900/20"
+                                    title="Stuur Herinnering"
+                            >
+                                    <Mail size={16} />
+                            </Button>
+                            <Button 
+                                    onClick={() => setSelectedRes(r)} 
+                                    className="h-8 text-xs bg-emerald-600 hover:bg-emerald-700 border-none"
+                            >
+                                    {isPaid ? 'Details' : 'Betaal'}
+                            </Button>
+                            </div>
+                        );
+                    }
                 }
             ]}
          />
@@ -410,7 +416,7 @@ export const PaymentsManager = () => {
                         </div>
                         <div className="flex justify-between text-sm font-bold text-white border-t border-slate-700 pt-2 mt-2">
                             <span>Openstaand</span>
-                            <span className="text-amber-500 font-mono">{formatCurrency(selectedRes.financials.finalTotal - selectedRes.financials.paid)}</span>
+                            <span className="text-amber-500 font-mono">{formatCurrency(Math.max(0, selectedRes.financials.finalTotal - selectedRes.financials.paid))}</span>
                         </div>
                     </div>
 

@@ -54,17 +54,6 @@ export const BookingWizard = () => {
   const location = useLocation();
   const { t, language, setLanguage } = useTranslation();
 
-  const STEPS = [
-    t('step_date'), 
-    t('step_party'),
-    t('step_package'), 
-    t('step_extras'), 
-    t('step_shop'), 
-    t('step_details'), 
-    t('step_wishes'),
-    t('step_review')
-  ];
-  
   // Initialize state with location state if available (from Calendar)
   const { wizardData, updateWizard, resetWizard } = useWizardPersistence({
     date: location.state?.date || '',
@@ -118,6 +107,26 @@ export const BookingWizard = () => {
   // Waitlist Logic
   const [isWaitlistMode, setIsWaitlistMode] = useState(false);
   const [isWaitlistFull, setIsWaitlistFull] = useState(false); 
+
+  // --- Dynamic Step Configuration ---
+  const stepConfig = useMemo(() => {
+    if (isWaitlistMode) {
+      return {
+        labels: [t('step_date'), t('step_party'), t('step_details'), t('step_review')],
+        indices: [0, 1, 5, 7] // Map logical step indices to visual order
+      };
+    }
+    return {
+      labels: [
+        t('step_date'), t('step_party'), t('step_package'), t('step_extras'), 
+        t('step_shop'), t('step_details'), t('step_wishes'), t('step_review')
+      ],
+      indices: [0, 1, 2, 3, 4, 5, 6, 7]
+    };
+  }, [isWaitlistMode, t]);
+
+  // Determine current visual step for the Stepper component
+  const currentVisualStep = stepConfig.indices.indexOf(step);
 
   // --- Effects ---
 
@@ -267,25 +276,37 @@ export const BookingWizard = () => {
       return;
     }
 
+    // WAITLIST FLOW: Skip Wishes (6) -> Go directly to Review (7)
+    if (isWaitlistMode && step === 5) {
+      setStep(7);
+      return;
+    }
+
     // REGULAR FLOW: Skip Addons if threshold not met
     if (step === 2 && wizardData.totalGuests < ADDON_THRESHOLD) {
       setStep(4); // Skip to Merch
       return;
     }
     
-    setStep(s => Math.min(STEPS.length - 1, s + 1));
+    setStep(s => Math.min(stepConfig.indices[stepConfig.indices.length - 1], s + 1));
   };
 
   const prevStep = () => {
-    // WAITLIST FLOW
+    // WAITLIST FLOW: Back from Review (7) -> Details (5)
+    if (isWaitlistMode && step === 7) {
+      setStep(5);
+      return;
+    }
+
+    // WAITLIST FLOW: Back from Details (5) -> Party (1)
     if (isWaitlistMode && step === 5) {
       setStep(1);
       return;
     }
 
-    // REGULAR FLOW
+    // REGULAR FLOW: Back from Merch (4) -> Package (2) (Skip Addons)
     if (step === 4 && wizardData.totalGuests < ADDON_THRESHOLD) {
-      setStep(2); // Go back to Package
+      setStep(2); 
       return;
     }
     setStep(s => Math.max(0, s - 1));
@@ -1053,7 +1074,7 @@ export const BookingWizard = () => {
              </button>
           </div>
 
-          <Stepper steps={STEPS} current={step} />
+          <Stepper steps={stepConfig.labels} current={currentVisualStep} />
           
           <div className="mt-8 mb-12">
              {renderStepContent()}
@@ -1065,7 +1086,7 @@ export const BookingWizard = () => {
                    <ChevronLeft size={16} className="mr-2" /> {t('btn_prev')}
                 </Button>
                 
-                {step === STEPS.length - 1 ? (
+                {step === 7 ? (
                    <Button 
                      onClick={submitBooking} 
                      disabled={isSubmitting || (step === 7 && !agreedToTerms)} 
