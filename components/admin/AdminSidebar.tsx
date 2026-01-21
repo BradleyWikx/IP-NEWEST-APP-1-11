@@ -26,7 +26,9 @@ import {
   Database,
   ChevronDown,
   ChevronRight,
-  FileText
+  FileText,
+  ExternalLink,
+  HardHat // Using HardHat for Staff/Personeel icon
 } from 'lucide-react';
 import { AdminRole } from '../../types';
 
@@ -62,6 +64,7 @@ const MENU_STRUCTURE: NavGroup[] = [
       { label: 'Taken', icon: CheckSquare, path: '/admin/tasks', roles: ['ADMIN', 'EDITOR'] },
       { label: 'Wachtlijst', icon: Clock, path: '/admin/waitlist', roles: ['ADMIN', 'EDITOR'] },
       { label: 'Klanten', icon: Users, path: '/admin/customers', roles: ['ADMIN', 'EDITOR'] },
+      { label: 'Klantportaal', icon: ExternalLink, path: '/portal', roles: ['ADMIN', 'EDITOR'], specialClass: 'text-blue-400' },
       { label: 'Email Center', icon: Mail, path: '/admin/email', roles: ['ADMIN', 'EDITOR'] },
       { label: 'Nieuwsbrief', icon: Mail, path: '/admin/newsletter', roles: ['ADMIN', 'EDITOR'] },
     ]
@@ -71,6 +74,7 @@ const MENU_STRUCTURE: NavGroup[] = [
     title: 'Operatie & Keuken',
     items: [
       { label: 'Planning & Print', icon: Printer, path: '/admin/planning', roles: ['ADMIN', 'EDITOR', 'HOST'] },
+      { label: 'Personeel', icon: HardHat, path: '/admin/staff', roles: ['ADMIN', 'EDITOR'] },
       { label: 'Keuken & Bar', icon: ChefHat, path: '/admin/kitchen', roles: ['ADMIN', 'EDITOR', 'HOST'] },
     ]
   },

@@ -168,7 +168,8 @@ export const WaitlistManager = () => {
           paymentDueAt: new Date(new Date().setDate(new Date().getDate() + 14)).toISOString()
       },
       notes: { 
-          internal: `Geconverteerd vanuit Wachtlijst (Ref: ${entry.id}).` 
+          // Preserve original note (which might contain address info from simple modal)
+          internal: `Geconverteerd vanuit Wachtlijst (Ref: ${entry.id}). Info: ${entry.notes || '-'}` 
       },
       startTime: group.event.times.start
     };
@@ -428,7 +429,7 @@ export const WaitlistManager = () => {
                 <p>
                   <strong>Tip:</strong> Gebruik deze module om snel gaten in de planning te vullen. 
                   Het omzetten van een wachtlijst-item negeert de reguliere capaciteitslimieten ("Admin Override"), 
-                  zodat je vrijgekomen plekken direct kunt benutten.
+                  zodat je vrijgekomen plekken direct kunt benutten. Adresgegevens staan in de notities.
                 </p>
              </div>
 

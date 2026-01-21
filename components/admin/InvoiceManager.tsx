@@ -143,6 +143,34 @@ export const InvoiceManager = () => {
       setIsEditingDetails(true); // Auto enable edit mode for new manual invoice
       refreshData();
   };
+  
+  const handleRegenerate = () => {
+    if (!selectedInvoice || !selectedInvoice.reservationId) return;
+    if (!confirm("Weet je zeker dat je de factuur wilt resetten op basis van de huidige reserveringsdata? Alle handmatige wijzigingen gaan verloren.")) return;
+
+    const res = bookingRepo.getById(selectedInvoice.reservationId);
+    if (!res) {
+        undoManager.showError("Gekoppelde reservering niet gevonden.");
+        return;
+    }
+
+    // Create fresh invoice from reservation logic
+    const freshInvoice = createInvoiceFromReservation(res);
+    
+    // Preserve existing ID, status and dates (unless specific requirement to reset status)
+    const updatedInvoice = {
+        ...freshInvoice,
+        id: selectedInvoice.id, // KEEP ID
+        status: selectedInvoice.status, // KEEP STATUS
+        dates: selectedInvoice.dates // KEEP DATES
+    };
+    
+    invoiceRepo.update(selectedInvoice.id, () => updatedInvoice);
+    setSelectedInvoice(updatedInvoice);
+    refreshData();
+    undoManager.showSuccess("Factuur data ververst vanuit reservering.");
+    logAuditAction('UPDATE_INVOICE', 'SYSTEM', selectedInvoice.id, { description: 'Regenerated from reservation data' });
+  };
 
   const handleStatusChange = (invoice: Invoice, status: Invoice['status']) => {
     invoiceRepo.update(invoice.id, i => ({ ...i, status }));
@@ -488,6 +516,13 @@ export const InvoiceManager = () => {
                  {/* Actions Header */}
                  <div className="flex justify-between items-center bg-slate-900 p-4 rounded-xl border border-slate-800 sticky top-0 z-20 shadow-xl">
                     <div className="flex space-x-2">
+                        {/* REGENERATE BUTTON */}
+                        {selectedInvoice.status === 'DRAFT' && selectedInvoice.reservationId && (
+                           <Button variant="secondary" onClick={handleRegenerate} className="text-xs h-8 text-amber-500 border-amber-900/50 hover:bg-amber-900/20">
+                               <RefreshCw size={14} className="mr-2"/> Herlaad Data
+                           </Button>
+                        )}
+
                         {selectedInvoice.status === 'DRAFT' && (
                             <Button onClick={() => handleSendEmail(selectedInvoice)} className="bg-blue-600 hover:bg-blue-700 text-xs h-8">
                                 <Mail size={14} className="mr-2"/> Verstuur

@@ -6,8 +6,8 @@ import {
 } from './calendar/CalendarComponents';
 import { ResponsiveDrawer, Button, Badge } from './UI';
 import { Availability } from '../types';
-import { Clock, Star, AlertCircle, Calendar as CalIcon, ChevronRight, Lock, Hourglass, Info, Phone } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Clock, Star, AlertCircle, Calendar as CalIcon, ChevronRight, Lock, Hourglass, Info, Phone, User } from 'lucide-react';
+import { useNavigate, Link } from 'react-router-dom';
 import { useIsMobile } from '../hooks/useMediaQuery';
 
 interface CalendarProps {
@@ -59,13 +59,22 @@ export const CustomerCalendar = ({ onSelect, selectedDate }: CalendarProps) => {
   return (
     <div className="h-full flex flex-col p-4 md:p-8 w-full max-w-7xl mx-auto animate-in fade-in duration-700">
       <div className="flex flex-col h-full">
-        <div className="mb-8 text-center md:text-left">
-          <h1 className="text-4xl font-serif text-white mb-2 tracking-wide">
-            Agenda & Tickets
-          </h1>
-          <p className="text-slate-400 text-sm max-w-md">
-            Selecteer een datum voor een onvergetelijke avond uit.
-          </p>
+        <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
+          <div className="text-center md:text-left">
+            <h1 className="text-4xl font-serif text-white mb-2 tracking-wide">
+              Agenda & Tickets
+            </h1>
+            <p className="text-slate-400 text-sm max-w-md mx-auto md:mx-0">
+              Selecteer een datum voor een onvergetelijke avond uit.
+            </p>
+          </div>
+          <div className="flex justify-center md:justify-end">
+             <Link to="/portal">
+                <Button variant="secondary" className="flex items-center text-xs h-10 border-slate-700 hover:border-slate-500 text-slate-300">
+                   <User size={16} className="mr-2" /> Mijn Reservering
+                </Button>
+             </Link>
+          </div>
         </div>
 
         <CalendarHeader 

@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Mail, Check, AlertCircle, Send, CheckCircle2 } from 'lucide-react';
-import { Button, Input } from './UI';
+import { Button, Input, Card } from './UI';
 import { Subscriber } from '../types';
 import { loadData, saveData } from '../utils/storage';
 
@@ -71,7 +71,7 @@ export const NewsletterSignup = () => {
 
   if (status === 'SUCCESS') {
     return (
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center animate-in fade-in zoom-in-95">
+      <Card className="border-slate-800 p-8 text-center animate-in fade-in zoom-in-95 bg-slate-900/50 backdrop-blur-md">
         <div className="w-16 h-16 bg-emerald-900/20 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-4 border border-emerald-900/50">
           <CheckCircle2 size={32} />
         </div>
@@ -81,12 +81,12 @@ export const NewsletterSignup = () => {
           Klik op de link in de mail om uw inschrijving te activeren.
         </p>
         <Button variant="secondary" onClick={() => setStatus('IDLE')}>Nog een inschrijving</Button>
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 relative overflow-hidden">
+    <Card className="p-8 relative overflow-hidden bg-slate-900/50 backdrop-blur-md border-slate-800">
       {/* Background Decor */}
       <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/5 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2 pointer-events-none" />
 
@@ -104,17 +104,17 @@ export const NewsletterSignup = () => {
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-4">
             <Input 
-              placeholder="Uw naam" 
+              label="Uw Naam"
+              placeholder="Jan Jansen" 
               value={formData.name} 
               onChange={(e: any) => setFormData({...formData, name: e.target.value})}
-              className="bg-black/50 border-slate-800"
             />
             <Input 
+              label="E-mailadres"
               type="email" 
-              placeholder="E-mailadres" 
+              placeholder="jan@voorbeeld.nl" 
               value={formData.email} 
               onChange={(e: any) => setFormData({...formData, email: e.target.value})}
-              className="bg-black/50 border-slate-800"
             />
           </div>
 
@@ -164,6 +164,6 @@ export const NewsletterSignup = () => {
           </p>
         </form>
       </div>
-    </div>
+    </Card>
   );
 };

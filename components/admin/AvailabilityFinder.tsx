@@ -6,7 +6,7 @@ import { calendarRepo, getShowDefinitions, bookingRepo } from '../../utils/stora
 import { ShowDefinition, Availability, CalendarEvent } from '../../types';
 
 interface AvailabilityFinderProps {
-  onSelect: (date: string, showId: string, event: CalendarEvent) => void;
+  onSelect: (date: string, showId: string, event: CalendarEvent, guests: number) => void;
   initialGuests?: number;
 }
 
@@ -170,14 +170,14 @@ export const AvailabilityFinder: React.FC<AvailabilityFinderProps> = ({ onSelect
           results.map(({ event, show, occupancy, capacity, remaining, isTight }, idx) => (
             <div 
               key={event.id}
-              onClick={() => onSelect(event.date, (event as any).showId, event)}
+              onClick={() => onSelect(event.date, (event as any).showId, event, partySize)}
               className="flex items-center justify-between p-4 bg-slate-900 border border-slate-800 rounded-xl hover:border-amber-500 cursor-pointer group transition-all"
             >
               <div className="flex items-center space-x-4">
-                <div className="flex flex-col items-center justify-center w-14 h-14 bg-black rounded-lg border border-slate-800 group-hover:border-slate-600">
-                  <span className="text-[10px] text-slate-500 font-bold uppercase">{new Date(event.date).toLocaleDateString('nl-NL', { weekday: 'short' })}</span>
-                  <span className="text-xl font-serif text-white font-bold">{new Date(event.date).getDate()}</span>
-                  <span className="text-[10px] text-slate-500 uppercase">{new Date(event.date).toLocaleDateString('nl-NL', { month: 'short' })}</span>
+                <div className="flex flex-col items-center justify-center w-16 h-16 bg-black rounded-lg border border-slate-800 group-hover:border-slate-600">
+                  <span className="text-[9px] text-slate-500 font-bold uppercase">{new Date(event.date).toLocaleDateString('nl-NL', { weekday: 'long' })}</span>
+                  <span className="text-2xl font-serif text-white font-bold leading-none my-0.5">{new Date(event.date).getDate()}</span>
+                  <span className="text-[9px] text-slate-500 uppercase">{new Date(event.date).toLocaleDateString('nl-NL', { month: 'short' })}</span>
                 </div>
                 <div>
                   <h4 className="font-bold text-white text-lg">{show?.name}</h4>

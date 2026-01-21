@@ -5,10 +5,21 @@ import { WaitlistEntry } from '../types';
 import { triggerEmail } from '../utils/emailEngine';
 import { notificationsRepo, waitlistRepo } from '../utils/storage';
 import { ErrorBanner } from './UI/ErrorBanner';
-import { Loader2 } from 'lucide-react';
+import { Loader2, MapPin } from 'lucide-react';
 
 export const WaitlistModal = ({ date, onClose }: { date: string, onClose: () => void }) => {
-  const [formData, setFormData] = useState({ name: '', email: '', phone: '', partySize: 2, notes: '' });
+  const [formData, setFormData] = useState({ 
+    firstName: '', 
+    lastName: '', 
+    email: '', 
+    phone: '', 
+    street: '',
+    houseNumber: '',
+    zip: '',
+    city: '',
+    partySize: 2 
+  });
+  
   const [submittedId, setSubmittedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -18,8 +29,8 @@ export const WaitlistModal = ({ date, onClose }: { date: string, onClose: () => 
     setIsSubmitting(true);
 
     // 1. Validation
-    if (!formData.name || !formData.email) {
-      setError("Naam en email zijn verplicht.");
+    if (!formData.firstName || !formData.lastName || !formData.email || !formData.phone) {
+      setError("Naam, email en telefoonnummer zijn verplicht.");
       setIsSubmitting(false);
       return;
     }
@@ -43,19 +54,21 @@ export const WaitlistModal = ({ date, onClose }: { date: string, onClose: () => 
     // Simulate network delay for better UX
     await new Promise(resolve => setTimeout(resolve, 800));
 
-    // 3. Create Entry
+    // 3. Create Entry - Packing address into notes as requested to simplify model
+    const addressString = `Adres: ${formData.street} ${formData.houseNumber}, ${formData.zip} ${formData.city}`;
     const waitlistId = `WL-${Date.now()}`;
+    
     const newEntry: WaitlistEntry = {
       id: waitlistId,
       date,
       customerId: `CUST-${Date.now()}`,
-      contactName: formData.name,
+      contactName: `${formData.firstName} ${formData.lastName}`,
       contactEmail: formData.email,
       contactPhone: formData.phone,
       partySize: formData.partySize,
       requestDate: new Date().toISOString(),
       status: 'PENDING',
-      notes: formData.notes
+      notes: addressString // Storing address here for simplicity
     };
 
     try {
@@ -87,7 +100,7 @@ export const WaitlistModal = ({ date, onClose }: { date: string, onClose: () => 
   }
 
   return (
-    <Card className="p-6 bg-slate-900 border-slate-800 w-full max-w-md mx-auto">
+    <Card className="p-6 bg-slate-900 border-slate-800 w-full max-w-lg mx-auto">
       <div className="mb-6">
         <h3 className="text-xl font-serif text-white">Wachtlijst Inschrijving</h3>
         <p className="text-sm text-slate-400">Datum: {new Date(date).toLocaleDateString()}</p>
@@ -96,28 +109,60 @@ export const WaitlistModal = ({ date, onClose }: { date: string, onClose: () => 
       {error && <ErrorBanner message={error} className="mb-4" onDismiss={() => setError(null)} />}
 
       <div className="space-y-4">
-        <Input 
-            label="Naam *" 
-            value={formData.name} 
-            onChange={(e: any) => setFormData({...formData, name: e.target.value})}
-            disabled={isSubmitting}
-        />
-        <Input 
-            label="Email *" 
-            type="email"
-            value={formData.email} 
-            onChange={(e: any) => setFormData({...formData, email: e.target.value})} 
-            disabled={isSubmitting}
-        />
         <div className="grid grid-cols-2 gap-4">
             <Input 
-                label="Telefoon" 
+                label="Voornaam *" 
+                value={formData.firstName} 
+                onChange={(e: any) => setFormData({...formData, firstName: e.target.value})}
+                disabled={isSubmitting}
+            />
+            <Input 
+                label="Achternaam *" 
+                value={formData.lastName} 
+                onChange={(e: any) => setFormData({...formData, lastName: e.target.value})}
+                disabled={isSubmitting}
+            />
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+             <Input 
+                label="Email *" 
+                type="email"
+                value={formData.email} 
+                onChange={(e: any) => setFormData({...formData, email: e.target.value})} 
+                disabled={isSubmitting}
+            />
+             <Input 
+                label="Telefoon *" 
                 value={formData.phone} 
                 onChange={(e: any) => setFormData({...formData, phone: e.target.value})} 
                 disabled={isSubmitting}
             />
-            <Input 
-                label="Personen *" 
+        </div>
+
+        <div className="pt-2 border-t border-slate-800">
+           <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3 flex items-center">
+              <MapPin size={12} className="mr-1"/> Adresgegevens
+           </label>
+           <div className="grid grid-cols-4 gap-3">
+              <div className="col-span-3">
+                  <Input label="Straat" value={formData.street} onChange={(e: any) => setFormData({...formData, street: e.target.value})} disabled={isSubmitting} />
+              </div>
+              <div className="col-span-1">
+                  <Input label="Nr" value={formData.houseNumber} onChange={(e: any) => setFormData({...formData, houseNumber: e.target.value})} disabled={isSubmitting} />
+              </div>
+              <div className="col-span-1">
+                  <Input label="Postcode" value={formData.zip} onChange={(e: any) => setFormData({...formData, zip: e.target.value})} disabled={isSubmitting} />
+              </div>
+              <div className="col-span-3">
+                  <Input label="Woonplaats" value={formData.city} onChange={(e: any) => setFormData({...formData, city: e.target.value})} disabled={isSubmitting} />
+              </div>
+           </div>
+        </div>
+
+        <div>
+             <Input 
+                label="Aantal Personen *" 
                 type="number" 
                 min="1"
                 value={formData.partySize} 
@@ -125,17 +170,8 @@ export const WaitlistModal = ({ date, onClose }: { date: string, onClose: () => 
                 disabled={isSubmitting}
             />
         </div>
-        <div>
-            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1 block">Notitie</label>
-            <textarea 
-                className="w-full bg-black/40 border border-slate-800 rounded-xl p-3 text-white text-sm focus:border-amber-500 outline-none h-20 resize-none disabled:opacity-50"
-                placeholder="Bijv. Rolstoel, voorkeur tafel..."
-                value={formData.notes}
-                onChange={(e) => setFormData({...formData, notes: e.target.value})}
-                disabled={isSubmitting}
-            />
-        </div>
-        <Button onClick={handleSubmit} disabled={isSubmitting} className="w-full bg-amber-600 hover:bg-amber-700 text-black border-none">
+
+        <Button onClick={handleSubmit} disabled={isSubmitting} className="w-full bg-amber-600 hover:bg-amber-700 text-black border-none mt-4">
             {isSubmitting ? <Loader2 className="animate-spin" /> : 'Inschrijven'}
         </Button>
       </div>

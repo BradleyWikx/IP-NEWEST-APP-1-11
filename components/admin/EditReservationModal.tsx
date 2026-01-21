@@ -359,9 +359,13 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
                    <div className="space-y-2">
                      <label className="text-xs text-slate-400 font-bold">Aantal Personen</label>
                      <div className="flex items-center space-x-3">
-                       <button onClick={() => setFormData(prev => ({ ...prev, partySize: Math.max(1, prev.partySize - 1) }))} className="w-10 h-10 bg-slate-800 rounded hover:bg-slate-700 text-white">-</button>
-                       <span className="text-xl font-bold text-white w-8 text-center">{formData.partySize}</span>
-                       <button onClick={() => setFormData(prev => ({ ...prev, partySize: Math.min(230, prev.partySize + 1) }))} className="w-10 h-10 bg-slate-800 rounded hover:bg-slate-700 text-white">+</button>
+                       <Input 
+                         type="number"
+                         min="1"
+                         className="bg-black/40 text-center font-bold text-lg"
+                         value={formData.partySize}
+                         onChange={(e: any) => setFormData(prev => ({ ...prev, partySize: Math.max(1, parseInt(e.target.value) || 1) }))}
+                       />
                      </div>
                    </div>
                    
@@ -387,7 +391,7 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
                    <div className="grid grid-cols-2 gap-4">
                       <Input label="Voornaam" value={formData.customer.firstName} onChange={(e: any) => updateCustomer('firstName', e.target.value)} />
                       <Input label="Achternaam" value={formData.customer.lastName} onChange={(e: any) => updateCustomer('lastName', e.target.value)} />
-                      <Input label="Email" value={formData.customer.email} onChange={(e: any) => updateCustomer('email', e.target.value)} className="col-span-2" />
+                      <Input label="Email" value={formData.customer.email} onChange={(e: any) => updateCustomer('email', e.target.value)} className="col-span-2 bg-black/40" />
                       
                       {/* Phone Edit */}
                       <div className="col-span-2 flex gap-2">
@@ -407,7 +411,7 @@ export const EditReservationModal: React.FC<EditReservationModalProps> = ({ rese
                       </div>
 
                       {/* Business Edit */}
-                      <Input label="Bedrijfsnaam" value={formData.customer.companyName || ''} onChange={(e: any) => updateCustomer('companyName', e.target.value)} className="col-span-2" />
+                      <Input label="Bedrijfsnaam" value={formData.customer.companyName || ''} onChange={(e: any) => updateCustomer('companyName', e.target.value)} className="col-span-2 bg-black/40" />
                       
                       <div className="col-span-2 space-y-2 border-t border-slate-800 pt-2">
                           <Input label="Factuur Opmerking" value={formData.customer.billingInstructions || ''} onChange={(e: any) => updateCustomer('billingInstructions', e.target.value)} />

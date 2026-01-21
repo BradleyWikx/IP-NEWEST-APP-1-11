@@ -4,21 +4,24 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   Calendar, Users, CheckCircle2, AlertCircle, ShoppingBag, 
   CreditCard, FileText, User, Tag, ArrowRight, Save, X, RotateCcw,
-  Zap, Search, ChevronDown, ChevronUp, AlertTriangle, Building2, MapPin, Phone, Mail
+  Zap, Search, ChevronDown, ChevronUp, AlertTriangle, Building2, MapPin, Phone, Mail,
+  Utensils, PartyPopper, LayoutGrid
 } from 'lucide-react';
 import { Button, Card, Input, Stepper } from '../UI';
 import { AvailabilityFinder } from './AvailabilityFinder';
 import { MerchandisePicker, MerchandiseSummaryList } from '../MerchandisePicker';
 import { 
   bookingRepo, getEvents, getShowDefinitions, 
-  tasksRepo, promoRepo, voucherRepo, customerRepo 
+  tasksRepo, promoRepo, voucherRepo, customerRepo, getNextTableNumber, calendarRepo 
 } from '../../utils/storage';
 import { calculateBookingTotals, getEffectivePricing } from '../../utils/pricing';
 import { triggerEmail } from '../../utils/emailEngine';
 import { logAuditAction } from '../../utils/auditLogger';
-import { Reservation, BookingStatus, ShowEvent, ShowDefinition, Customer } from '../../types';
+import { Reservation, BookingStatus, ShowEvent, ShowDefinition, Customer, AdminPriceOverride } from '../../types';
 import { MOCK_ADDONS } from '../../mock/data';
 import { toLocalISOString } from '../../utils/dateHelpers';
+import { ReservationSchema } from '../../utils/validation';
+import { PriceOverridePanel } from './PriceOverridePanel';
 
 const STEPS = ['Datum & Show', 'Details & Extra\'s', 'Klantgegevens', 'Status & Betaling'];
 
@@ -28,13 +31,6 @@ const PHONE_CODES = [
   { code: '+49', label: 'DE (+49)' },
   { code: '+44', label: 'UK (+44)' },
   { code: '+33', label: 'FR (+33)' },
-];
-
-const COUNTRIES = [
-  { code: 'NL', label: 'Nederland' },
-  { code: 'BE', label: 'België' },
-  { code: 'DE', label: 'Duitsland' },
-  { code: 'OTHER', label: 'Anders' },
 ];
 
 export const AdminBookingWizard = () => {
@@ -60,26 +56,29 @@ export const AdminBookingWizard = () => {
       street: '', houseNumber: '', zip: '', city: '', country: 'NL',
       companyName: '', billingInstructions: ''
     },
-    notes: { dietary: '', isCelebrating: false, celebrationText: '', internal: '' },
+    notes: { dietary: '', structuredDietary: {}, dietaryComments: '', isCelebrating: false, celebrationText: '', internal: '' },
     // Admin Specifics
     status: 'REQUEST' as BookingStatus,
     optionExpiry: '',
     discountCode: '',
-    manualDiscount: 0,
-    overrideTotal: null as number | null,
+    // Price Override Logic
+    adminPriceOverride: undefined as AdminPriceOverride | undefined,
+    
     isPaid: false,
     paymentMethod: 'FACTUUR',
     sendEmail: true,
-    ignoreAddonThresholds: false,
-    alternativeDate: ''
+    alternativeDate: '',
+    tableNumber: '' // NEW: Explicit Table Assignment
   });
 
-  // Local state for expiry picker
+  // Local state for expiry picker & UI toggles
   const [expiryType, setExpiryType] = useState('1WEEK');
+  const [isOverridingPrice, setIsOverridingPrice] = useState(false);
 
   // Derived Data
   const [selectedEvent, setSelectedEvent] = useState<ShowEvent | null>(null);
   const [selectedShow, setSelectedShow] = useState<ShowDefinition | null>(null);
+  const [pricing, setPricing] = useState<any>(null);
   const [financials, setFinancials] = useState<any>(null);
   const [showMobileSummary, setShowMobileSummary] = useState(false);
   
@@ -90,29 +89,31 @@ export const AdminBookingWizard = () => {
   const [customerQuery, setCustomerQuery] = useState('');
   const [customerSuggestions, setCustomerSuggestions] = useState<Customer[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // --- KEYBOARD SHORTCUTS ---
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+Enter to Submit (only on final step or if valid)
+      // Ctrl+Enter to Submit
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
         handleSubmit();
       }
-      
-      // Enter to Next (if not text area)
-      if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
-        const target = e.target as HTMLElement;
-        if (target.tagName !== 'TEXTAREA' && step > 0 && step < STEPS.length - 1) {
-           e.preventDefault();
-           setStep(s => s + 1);
-        }
-      }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [step, formData]); // Re-bind on state change for valid submit
+  }, [step, formData]); 
+
+  // --- SYNC ADDONS WITH GUESTS ---
+  useEffect(() => {
+    // Only sync if quantity matches previous guest count or is 0, otherwise keep manual overrides
+    // For simplicity in this wizard, we reset addons to guest count if they are selected
+    setFormData(prev => ({
+        ...prev,
+        addons: prev.addons.map(a => ({ ...a, quantity: prev.totalGuests }))
+    }));
+  }, [formData.totalGuests]);
 
   // --- CALCULATIONS & DATA FETCH ---
   useEffect(() => {
@@ -126,6 +127,12 @@ export const AdminBookingWizard = () => {
         setSelectedEvent(event);
         setSelectedShow(show);
         
+        // Auto-assign next table number if not set
+        if (!formData.tableNumber) {
+           const nextTable = getNextTableNumber(formData.date);
+           setFormData(prev => ({ ...prev, tableNumber: nextTable.toString() }));
+        }
+        
         // --- LIVE CAPACITY CHECK ---
         const allRes = bookingRepo.getAll();
         const activeRes = allRes.filter(r => 
@@ -136,38 +143,27 @@ export const AdminBookingWizard = () => {
             r.status !== 'WAITLIST'
         );
         const booked = activeRes.reduce((s, r) => s + r.partySize, 0);
-        // FIX: Force Number type to prevent string comparison errors
         setCapacityData({ booked, max: Number(event.capacity) || 230 });
-        // --- END CHECK ---
         
         const pricingProfile = getEffectivePricing(event, show);
+        setPricing(pricingProfile);
         
-        // Calculate Base Totals
+        // Calculate Totals
         const totals = calculateBookingTotals({
           totalGuests: formData.totalGuests,
           packageType: formData.packageType,
           addons: formData.addons,
           merchandise: formData.merchandise,
-          promo: formData.discountCode, // Standard engine promo
+          promo: formData.discountCode,
+          date: formData.date,
+          showId: formData.showId,
+          adminOverride: formData.adminPriceOverride
         }, pricingProfile);
-
-        // Apply Admin Overrides
-        if (formData.manualDiscount > 0) {
-          totals.discountAmount += formData.manualDiscount;
-          totals.priceAfterDiscount = Math.max(0, totals.subtotal - totals.discountAmount);
-          totals.amountDue = Math.max(0, totals.priceAfterDiscount - totals.voucherApplied);
-        }
-
-        if (formData.overrideTotal !== null) {
-          // Force final total
-          totals.amountDue = formData.overrideTotal;
-          (totals as any).isOverridden = true;
-        }
 
         setFinancials(totals);
       }
     }
-  }, [formData]);
+  }, [formData.date, formData.showId, formData.totalGuests, formData.packageType, formData.addons, formData.merchandise, formData.discountCode, formData.adminPriceOverride]);
 
   // --- CUSTOMER SEARCH ---
   useEffect(() => {
@@ -200,7 +196,6 @@ export const AdminBookingWizard = () => {
             newDate.setDate(today.getDate() + 14);
             setFormData(prev => ({ ...prev, optionExpiry: toLocalISOString(newDate) }));
         }
-        // If CUSTOM, we don't auto-update, let user pick
     }
   }, [expiryType, formData.status]);
 
@@ -227,30 +222,29 @@ export const AdminBookingWizard = () => {
     setCustomerQuery('');
   };
 
-  const handleQuickAddress = () => {
-    setFormData(prev => ({
-      ...prev,
-      customer: {
-        ...prev.customer,
-        street: 'N.t.b.',
-        houseNumber: '.',
-        zip: '0000XX',
-        city: 'N.t.b.'
-      }
-    }));
-  };
-
   // --- ACTIONS ---
 
-  const handleDateSelect = (date: string, showId: string, event: any) => {
-    setFormData(prev => ({ ...prev, date, showId }));
+  const handleDateSelect = (date: string, showId: string, event: any, guests: number) => {
+    setFormData(prev => ({ ...prev, date, showId, totalGuests: guests }));
     setStep(1);
+  };
+
+  const handlePriceOverrideSave = (override: AdminPriceOverride | undefined, sendEmail: boolean) => {
+      setFormData(prev => ({ ...prev, adminPriceOverride: override }));
+      setIsOverridingPrice(false);
   };
 
   const handleSubmit = async () => {
     if (!financials) return;
+    setSubmitError(null);
+    setIsSubmitting(true);
 
     const fullPhone = `${formData.customer.phoneCode} ${formData.customer.phone}`;
+    
+    // Format Table ID (ensure TAB- prefix)
+    const formattedTableId = formData.tableNumber 
+      ? (formData.tableNumber.startsWith('TAB-') ? formData.tableNumber : `TAB-${formData.tableNumber}`) 
+      : undefined;
 
     // 1. Create Reservation Object
     const resId = `RES-${Date.now()}`;
@@ -262,7 +256,8 @@ export const AdminBookingWizard = () => {
         id: `CUST-${Date.now()}`,
         ...formData.customer,
         phone: fullPhone,
-        address: `${formData.customer.street} ${formData.customer.houseNumber}, ${formData.customer.city}`
+        address: `${formData.customer.street} ${formData.customer.houseNumber}, ${formData.customer.city}`,
+        isBusiness: !!formData.customer.companyName
       },
       date: formData.date,
       showId: formData.showId,
@@ -282,19 +277,35 @@ export const AdminBookingWizard = () => {
         paymentMethod: formData.isPaid ? formData.paymentMethod : undefined,
         paidAt: formData.isPaid ? new Date().toISOString() : undefined,
         paymentDueAt: new Date(new Date().setDate(new Date().getDate() + 14)).toISOString(),
-        voucherCode: formData.discountCode // Store promo used
+        voucherCode: formData.discountCode,
+        priceBreakdown: financials.items
       },
-      notes: formData.notes,
+      notes: {
+          ...formData.notes,
+          dietary: formData.notes.dietary // Combined string should be constructed before submit if needed, or rely on structured
+      },
+      adminPriceOverride: formData.adminPriceOverride,
       optionExpiresAt: formData.status === 'OPTION' && formData.optionExpiry ? formData.optionExpiry : undefined,
-      startTime: selectedEvent?.times?.start || '19:30'
+      startTime: selectedEvent?.times?.start || '19:30',
+      tableId: formattedTableId
     };
+
+    // --- ZOD VALIDATION ---
+    const validationResult = ReservationSchema.safeParse(newReservation);
+    if (!validationResult.success) {
+        console.error("Validation Error:", validationResult.error.format());
+        const firstError = validationResult.error.errors[0];
+        setSubmitError(`Validatie fout (${firstError.path.join('.')}): ${firstError.message}`);
+        setIsSubmitting(false);
+        return;
+    }
 
     // 2. Save
     bookingRepo.add(newReservation);
 
     // 3. Audit
     logAuditAction('CREATE_RESERVATION_ADMIN', 'RESERVATION', resId, {
-      description: `Created booking as admin. Status: ${formData.status}`,
+      description: `Created booking as admin. Status: ${formData.status}. Table: ${formattedTableId || 'None'}`,
       after: newReservation
     });
 
@@ -327,8 +338,15 @@ export const AdminBookingWizard = () => {
     navigate('/admin/reservations');
   };
 
-  // --- COMPONENTS ---
+  const updateCustomer = (field: string, val: any) => {
+    setFormData(prev => ({
+      ...prev,
+      customer: { ...prev.customer, [field]: val }
+    }));
+  };
 
+  // --- COMPONENTS ---
+  
   const CompactSummary = () => (
     <Card className="p-4 md:p-6 bg-slate-950 border-slate-800 flex flex-col h-full shadow-xl">
       <div className="mb-4 pb-4 border-b border-slate-800">
@@ -336,8 +354,8 @@ export const AdminBookingWizard = () => {
           <span>Totaal</span>
           <span className="font-serif text-2xl text-amber-500">€{(financials?.amountDue || 0).toFixed(2)}</span>
         </h3>
-        {(financials as any)?.isOverridden && (
-          <p className="text-[10px] text-amber-500 text-right mt-1 font-bold">Handmatig aangepast</p>
+        {formData.adminPriceOverride && (
+          <p className="text-[10px] text-amber-500 text-right mt-1 font-bold">⚠️ Handmatig aangepast</p>
         )}
       </div>
       
@@ -345,49 +363,49 @@ export const AdminBookingWizard = () => {
           {selectedShow && (
             <div className="flex justify-between text-xs">
               <span className="text-slate-500">Show</span>
-              <span className="text-white font-bold text-right">{selectedShow.name}<br/>{new Date(formData.date).toLocaleDateString()}</span>
+              <span className="text-white font-bold text-right">{selectedShow.name}<br/>{new Date(formData.date).toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
             </div>
           )}
           
           <div className="flex justify-between">
             <span>Arrangement ({formData.totalGuests}p)</span>
-            <span>€{(financials?.subtotal || 0).toFixed(2)}</span>
+            <span>€{((financials?.items.find((i: any) => i.category === 'TICKET')?.total) || 0).toFixed(2)}</span>
           </div>
           
+          {financials?.items.filter((i:any) => i.category === 'ADDON').map((item: any) => (
+             <div key={item.id} className="flex justify-between text-xs text-slate-400">
+                <span>{item.label} ({item.quantity}x)</span>
+                <span>€{item.total.toFixed(2)}</span>
+             </div>
+          ))}
+
           <MerchandiseSummaryList selections={formData.merchandise} />
           
-          {/* Adjustments */}
-          <div className="pt-4 border-t border-slate-800 space-y-4">
+          {/* Admin Override Controls in Summary */}
+          <div className="pt-6 border-t border-slate-800 space-y-4 bg-slate-900/50 -mx-4 px-4 pb-4 mb-[-1rem]">
+            <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center">
+                <Tag size={12} className="mr-1"/> Prijs Correcties
+            </h4>
+            
+            {!isOverridingPrice ? (
+                <Button variant="secondary" onClick={() => setIsOverridingPrice(true)} className="w-full text-xs h-8">
+                    Prijs Aanpassen / Korting
+                </Button>
+            ) : (
+                <div className="text-xs text-slate-400 italic">
+                    Gebruik de modal om aan te passen.
+                </div>
+            )}
+            
+            {/* Promo Code Input */}
             <div>
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Promo Code</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 block">Promo Code</label>
               <Input 
-                placeholder="Bijv. FAMILY10" 
+                placeholder="Bijv. SUMMER2024" 
                 value={formData.discountCode}
                 onChange={(e: any) => setFormData({...formData, discountCode: e.target.value.toUpperCase()})}
-                className="h-9 text-xs bg-slate-900"
+                className="h-10 text-xs bg-black/40 border-slate-700 focus:border-amber-500"
               />
-            </div>
-            
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Korting (€)</label>
-                <Input 
-                  type="number"
-                  value={formData.manualDiscount}
-                  onChange={(e: any) => setFormData({...formData, manualDiscount: parseFloat(e.target.value) || 0})}
-                  className="h-9 text-xs bg-slate-900"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1 block">Override (€)</label>
-                <Input 
-                  type="number"
-                  placeholder="Auto"
-                  value={formData.overrideTotal ?? ''}
-                  onChange={(e: any) => setFormData({...formData, overrideTotal: e.target.value ? parseFloat(e.target.value) : null})}
-                  className="h-9 text-xs border-amber-900/50 focus:border-amber-500 bg-slate-900"
-                />
-              </div>
             </div>
           </div>
       </div>
@@ -396,484 +414,233 @@ export const AdminBookingWizard = () => {
 
   const renderStepContent = () => {
     switch (step) {
-      case 0: // FINDER
-        return (
-          <div className="space-y-6 animate-in fade-in">
-            <div>
-              <h2 className="text-2xl font-serif text-white mb-2">Beschikbaarheid Zoeken</h2>
-              <p className="text-slate-400">Zoek een geschikte datum voor de nieuwe reservering.</p>
-            </div>
-            <AvailabilityFinder 
-              initialGuests={formData.totalGuests} 
-              onSelect={handleDateSelect} 
-            />
-          </div>
-        );
+      case 0: return (
+        <div className="space-y-6 animate-in fade-in">
+          <div><h2 className="text-2xl font-serif text-white mb-2">Beschikbaarheid Zoeken</h2></div>
+          <AvailabilityFinder initialGuests={formData.totalGuests} onSelect={handleDateSelect} />
+        </div>
+      );
+      case 1: return (
+        <div className="space-y-6 animate-in fade-in">
+           {/* Package Cards */}
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div 
+                onClick={() => setFormData({ ...formData, packageType: 'standard' })}
+                className={`p-6 rounded-xl border cursor-pointer transition-all ${formData.packageType === 'standard' ? 'bg-slate-800 border-white ring-1 ring-white' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}
+              >
+                <div className="flex justify-between items-center mb-2">
+                  <h4 className="font-bold text-white text-lg">Standard</h4>
+                  {formData.packageType === 'standard' && <CheckCircle2 className="text-white" size={24} />}
+                </div>
+                <p className="text-2xl font-serif text-amber-500">€{pricing?.standard.toFixed(2)}</p>
+              </div>
+              <div 
+                onClick={() => setFormData({ ...formData, packageType: 'premium' })}
+                className={`p-6 rounded-xl border cursor-pointer transition-all ${formData.packageType === 'premium' ? 'bg-slate-800 border-amber-500 ring-1 ring-amber-500' : 'bg-slate-900 border-slate-800 hover:border-slate-600'}`}
+              >
+                <div className="flex justify-between items-center mb-2">
+                  <h4 className="font-bold text-white text-lg">Premium</h4>
+                  {formData.packageType === 'premium' && <CheckCircle2 className="text-amber-500" size={24} />}
+                </div>
+                <p className="text-2xl font-serif text-amber-500">€{pricing?.premium.toFixed(2)}</p>
+              </div>
+           </div>
 
-      case 1: // CORE & EXTRAS
-        return (
-          <div className="space-y-6 animate-in fade-in">
-             <Card className="p-6 bg-slate-900 border-slate-800">
-               <h3 className="text-lg font-bold text-white mb-4 flex items-center"><Users className="mr-2 text-amber-500"/> Basis</h3>
-               <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                      <Input 
-                        label="Aantal Personen" 
-                        type="number" 
-                        autoFocus={!!prefill?.date}
-                        value={formData.totalGuests}
-                        onChange={(e: any) => setFormData({...formData, totalGuests: parseInt(e.target.value) || 1})}
-                      />
-                      {/* CAPACITY WARNING */}
-                      {capacityData && (capacityData.booked + formData.totalGuests) > capacityData.max && (
-                          <div className="flex items-center text-xs text-amber-500 bg-amber-900/20 p-2 rounded border border-amber-900/50 mt-2">
-                             <AlertTriangle size={14} className="mr-2 shrink-0" />
-                             <span>
-                                Let op: <strong>{capacityData.booked}/{capacityData.max}</strong> bezet. 
-                                Nieuw totaal: <strong>{capacityData.booked + formData.totalGuests}</strong> (Overboeking)
-                             </span>
-                          </div>
-                      )}
-                  </div>
-                  
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Arrangement</label>
-                    <select 
-                      className="w-full bg-black/40 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:border-amber-500"
-                      value={formData.packageType}
-                      onChange={(e: any) => setFormData({...formData, packageType: e.target.value})}
-                    >
-                      <option value="standard">Standard</option>
-                      <option value="premium">Premium</option>
-                    </select>
-                  </div>
+           <Card className="p-6 bg-slate-900 border-slate-800">
+             <div className="grid grid-cols-2 gap-4">
+               <div className="space-y-1">
+                  <Input label="Aantal Personen" type="number" className="text-lg font-bold" value={formData.totalGuests} onChange={(e: any) => setFormData({...formData, totalGuests: Math.max(1, parseInt(e.target.value) || 1)})} />
+                  {capacityData && (capacityData.booked + formData.totalGuests) > capacityData.max && (
+                      <div className="flex items-center text-xs text-amber-500 bg-amber-900/20 p-2 rounded border border-amber-900/50 mt-2">
+                         <AlertTriangle size={14} className="mr-2 shrink-0" />
+                         <span>Let op: {capacityData.booked}/{capacityData.max} bezet.</span>
+                      </div>
+                  )}
                </div>
-             </Card>
+             </div>
+           </Card>
 
-             <Card className="p-6 bg-slate-900 border-slate-800">
-               <div className="flex justify-between items-center mb-4">
-                 <h3 className="text-lg font-bold text-white flex items-center"><CheckCircle2 className="mr-2 text-emerald-500"/> Extra's</h3>
-                 <label className="flex items-center space-x-2 text-xs text-slate-400 cursor-pointer">
-                   <input 
-                     type="checkbox" 
-                     checked={formData.ignoreAddonThresholds} 
-                     onChange={(e) => setFormData({...formData, ignoreAddonThresholds: e.target.checked})}
-                     className="rounded bg-slate-800 border-slate-700"
-                   />
-                   <span>Negeer drempel (25p)</span>
-                 </label>
-               </div>
-               
-               <div className="space-y-3">
-                 {MOCK_ADDONS.map(addon => {
-                   const qty = formData.addons.find(a => a.id === addon.id)?.quantity || 0;
-                   const isDisabled = !formData.ignoreAddonThresholds && formData.totalGuests < (addon.minGroupSize || 0);
-
-                   return (
-                     <div key={addon.id} className={`flex justify-between items-center p-3 rounded-lg border ${isDisabled ? 'bg-slate-950 border-slate-800 opacity-50' : 'bg-slate-950 border-slate-700'}`}>
-                        <div>
-                          <p className="text-white text-sm font-bold">{addon.name}</p>
-                          <p className="text-xs text-amber-500">€{addon.price.toFixed(2)} p.p.</p>
-                          {isDisabled && <p className="text-[10px] text-red-500">Min. {addon.minGroupSize} personen</p>}
-                        </div>
-                        <div className="flex items-center space-x-3">
+           {/* Add-ons */}
+           <div className="p-6 bg-slate-900 border border-slate-800 rounded-xl">
+              <h3 className="text-xs font-bold text-emerald-500 uppercase tracking-widest mb-4 flex items-center"><Utensils size={14} className="mr-2"/> Extra Opties</h3>
+              <div className="space-y-2">
+                {MOCK_ADDONS.map(addon => {
+                  const qty = formData.addons.find(a => a.id === addon.id)?.quantity || 0;
+                  return (
+                    <div key={addon.id} className="flex justify-between items-center p-3 bg-black/40 rounded-lg border border-slate-800">
+                       <span className="text-sm text-slate-300">{addon.name} (€{addon.price})</span>
+                       <div className="flex items-center space-x-3">
+                         <label className="relative inline-flex items-center cursor-pointer">
                            <input 
-                             type="checkbox"
-                             checked={qty > 0}
-                             disabled={isDisabled}
+                             type="checkbox" 
+                             checked={qty > 0} 
                              onChange={(e) => {
                                const newAddons = formData.addons.filter(a => a.id !== addon.id);
                                if (e.target.checked) newAddons.push({ id: addon.id, quantity: formData.totalGuests });
-                               setFormData({...formData, addons: newAddons});
+                               setFormData({ ...formData, addons: newAddons });
                              }}
-                             className="w-5 h-5 rounded bg-slate-800 border-slate-600 checked:bg-amber-500"
+                             className="sr-only peer" 
                            />
-                        </div>
-                     </div>
-                   );
-                 })}
-               </div>
-             </Card>
-
-             <Card className="p-6 bg-slate-900 border-slate-800">
-               <h3 className="text-lg font-bold text-white mb-4 flex items-center"><ShoppingBag className="mr-2 text-blue-500"/> Merchandise</h3>
-               <MerchandisePicker 
-                 selections={formData.merchandise} 
-                 totalGuests={formData.totalGuests}
-                 onUpdate={(id, delta) => {
-                    const current = formData.merchandise.find(m => m.id === id)?.quantity || 0;
-                    const newQty = Math.max(0, current + delta);
-                    const newMerch = formData.merchandise.filter(m => m.id !== id);
-                    if (newQty > 0) newMerch.push({ id, quantity: newQty });
-                    setFormData({...formData, merchandise: newMerch});
-                 }}
-                 onSet={(id, qty) => {
-                    const newMerch = formData.merchandise.filter(m => m.id !== id);
-                    if (qty > 0) newMerch.push({ id, quantity: qty });
-                    setFormData({...formData, merchandise: newMerch});
-                 }}
-               />
-             </Card>
-          </div>
-        );
-
-      case 2: // CUSTOMER & NOTES
-        return (
-          <div className="space-y-6 animate-in fade-in">
-             <Card className="p-6 bg-slate-900 border-slate-800 space-y-4">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-lg font-bold text-white flex items-center"><User className="mr-2 text-amber-500"/> Klantgegevens</h3>
-                  <div className="relative w-64">
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} />
-                      <input 
-                        className="w-full bg-black border border-slate-700 rounded-full pl-9 pr-4 py-1.5 text-xs text-white focus:border-amber-500 outline-none placeholder:text-slate-600"
-                        placeholder="Zoek bestaande klant..."
-                        value={customerQuery}
-                        onChange={(e) => setCustomerQuery(e.target.value)}
-                        onFocus={() => setShowSuggestions(true)}
-                      />
+                           <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-emerald-500"></div>
+                         </label>
+                       </div>
                     </div>
-                    {showSuggestions && customerSuggestions.length > 0 && (
-                      <div className="absolute top-full left-0 w-full mt-2 bg-slate-900 border border-slate-700 rounded-xl shadow-xl z-20 overflow-hidden">
-                        {customerSuggestions.map(c => (
-                          <div 
-                            key={c.id} 
-                            onClick={() => handleCustomerSelect(c)}
-                            className="p-3 hover:bg-slate-800 cursor-pointer border-b border-slate-800 last:border-0"
-                          >
-                            <p className="text-sm font-bold text-white">{c.firstName} {c.lastName}</p>
-                            <p className="text-xs text-slate-500">{c.email}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
+                  );
+                })}
+              </div>
+           </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                   <div className="md:col-span-1">
-                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 block">Aanhef</label>
-                      <select 
-                        className="w-full px-4 py-3 bg-black/40 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500"
-                        value={formData.customer.salutation}
-                        onChange={(e) => setFormData({...formData, customer: {...formData.customer, salutation: e.target.value}})}
-                      >
-                        <option value="Dhr.">Dhr.</option>
-                        <option value="Mevr.">Mevr.</option>
-                        <option value="Fam.">Fam.</option>
-                        <option value="-">-</option>
-                      </select>
-                   </div>
-                   <div className="md:col-span-3">
-                      <Input autoFocus label="Voornaam" value={formData.customer.firstName} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, firstName: e.target.value}})} />
-                   </div>
-                   
-                   <div className="md:col-span-2">
-                      <Input label="Achternaam" value={formData.customer.lastName} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, lastName: e.target.value}})} />
-                   </div>
-                   <div className="md:col-span-2">
-                      <Input label="Email" value={formData.customer.email} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, email: e.target.value}})} className="col-span-2" />
-                   </div>
-                   
-                   {/* Phone Row */}
-                   <div className="md:col-span-2 flex gap-2">
-                      <div className="w-1/3">
-                          <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-2">Code</label>
-                          <select 
-                              className="w-full px-2 py-3 bg-black/40 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500 appearance-none"
-                              value={formData.customer.phoneCode}
-                              onChange={(e) => setFormData({...formData, customer: {...formData.customer, phoneCode: e.target.value}})}
-                          >
-                              {PHONE_CODES.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
-                          </select>
-                      </div>
-                      <div className="flex-grow">
-                          <Input label="Telefoon" value={formData.customer.phone} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, phone: e.target.value}})} />
-                      </div>
-                   </div>
-                </div>
-
-                <div className="pt-4 border-t border-slate-800">
-                  <div className="flex justify-between items-center mb-4">
-                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center">
-                        <MapPin size={14} className="mr-2"/> Adresgegevens
-                    </h4>
-                    <Button variant="secondary" onClick={handleQuickAddress} className="h-6 text-[10px] px-2 bg-slate-800 border-slate-700">
-                        Adres Later Invullen
-                    </Button>
-                  </div>
-                  <div className="grid grid-cols-4 gap-4">
-                     <div className="col-span-4 md:col-span-2">
-                        <label className="text-xs font-bold text-slate-500 uppercase tracking-widest block mb-2">Land</label>
-                        <select 
-                            className="w-full px-4 py-3 bg-black/40 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500 appearance-none"
-                            value={formData.customer.country || 'NL'}
-                            onChange={(e) => setFormData({...formData, customer: { ...formData.customer, country: e.target.value }})}
-                        >
-                            {COUNTRIES.map(c => <option key={c.code} value={c.code}>{c.label}</option>)}
-                        </select>
-                     </div>
-                     <div className="col-span-3">
-                       <Input label="Straat *" value={formData.customer.street} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, street: e.target.value}})} />
-                     </div>
-                     <div className="col-span-1">
-                       <Input label="Huisnr *" value={formData.customer.houseNumber} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, houseNumber: e.target.value}})} />
-                     </div>
-                     <div className="col-span-1">
-                       <Input label="Postcode *" value={formData.customer.zip} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, zip: e.target.value}})} />
-                     </div>
-                     <div className="col-span-3">
-                       <Input label="Woonplaats *" value={formData.customer.city} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, city: e.target.value}})} />
-                     </div>
-                  </div>
-               </div>
-
-                {/* Business Toggle */}
-               <div className="pt-2 border-t border-slate-800">
-                  <label className="flex items-center space-x-3 cursor-pointer p-2 rounded hover:bg-slate-950/50 transition-colors w-fit">
-                     <div className={`w-5 h-5 rounded border flex items-center justify-center transition-colors ${formData.customer.companyName ? 'bg-blue-500 border-blue-500' : 'border-slate-600 bg-slate-900'}`}>
-                        {formData.customer.companyName && <CheckCircle2 size={14} className="text-white"/>}
-                     </div>
-                     <input 
-                       type="checkbox" 
-                       className="hidden"
-                       checked={!!formData.customer.companyName}
-                       onChange={(e) => setFormData({...formData, customer: { ...formData.customer, companyName: e.target.checked ? 'Bedrijf' : '' }})}
-                     />
-                     <span className="font-bold text-white text-sm flex items-center"><Building2 size={16} className="mr-2 text-blue-500"/> Zakelijke boeking?</span>
-                  </label>
-
-                  {formData.customer.companyName && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 animate-in slide-in-from-top-2">
-                          <Input 
-                             label="Bedrijfsnaam" 
-                             value={formData.customer.companyName === 'Bedrijf' ? '' : formData.customer.companyName} 
-                             onChange={(e: any) => setFormData({...formData, customer: { ...formData.customer, companyName: e.target.value }})}
-                             placeholder="Bedrijfsnaam BV"
-                          />
-                          <Input 
-                             label="Opmerkingen Factuur" 
-                             value={formData.customer.billingInstructions || ''} 
-                             onChange={(e: any) => setFormData({...formData, customer: { ...formData.customer, billingInstructions: e.target.value }})}
-                             placeholder="Kostenplaats, PO-nummer, etc."
-                          />
-                      </div>
-                  )}
-               </div>
-             </Card>
-
-             <Card className="p-6 bg-slate-900 border-slate-800 space-y-4">
-                <h3 className="text-lg font-bold text-white flex items-center"><FileText className="mr-2 text-blue-500"/> Notities</h3>
-                <div className="space-y-4">
-                   <div>
-                     <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5 block">Dieetwensen</label>
-                     <textarea 
-                       className="w-full bg-black/40 border border-slate-800 rounded-xl p-3 text-white text-sm focus:border-amber-500 outline-none h-20 resize-none"
-                       value={formData.notes.dietary}
-                       onChange={(e) => setFormData({...formData, notes: {...formData.notes, dietary: e.target.value}})}
-                     />
-                   </div>
-                   <div>
-                     <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-1.5 block">Interne Notitie (Admin Only)</label>
-                     <textarea 
-                       className="w-full bg-amber-900/10 border border-amber-900/30 rounded-xl p-3 text-amber-100 text-sm focus:border-amber-500 outline-none h-20 resize-none placeholder:text-amber-500/30"
-                       placeholder="Bijv. VIP gast, extra aandacht nodig..."
-                       value={formData.notes.internal}
-                       onChange={(e) => setFormData({...formData, notes: {...formData.notes, internal: e.target.value}})}
-                     />
-                   </div>
-                </div>
-             </Card>
-          </div>
-        );
-
-      case 3: // STATUS & PAYMENT
-        return (
+           {/* Merchandise */}
+           <div className="p-6 bg-slate-900 border border-slate-800 rounded-xl">
+              <h3 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Merchandise</h3>
+              <MerchandisePicker 
+                selections={formData.merchandise} 
+                totalGuests={formData.totalGuests}
+                onUpdate={(id, d) => {
+                  const current = formData.merchandise.find(m => m.id === id)?.quantity || 0;
+                  const newQty = Math.max(0, current + d);
+                  const newMerch = formData.merchandise.filter(m => m.id !== id);
+                  if (newQty > 0) newMerch.push({ id, quantity: newQty });
+                  setFormData({...formData, merchandise: newMerch});
+                }}
+                onSet={(id, qty) => {
+                  const newMerch = formData.merchandise.filter(m => m.id !== id);
+                  if (qty > 0) newMerch.push({ id, quantity: qty });
+                  setFormData({...formData, merchandise: newMerch});
+                }}
+              />
+           </div>
+        </div>
+      );
+      case 2: return (
+        <div className="space-y-6 animate-in fade-in">
+           {/* Customer Search & Form - Same as previous */}
+           <Card className="p-6 bg-slate-900 border-slate-800 space-y-4">
+              <div className="flex justify-between items-center"><h3 className="text-lg font-bold text-white flex items-center"><User className="mr-2 text-amber-500"/> Klantgegevens</h3>
+                <div className="relative w-64"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={14} /><input className="w-full bg-black border border-slate-700 rounded-full pl-9 pr-4 py-1.5 text-xs text-white" placeholder="Zoek klant..." value={customerQuery} onChange={(e) => setCustomerQuery(e.target.value)} onFocus={() => setShowSuggestions(true)} /></div>
+                {showSuggestions && customerSuggestions.length > 0 && (
+                  <div className="absolute top-16 right-6 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-xl z-20 overflow-hidden">{customerSuggestions.map(c => (<div key={c.id} onClick={() => handleCustomerSelect(c)} className="p-3 hover:bg-slate-800 cursor-pointer text-sm text-white">{c.firstName} {c.lastName}</div>))}</div>
+                )}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                 <Input label="Voornaam" value={formData.customer.firstName} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, firstName: e.target.value}})} />
+                 <Input label="Achternaam" value={formData.customer.lastName} onChange={(e: any) => setFormData({...formData, customer: {...formData.customer, lastName: e.target.value}})} />
+                 <Input label="Email" value={formData.customer.email} onChange={(e: any) => updateCustomer('email', e.target.value)} />
+                 <Input label="Telefoon" value={formData.customer.phone} onChange={(e: any) => updateCustomer('phone', e.target.value)} />
+              </div>
+              
+              <div className="pt-4 border-t border-slate-800">
+                 <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-3">Zakelijk & Adres</h4>
+                 <div className="grid grid-cols-2 gap-4">
+                    <Input label="Bedrijfsnaam" value={formData.customer.companyName || ''} onChange={(e: any) => updateCustomer('companyName', e.target.value)} />
+                    <Input label="Factuur Referentie" value={formData.customer.billingInstructions || ''} onChange={(e: any) => updateCustomer('billingInstructions', e.target.value)} />
+                 </div>
+              </div>
+           </Card>
+        </div>
+      );
+      case 3: return (
           <div className="space-y-6 animate-in fade-in">
              <Card className="p-6 bg-slate-900 border-slate-800 space-y-6">
                 <h3 className="text-lg font-bold text-white flex items-center"><Tag className="mr-2 text-emerald-500"/> Status & Communicatie</h3>
-                
-                <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Status</label>
-                    <select 
-                      className="w-full bg-black/40 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:border-amber-500"
-                      value={formData.status}
-                      onChange={(e) => setFormData({...formData, status: e.target.value as BookingStatus})}
-                    >
-                      <option value="REQUEST">Aanvraag (Request)</option>
-                      <option value="OPTION">Optie (Option)</option>
-                      <option value="CONFIRMED">Bevestigd (Confirmed)</option>
-                      <option value="INVITED">Genodigde (Invited)</option>
+                    <select className="w-full bg-black/40 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:border-amber-500" value={formData.status} onChange={(e) => setFormData({...formData, status: e.target.value as BookingStatus})}>
+                      <option value="REQUEST">Aanvraag</option>
+                      <option value="OPTION">Optie</option>
+                      <option value="CONFIRMED">Bevestigd</option>
+                      <option value="INVITED">Genodigde</option>
                     </select>
                   </div>
+                  
+                  {/* NEW TABLE ASSIGNMENT FIELD */}
+                  <div className="space-y-1.5">
+                     <label className="text-xs font-bold text-slate-500 uppercase tracking-widest flex items-center"><LayoutGrid size={12} className="mr-1"/> Tafel (Optioneel)</label>
+                     <Input 
+                       value={formData.tableNumber} 
+                       onChange={(e: any) => setFormData({...formData, tableNumber: e.target.value})}
+                       placeholder="Auto"
+                       className="bg-black/40"
+                     />
+                  </div>
 
-                  {/* Smart Expiry Picker for Options */}
                   {formData.status === 'OPTION' && (
-                    <div className="space-y-1.5 animate-in fade-in">
+                    <div className="col-span-2 space-y-1.5">
                       <label className="text-xs font-bold text-amber-500 uppercase tracking-widest">Optie Verloopt Op</label>
                       <div className="grid grid-cols-2 gap-4">
-                          <select 
-                            className="w-full px-4 py-3 bg-black/40 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500"
-                            value={expiryType}
-                            onChange={(e) => setExpiryType(e.target.value)}
-                          >
-                            <option value="1WEEK">1 Week (Standaard)</option>
+                          <select className="w-full px-4 py-3 bg-black/40 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500" value={expiryType} onChange={(e) => setExpiryType(e.target.value)}>
+                            <option value="1WEEK">1 Week</option>
                             <option value="2WEEKS">2 Weken</option>
                             <option value="CUSTOM">Aangepast...</option>
                           </select>
-                          
-                          {expiryType === 'CUSTOM' ? (
-                              <Input 
-                                type="date" 
-                                value={formData.optionExpiry}
-                                onChange={(e: any) => setFormData({...formData, optionExpiry: e.target.value})}
-                              />
-                          ) : (
-                              <div className="px-4 py-3 bg-slate-900/50 border border-slate-800 rounded-xl text-slate-400 text-sm flex items-center">
-                                  {new Date(formData.optionExpiry).toLocaleDateString()}
-                              </div>
-                          )}
+                          {expiryType === 'CUSTOM' ? <Input type="date" value={formData.optionExpiry} onChange={(e: any) => setFormData({...formData, optionExpiry: e.target.value})} /> : <div className="px-4 py-3 bg-slate-900/50 border border-slate-800 rounded-xl text-slate-400 text-sm flex items-center">{new Date(formData.optionExpiry).toLocaleDateString()}</div>}
                       </div>
                     </div>
                   )}
-
-                  <div className="pt-4 border-t border-slate-800">
-                    <label className="flex items-center space-x-3 cursor-pointer">
-                      <input 
-                        type="checkbox" 
-                        checked={formData.sendEmail} 
-                        onChange={(e) => setFormData({...formData, sendEmail: e.target.checked})}
-                        className="w-5 h-5 rounded bg-slate-800 border-slate-600 checked:bg-amber-500"
-                      />
-                      <span className="text-sm text-white">Stuur automatische bevestigingsmail naar klant</span>
-                    </label>
+                  <div className="col-span-2 pt-4 border-t border-slate-800">
+                    <label className="flex items-center space-x-3 cursor-pointer"><input type="checkbox" checked={formData.sendEmail} onChange={(e) => setFormData({...formData, sendEmail: e.target.checked})} className="w-5 h-5 rounded bg-slate-800 border-slate-600 checked:bg-amber-500" /><span className="text-sm text-white">Stuur bevestigingsmail</span></label>
                   </div>
                 </div>
              </Card>
-
-             <Card className="p-6 bg-slate-900 border-slate-800 space-y-6">
-                <h3 className="text-lg font-bold text-white flex items-center"><CreditCard className="mr-2 text-blue-500"/> Betaling</h3>
-                
-                <div className="grid grid-cols-2 gap-4">
-                   <div className="col-span-2 flex items-center justify-between p-3 bg-slate-950 rounded-xl border border-slate-800">
-                      <span className="text-sm text-slate-400">Direct als betaald markeren?</span>
-                      <div 
-                         onClick={() => setFormData({...formData, isPaid: !formData.isPaid})}
-                         className={`w-12 h-6 rounded-full relative cursor-pointer transition-colors ${formData.isPaid ? 'bg-emerald-500' : 'bg-slate-800'}`}
-                      >
-                         <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${formData.isPaid ? 'left-7' : 'left-1'}`} />
-                      </div>
-                   </div>
-
-                   {formData.isPaid && (
-                     <div className="col-span-2 space-y-1.5 animate-in fade-in">
-                        <label className="text-xs font-bold text-slate-500 uppercase tracking-widest">Betaalmethode</label>
-                        <select 
-                          className="w-full bg-black/40 border border-slate-800 rounded-xl px-4 py-3 text-white outline-none focus:border-amber-500"
-                          value={formData.paymentMethod}
-                          onChange={(e) => setFormData({...formData, paymentMethod: e.target.value})}
-                        >
-                          <option value="FACTUUR">Op Factuur</option>
-                          <option value="PIN">Pin</option>
-                          <option value="CASH">Contant</option>
-                          <option value="IDEAL">iDeal</option>
-                        </select>
-                     </div>
-                   )}
-                </div>
-             </Card>
+             
+             {submitError && (
+               <div className="p-4 bg-red-900/20 border border-red-900/50 rounded-xl flex items-center text-red-400">
+                  <AlertCircle size={20} className="mr-3 shrink-0" />
+                  <span className="text-sm">{submitError}</span>
+               </div>
+             )}
           </div>
-        );
+      );
     }
   };
 
   return (
     <div className="h-full flex flex-col relative">
-      {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div className="flex items-center space-x-3">
-          <div className="p-2 bg-slate-900 rounded-full text-amber-500 border border-slate-800 hidden md:block">
-            <Zap size={20} />
-          </div>
-          <div>
-            <h1 className="text-3xl font-serif text-white">Nieuwe Reservering</h1>
-            <p className="text-slate-500 text-sm flex items-center">Admin Booking <span className="mx-2">•</span> <span className="text-xs text-slate-600 bg-slate-900 px-1.5 rounded">Ctrl+Enter to Submit</span></p>
-          </div>
+          <div className="p-2 bg-slate-900 rounded-full text-amber-500 border border-slate-800 hidden md:block"><Zap size={20} /></div>
+          <div><h1 className="text-3xl font-serif text-white">Nieuwe Reservering</h1><p className="text-slate-500 text-sm flex items-center">Admin Booking</p></div>
         </div>
-        <div className="flex space-x-3">
-           <Button variant="ghost" onClick={() => navigate('/admin/reservations')}>Annuleren</Button>
-        </div>
+        <div className="flex space-x-3"><Button variant="ghost" onClick={() => navigate('/admin/reservations')}>Annuleren</Button></div>
       </div>
-
-      {/* Stepper */}
-      <div className="mb-8">
-        <Stepper steps={STEPS} current={step} />
-      </div>
-
-      {/* Content Layout: Sidebar for Summary */}
+      <div className="mb-8"><Stepper steps={STEPS} current={step} /></div>
       <div className="flex flex-col lg:flex-row gap-8 pb-32">
-        <div className="flex-grow">
-          {renderStepContent()}
-        </div>
-        
-        {/* Desktop Sticky Sidebar Summary */}
-        {step > 0 && (
-          <div className="hidden lg:block w-80 shrink-0">
-            <div className="sticky top-6">
-              <CompactSummary />
-            </div>
-          </div>
-        )}
+        <div className="flex-grow">{renderStepContent()}</div>
+        <div className="hidden lg:block w-80 shrink-0"><div className="sticky top-6"><CompactSummary /></div></div>
       </div>
-
-      {/* Sticky Footer (Actions & Mobile Summary Toggle) */}
       <div className="fixed bottom-0 left-0 w-full bg-slate-950/90 backdrop-blur-md border-t border-slate-900 p-4 z-40 lg:pl-72">
          <div className="max-w-7xl mx-auto flex justify-between items-center">
-            {/* Mobile Summary Trigger */}
-            <div 
-              className="lg:hidden flex flex-col cursor-pointer"
-              onClick={() => setShowMobileSummary(!showMobileSummary)}
-            >
-               <div className="flex items-center text-xs font-bold text-slate-500 uppercase tracking-widest">
-                 Totaal {showMobileSummary ? <ChevronDown size={12} className="ml-1"/> : <ChevronUp size={12} className="ml-1"/>}
-               </div>
+            <div className="lg:hidden flex flex-col cursor-pointer" onClick={() => setShowMobileSummary(!showMobileSummary)}>
+               <div className="flex items-center text-xs font-bold text-slate-500 uppercase tracking-widest">Totaal {showMobileSummary ? <ChevronDown size={12}/> : <ChevronUp size={12}/>}</div>
                <div className="text-xl font-serif text-amber-500">€{(financials?.amountDue || 0).toFixed(2)}</div>
             </div>
-
-            {/* Desktop Hint */}
-            <div className="hidden lg:block text-sm text-slate-400">
-               {step > 0 && selectedShow && (
-                 <span>
-                   Boeking voor <strong>{selectedShow.name}</strong> op <strong>{new Date(formData.date).toLocaleDateString()}</strong>
-                 </span>
-               )}
-            </div>
-
-            {/* Actions */}
             <div className="flex space-x-3 ml-auto">
                {step > 0 && <Button variant="secondary" onClick={() => setStep(s => s-1)}>Terug</Button>}
-               {step < STEPS.length - 1 ? (
-                 <Button onClick={() => setStep(s => s+1)} disabled={step === 0 && !formData.date}>
-                   Volgende <ArrowRight size={16} className="ml-2"/>
-                 </Button>
-               ) : (
-                 <Button onClick={handleSubmit} className="bg-emerald-600 hover:bg-emerald-700 shadow-[0_0_20px_rgba(5,150,105,0.3)]">
-                   <Save size={16} className="mr-2"/> Boeking Aanmaken
-                 </Button>
-               )}
+               {step < STEPS.length - 1 ? <Button onClick={() => setStep(s => s+1)} disabled={step === 0 && !formData.date}>Volgende <ArrowRight size={16} className="ml-2"/></Button> : <Button onClick={handleSubmit} disabled={isSubmitting} className="bg-emerald-600 hover:bg-emerald-700 shadow-[0_0_20px_rgba(5,150,105,0.3)]"><Save size={16} className="mr-2"/> Boeking Aanmaken</Button>}
             </div>
          </div>
       </div>
 
-      {/* Mobile Summary Sheet */}
-      {showMobileSummary && (
-        <div className="fixed inset-0 z-30 lg:hidden">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowMobileSummary(false)} />
-          <div className="absolute bottom-[80px] left-0 w-full animate-in slide-in-from-bottom-10 max-h-[60vh] overflow-hidden rounded-t-2xl shadow-2xl">
-            <CompactSummary />
-          </div>
+      {/* PRICE OVERRIDE MODAL */}
+      {isOverridingPrice && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+           <Card className="w-full max-w-lg bg-slate-950 border-slate-800 shadow-2xl">
+              <div className="p-6">
+                 {/* Create a dummy object to pass to panel */}
+                 <PriceOverridePanel 
+                    reservation={{
+                        ...formData,
+                        id: 'temp',
+                        createdAt: '',
+                        customerId: '',
+                        financials: financials ? { ...financials, total: financials.subtotal, finalTotal: financials.amountDue, paid: 0, isPaid: false } : {} as any
+                    } as any}
+                    onSave={handlePriceOverrideSave}
+                    onCancel={() => setIsOverridingPrice(false)}
+                 />
+              </div>
+           </Card>
         </div>
       )}
     </div>
