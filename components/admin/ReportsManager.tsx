@@ -4,7 +4,8 @@ import { useLocation } from 'react-router-dom';
 import { 
   Printer, Calendar, FileText, ChevronDown, Download, 
   Utensils, DollarSign, Users, ShoppingBag, AlertCircle,
-  Ticket, PartyPopper, CheckCircle2, Clock, BarChart3, PieChart as PieIcon, TrendingUp
+  Ticket, PartyPopper, CheckCircle2, Clock, BarChart3, PieChart as PieIcon, TrendingUp,
+  FileDown
 } from 'lucide-react';
 import { Button, Card, Input, Badge } from '../UI';
 import { MOCK_SHOW_TYPES, MOCK_MERCHANDISE, MOCK_ADDONS } from '../../mock/data';
@@ -15,6 +16,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line
 } from 'recharts';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 const COLORS = ['#f59e0b', '#10b981', '#3b82f6', '#f43f5e', '#8b5cf6'];
 
@@ -47,6 +50,56 @@ export const ReportsManager = () => {
   }, [location.state]);
 
   const handlePrint = () => window.print();
+
+  // --- PDF GENERATION ---
+  const handleDownloadPDF = () => {
+    const stats = getDailyStats(selectedDate);
+    const doc = new jsPDF();
+
+    // 1. Header
+    doc.setFontSize(18);
+    doc.text('Dagrapportage - Inspiration Point', 14, 20);
+    doc.setFontSize(12);
+    doc.text(`Datum: ${new Date(selectedDate).toLocaleDateString('nl-NL')}`, 14, 30);
+    doc.text(`Show: ${stats.show?.name || 'Geen Show'}`, 14, 36);
+
+    // 2. Summary
+    const summaryData = [
+        ['Totaal Gasten', String(stats.totalGuests)],
+        ['Verwachte Omzet', `€${stats.revenue.toFixed(2)}`],
+        ['Standard Arrangement', String(stats.packageCounts.standard)],
+        ['Premium Arrangement', String(stats.packageCounts.premium)]
+    ];
+
+    autoTable(doc, {
+        startY: 45,
+        head: [['Metric', 'Waarde']],
+        body: summaryData,
+        theme: 'striped',
+        headStyles: { fillColor: [245, 158, 11] }, // Amber
+    });
+
+    // 3. Reservations List
+    const tableRows = stats.reservations.map(r => [
+        r.customer.lastName + ', ' + r.customer.firstName,
+        r.partySize,
+        r.packageType,
+        r.tableId ? r.tableId.replace('TAB-', '') : '-',
+        r.notes.dietary || '-',
+        r.financials.isPaid ? 'Betaald' : 'Open'
+    ]);
+
+    autoTable(doc, {
+        startY: (doc as any).lastAutoTable.finalY + 15,
+        head: [['Naam', 'Pax', 'Type', 'Tafel', 'Dieet', 'Status']],
+        body: tableRows,
+        theme: 'grid',
+        styles: { fontSize: 9 },
+        headStyles: { fillColor: [30, 41, 59] }, // Slate-900
+    });
+
+    doc.save(`dagrapport_${selectedDate}.pdf`);
+  };
 
   // --- ANALYTICS DATA PREP ---
 
@@ -172,6 +225,11 @@ export const ReportsManager = () => {
           </div>
         </div>
         <div className="flex space-x-3 mt-4 md:mt-0">
+          {reportType === 'DAY' && (
+              <Button onClick={handleDownloadPDF} variant="secondary" className="flex items-center">
+                  <FileDown size={18} className="mr-2"/> Download PDF
+              </Button>
+          )}
           <Button onClick={handlePrint} className="flex items-center"><Printer size={18} className="mr-2"/> Afdrukken</Button>
         </div>
       </div>

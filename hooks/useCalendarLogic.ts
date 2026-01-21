@@ -55,7 +55,7 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
     const allReservations = bookingRepo.getAll();
     const allWaitlist = waitlistRepo.getAll();
     
-    // 1. Calculate Waitlist Counts per Date (Active entries only)
+    // 1. Calculate Waitlist Counts
     const wlCounts: Record<string, number> = {};
     allWaitlist.forEach(w => {
       if (w.status === 'PENDING') {
@@ -64,7 +64,7 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
     });
     setWaitlistCounts(wlCounts);
 
-    // 2. Dynamically calculate booked count based on active reservations
+    // 2. Dynamically calculate booked count
     const enrichedEvents = rawEvents.map(event => {
       if (event.type === 'SHOW') {
         const bookingsForDate = allReservations.filter(r => 
@@ -92,7 +92,14 @@ export const useCalendarLogic = (initialDate?: string, mode: 'ADMIN' | 'CUSTOMER
   useEffect(() => {
     refreshData();
     window.addEventListener('storage-update', refreshData);
-    return () => window.removeEventListener('storage-update', refreshData);
+    
+    // POLL FOR REAL-TIME UPDATES (Every 5 seconds)
+    const intervalId = setInterval(refreshData, 5000);
+
+    return () => {
+      window.removeEventListener('storage-update', refreshData);
+      clearInterval(intervalId);
+    };
   }, [refreshData]);
 
   const navigateMonth = (delta: number) => {

@@ -5,15 +5,18 @@ import {
   ChangeRequest, Subscriber, AuditLogEntry, VoucherSaleConfig,
   CalendarEvent, ShowEvent, EmailTemplate, EmailLog,
   AdminNotification, NotificationType, NotificationSeverity,
-  Task, TaskType, TaskStatus, PromoCodeRule, AdminNote,
-  BookingStatus, Invoice
+  Task, Invoice, AdminNote, PromoCodeRule, BookingStatus
 } from '../types';
-import { logAuditAction } from './auditLogger';
+import { db } from './firebaseConfig';
+import { 
+  collection, doc, setDoc, deleteDoc, updateDoc, 
+  onSnapshot, query, Unsubscribe 
+} from 'firebase/firestore';
 
-// --- Keys (LocalStorage) ---
+// --- KEYS CONSTANTS (Defined Top-Level) ---
 export const KEYS = {
   SHOWS: 'grand_stage_shows',
-  CALENDAR_EVENTS: 'grand_stage_events',
+  EVENTS: 'grand_stage_events',
   RESERVATIONS: 'grand_stage_reservations',
   CUSTOMERS: 'grand_stage_customers',
   WAITLIST: 'grand_stage_waitlist',
@@ -22,114 +25,233 @@ export const KEYS = {
   MERCHANDISE: 'grand_stage_merchandise',
   REQUESTS: 'grand_stage_requests',
   SUBSCRIBERS: 'grand_stage_subscribers',
-  AUDIT: 'grand_stage_audit_log',
-  NOTIFICATIONS: 'grand_stage_notifications',
-  TASKS: 'grand_stage_tasks',
-  SETTINGS: 'grand_stage_settings', // Voucher config resides here too in local
+  AUDIT_LOGS: 'grand_stage_audit_log',
   EMAIL_TEMPLATES: 'grand_stage_email_templates',
   EMAIL_LOGS: 'grand_stage_email_logs',
-  PROMOS: 'grand_stage_promos', 
-  ADMIN_NOTES: 'grand_stage_admin_notes',
-  INVOICES: 'grand_stage_invoices' // NEW
+  PROMOS: 'grand_stage_promos',
+  NOTES: 'grand_stage_admin_notes',
+  INVOICES: 'grand_stage_invoices',
+  NOTIFICATIONS: 'grand_stage_notifications',
+  TASKS: 'grand_stage_tasks'
 };
 
-// Helper to simulate network delay
-const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+export const STORAGE_KEYS = KEYS;
 
-// --- LocalStorage Repository Class ---
-class Repository<T extends { id?: string; code?: string } | any> {
-  protected key: string;
+// --- FIRESTORE REPOSITORY WITH LOCAL FALLBACK ---
+// This class mimics the old synchronous getAll() by keeping a live local cache.
+// It syncs via Firestore listeners if available, otherwise falls back to LocalStorage.
 
-  constructor(key: string) {
-    this.key = key;
+class FirestoreRepository<T extends { id?: string; code?: string }> {
+  private collectionName: string;
+  private storageKey: string;
+  private localCache: T[] = [];
+  private unsubscribe: Unsubscribe | null = null;
+  private useLocalStorage: boolean = false;
+
+  constructor(collectionName: string, storageKey: string) {
+    this.collectionName = collectionName;
+    this.storageKey = storageKey;
+    this.init();
   }
 
-  // --- Synchronous Methods (Legacy) ---
-  getAll(includeArchived: boolean = false): T[] {
-    try {
-      const data = localStorage.getItem(this.key);
-      return data ? JSON.parse(data) : [];
-    } catch (e) {
-      console.error(`Error reading ${this.key}`, e);
-      return [];
+  private init() {
+    if (db) {
+      // FIREBASE MODE
+      try {
+        const q = query(collection(db, this.collectionName));
+        this.unsubscribe = onSnapshot(q, (snapshot) => {
+          const data: T[] = [];
+          snapshot.forEach((doc) => {
+            const docData = doc.data() as T;
+            // @ts-ignore
+            if (!docData.id && !docData.code) {
+               // @ts-ignore
+               docData.id = doc.id;
+            }
+            data.push(docData);
+          });
+          
+          this.localCache = data;
+          // Also sync to local storage as backup
+          try { localStorage.setItem(this.storageKey, JSON.stringify(data)); } catch(e){}
+          
+          window.dispatchEvent(new Event('storage-update'));
+        }, (error) => {
+          console.error(`Error listening to ${this.collectionName}, falling back to local.`, error);
+          this.useLocalStorage = true;
+          this.loadFromLocal();
+        });
+      } catch (e) {
+        console.error(`Failed to init repository for ${this.collectionName}`, e);
+        this.useLocalStorage = true;
+        this.loadFromLocal();
+      }
+    } else {
+      // FALLBACK MODE (No DB)
+      this.useLocalStorage = true;
+      this.loadFromLocal();
     }
   }
 
-  // Helper to get ID (handles 'code' vs 'id')
+  private loadFromLocal() {
+    try {
+      const data = localStorage.getItem(this.storageKey);
+      if (data) {
+        this.localCache = JSON.parse(data);
+        window.dispatchEvent(new Event('storage-update'));
+      }
+    } catch (e) {
+      console.error("Local load failed", e);
+    }
+  }
+
+  private saveToLocal() {
+    if (this.useLocalStorage) {
+      try {
+        localStorage.setItem(this.storageKey, JSON.stringify(this.localCache));
+        window.dispatchEvent(new Event('storage-update'));
+      } catch (e) {
+        console.error("Local save failed", e);
+      }
+    }
+  }
+
+  // --- READS ---
+
+  getAll(includeArchived: boolean = false): T[] {
+    return this.localCache;
+  }
+
+  async getAllAsync(includeArchived: boolean = false): Promise<T[]> {
+    return this.localCache;
+  }
+
+  getById(id: string): T | undefined {
+    return this.localCache.find((i: any) => (i.id === id || i.code === id));
+  }
+
+  // --- WRITES ---
+
   protected getId(item: T): string {
     return (item as any).id || (item as any).code || '';
   }
 
-  add(item: T): void {
-    const items = this.getAll();
-    items.push(item);
-    this.saveAll(items);
-  }
+  async add(item: T): Promise<void> {
+    const id = this.getId(item);
+    if (!id) return;
 
-  update(id: string, updater: (item: T) => T): void {
-    const items = this.getAll();
-    const index = items.findIndex((i: any) => this.getId(i) === id);
-    if (index !== -1) {
-      items[index] = updater(items[index]);
-      this.saveAll(items);
+    // Optimistic Update
+    this.localCache.push(item);
+    window.dispatchEvent(new Event('storage-update'));
+    this.saveToLocal();
+
+    if (db && !this.useLocalStorage) {
+      try {
+        await setDoc(doc(db, this.collectionName, id), item);
+      } catch (e) {
+        console.error(`Error adding to ${this.collectionName}`, e);
+      }
     }
   }
 
-  getById(id: string): T | undefined {
-    return this.getAll().find((i: any) => this.getId(i) === id);
-  }
-  
-  delete(id: string): void {
-    const items = this.getAll();
-    const filtered = items.filter((i: any) => this.getId(i) !== id);
-    this.saveAll(filtered);
-  }
+  async update(id: string, updater: (item: T) => T): Promise<void> {
+    const idx = this.localCache.findIndex((i: any) => (i.id === id || i.code === id));
+    if (idx === -1) return;
 
-  saveAll(items: T[]): void {
-    try {
-      localStorage.setItem(this.key, JSON.stringify(items));
-      // Dispatch event to update React components
-      window.dispatchEvent(new Event('storage-update'));
-    } catch (e) {
-      console.error(`Error saving ${this.key}`, e);
+    const currentItem = this.localCache[idx];
+    const updatedItem = updater(currentItem);
+
+    // Optimistic Update
+    this.localCache[idx] = updatedItem;
+    window.dispatchEvent(new Event('storage-update'));
+    this.saveToLocal();
+
+    if (db && !this.useLocalStorage) {
+      try {
+        await setDoc(doc(db, this.collectionName, id), updatedItem);
+      } catch (e) {
+        console.error(`Error updating ${this.collectionName}/${id}`, e);
+      }
     }
   }
 
-  // --- Async Methods (Optimized) ---
-  // Delays removed for writes to prevent race conditions in this demo architecture
+  async delete(id: string): Promise<void> {
+    // Optimistic
+    this.localCache = this.localCache.filter((i: any) => (i.id !== id && i.code !== id));
+    window.dispatchEvent(new Event('storage-update'));
+    this.saveToLocal();
 
-  async getAllAsync(includeArchived: boolean = false): Promise<T[]> {
-    await delay(300 + Math.random() * 200); // Keep read delay for realism
-    return this.getAll(includeArchived);
+    if (db && !this.useLocalStorage) {
+      try {
+        await deleteDoc(doc(db, this.collectionName, id));
+      } catch (e) {
+        console.error(`Error deleting ${this.collectionName}/${id}`, e);
+      }
+    }
   }
 
-  async getByIdAsync(id: string): Promise<T | undefined> {
-    await delay(200);
-    return this.getById(id);
-  }
-
-  async addAsync(item: T): Promise<void> {
-    // No delay on write
-    this.add(item);
-  }
-
-  async updateAsync(id: string, updater: (item: T) => T): Promise<void> {
-    // No delay on write
-    this.update(id, updater);
-  }
-
-  async deleteAsync(id: string): Promise<void> {
-    // No delay on write
-    this.delete(id);
+  saveAll(items: T[]) {
+    // Bulk overwrite behavior
+    if (this.useLocalStorage) {
+        this.localCache = items;
+        this.saveToLocal();
+    } else {
+        items.forEach(item => this.add(item));
+    }
   }
 }
 
-// --- Notifications Repository ---
-class NotificationsRepository extends Repository<AdminNotification> {
-  constructor() {
-    super(KEYS.NOTIFICATIONS);
+// --- SPECIALIZED REPOSITORIES ---
+
+class BookingFirestoreRepository extends FirestoreRepository<Reservation> {
+  // Specific methods for reservations
+  findByIdempotencyKey(key: string): Reservation | undefined {
+    return this.getAll().find(r => r.idempotencyKey === key);
   }
 
+  findRecentDuplicates(email: string, date: string, minutes: number = 30): Reservation | undefined {
+    const now = new Date().getTime();
+    const threshold = minutes * 60 * 1000;
+    const normalizedEmail = email.trim().toLowerCase();
+    
+    return this.getAll().find(r => 
+      r.status !== 'CANCELLED' && 
+      r.customer.email.trim().toLowerCase() === normalizedEmail &&
+      r.date === date &&
+      (now - new Date(r.createdAt).getTime()) < threshold
+    );
+  }
+
+  createRequest(reservation: Reservation): Reservation {
+    if (reservation.idempotencyKey) {
+      const existing = this.findByIdempotencyKey(reservation.idempotencyKey);
+      if (existing) return existing;
+    }
+    this.add(reservation);
+    return reservation;
+  }
+
+  getTrash(): Reservation[] {
+    return this.getAll(true).filter(r => !!r.deletedAt);
+  }
+
+  restore(id: string): void {
+    this.update(id, r => ({ ...r, deletedAt: undefined }));
+  }
+
+  hardDelete(id: string): void {
+    this.delete(id);
+  }
+  
+  // Override getAll to filter out soft-deleted items by default
+  getAll(includeArchived: boolean = false): Reservation[] {
+    const all = super.getAll();
+    if (includeArchived) return all;
+    return all.filter(r => !r.deletedAt);
+  }
+}
+
+class NotificationsFirestoreRepository extends FirestoreRepository<AdminNotification> {
   getUnreadCount(): number {
     return this.getAll().filter(n => !n.readAt).length;
   }
@@ -139,20 +261,21 @@ class NotificationsRepository extends Repository<AdminNotification> {
   }
 
   markAllRead() {
-    const all = this.getAll().map(n => ({ ...n, readAt: n.readAt || new Date().toISOString() }));
-    this.saveAll(all);
+    this.getAll().forEach(n => {
+        if(!n.readAt) this.markRead(n.id);
+    });
   }
 
-  createFromEvent(type: NotificationType, entity: any, extraContext?: any) {
+  runComputedChecks() {}
+
+  createFromEvent(type: NotificationType, entity: any) {
     let title = '', message = '', link = '', severity: NotificationSeverity = 'INFO';
     let entityType: AdminNotification['entityType'] = 'RESERVATION';
     
-    // Simple mapping logic
     if (type === 'NEW_BOOKING') {
         title = 'Nieuwe Reservering';
         message = `${entity.customer?.firstName} ${entity.customer?.lastName} (${entity.partySize}p)`;
         link = '/admin/reservations';
-        severity = 'INFO';
     } else if (type === 'NEW_WAITLIST') {
         title = 'Nieuwe Wachtlijst';
         message = `${entity.contactName} (${entity.partySize}p) voor ${new Date(entity.date).toLocaleDateString()}`;
@@ -179,123 +302,13 @@ class NotificationsRepository extends Repository<AdminNotification> {
     
     this.add(notification);
   }
-
-  runComputedChecks() {
-    // Local computed checks (e.g. expiry)
-  }
 }
 
-export const notificationsRepo = new NotificationsRepository();
-
-// --- Booking Repository (With Soft Delete) ---
-class BookingRepository extends Repository<Reservation> {
-  constructor() {
-    super(KEYS.RESERVATIONS);
-  }
-
-  override getAll(includeArchived: boolean = false): Reservation[] {
-    const all = super.getAll();
-    // Filter out soft-deleted items unless specifically accessing trash via getTrash
-    // But for general usage we hide them
-    const active = all.filter(r => !r.deletedAt);
-    
-    if (includeArchived) return active;
-    return active.filter(r => r.status !== BookingStatus.ARCHIVED);
-  }
-
-  // Override async method to respect soft-delete
-  override async getAllAsync(includeArchived: boolean = false): Promise<Reservation[]> {
-    await delay(400);
-    return this.getAll(includeArchived);
-  }
-
-  getTrash(): Reservation[] {
-    return super.getAll().filter(r => !!r.deletedAt);
-  }
-
-  override delete(id: string): void {
-    // Soft delete
-    this.update(id, r => ({ ...r, deletedAt: new Date().toISOString() }));
-    logAuditAction('SOFT_DELETE', 'RESERVATION', id, { description: 'Moved to trash' });
-  }
-
-  async deleteAsync(id: string): Promise<void> {
-    // No delay
-    this.delete(id);
-  }
-
-  restore(id: string): void {
-    this.update(id, r => ({ ...r, deletedAt: undefined }));
-    logAuditAction('RESTORE', 'RESERVATION', id, { description: 'Restored from trash' });
-  }
-
-  hardDelete(id: string): void {
-    super.delete(id); // Actual removal from LS
-  }
-
-  findByIdempotencyKey(key: string): Reservation | undefined {
-    return super.getAll().find(r => r.idempotencyKey === key);
-  }
-
-  findRecentDuplicates(email: string, date: string, minutes: number = 30): Reservation | undefined {
-    const now = new Date().getTime();
-    const threshold = minutes * 60 * 1000;
-    const normalizedEmail = email.trim().toLowerCase();
-    
-    return super.getAll().find(r => 
-      r.status !== 'CANCELLED' && 
-      r.customer.email.trim().toLowerCase() === normalizedEmail &&
-      r.date === date &&
-      (now - new Date(r.createdAt).getTime()) < threshold
-    );
-  }
-
-  createRequest(reservation: Reservation): Reservation {
-    if (reservation.idempotencyKey) {
-      const existing = this.findByIdempotencyKey(reservation.idempotencyKey);
-      if (existing) return existing;
-    }
-    this.add(reservation);
-    return reservation;
-  }
-}
-
-// --- Calendar Repository ---
-class CalendarRepository extends Repository<CalendarEvent> {
-  constructor() {
-    super(KEYS.CALENDAR_EVENTS);
-  }
-}
-
-// --- Settings Repository ---
-class SettingsRepository {
-  getVoucherSaleConfig(): VoucherSaleConfig {
-    const saved = localStorage.getItem(KEYS.SETTINGS + '_voucher');
-    if (saved) return JSON.parse(saved);
-    // Default fallback
-    return {
-      isEnabled: true,
-      products: [],
-      freeAmount: { enabled: true, min: 50, max: 1000, step: 1 }, // UPDATED DEFAULT
-      bundling: { allowCombinedIssuance: true },
-      delivery: { pickup: { enabled: true }, shipping: { enabled: true, fee: 4.95 }, digitalFee: 2.50 }
-    };
-  }
-
-  updateVoucherSaleConfig(config: VoucherSaleConfig): void {
-    localStorage.setItem(KEYS.SETTINGS + '_voucher', JSON.stringify(config));
-    window.dispatchEvent(new Event('storage-update'));
-  }
-}
-
-// --- Tasks Repository ---
-class TasksRepository extends Repository<Task> {
-  constructor() {
-    super(KEYS.TASKS);
-  }
+class TasksFirestoreRepository extends FirestoreRepository<Task> {
   markDone(id: string) {
     this.update(id, t => ({ ...t, status: 'DONE', completedAt: new Date().toISOString() }));
   }
+  
   createAutoTask(task: Omit<Task, 'id' | 'createdAt' | 'status'>) {
     const exists = this.getAll().find(t => t.type === task.type && t.entityId === task.entityId && t.status === 'OPEN');
     if (exists) return;
@@ -306,30 +319,80 @@ class TasksRepository extends Repository<Task> {
       status: 'OPEN'
     });
   }
-  runComputedChecks() { /* ... */ }
+  runComputedChecks() {}
 }
 
-// --- Instances ---
-export const showRepo = new Repository<ShowDefinition>(KEYS.SHOWS);
-export const calendarRepo = new CalendarRepository();
-export const bookingRepo = new BookingRepository();
-export const customerRepo = new Repository<Customer>(KEYS.CUSTOMERS);
-export const waitlistRepo = new Repository<WaitlistEntry>(KEYS.WAITLIST);
-export const voucherRepo = new Repository<Voucher>(KEYS.VOUCHERS);
-export const voucherOrderRepo = new Repository<VoucherOrder>(KEYS.VOUCHER_ORDERS);
-export const merchRepo = new Repository<MerchandiseItem>(KEYS.MERCHANDISE);
-export const requestRepo = new Repository<ChangeRequest>(KEYS.REQUESTS);
-export const subscriberRepo = new Repository<Subscriber>(KEYS.SUBSCRIBERS);
-export const auditRepo = new Repository<AuditLogEntry>(KEYS.AUDIT);
-export const emailTemplateRepo = new Repository<EmailTemplate>(KEYS.EMAIL_TEMPLATES);
-export const emailLogRepo = new Repository<EmailLog>(KEYS.EMAIL_LOGS);
-export const promoRepo = new Repository<PromoCodeRule>(KEYS.PROMOS);
-export const notesRepo = new Repository<AdminNote>(KEYS.ADMIN_NOTES);
-export const tasksRepo = new TasksRepository();
-export const settingsRepo = new SettingsRepository();
-export const invoiceRepo = new Repository<Invoice>(KEYS.INVOICES); // NEW
+class SettingsFirestoreRepository {
+  private cache: VoucherSaleConfig | null = null;
+  private key = 'grand_stage_settings_voucher';
 
-// --- Exported Getters ---
+  constructor() {
+    if (db) {
+        try {
+            onSnapshot(doc(db, 'settings', 'voucher_config'), (doc) => {
+                if (doc.exists()) {
+                    this.cache = doc.data() as VoucherSaleConfig;
+                    window.dispatchEvent(new Event('storage-update'));
+                }
+            }, (err) => console.warn('Settings sync error', err));
+        } catch(e) { console.warn('Settings init error', e); }
+    }
+    
+    // Load local backup
+    try {
+        const local = localStorage.getItem(this.key);
+        if (local && !this.cache) this.cache = JSON.parse(local);
+    } catch(e){}
+  }
+
+  getVoucherSaleConfig(): VoucherSaleConfig {
+    if (this.cache) return this.cache;
+    return {
+      isEnabled: true,
+      products: [],
+      freeAmount: { enabled: true, min: 50, max: 1000, step: 1 }, 
+      bundling: { allowCombinedIssuance: true },
+      delivery: { pickup: { enabled: true }, shipping: { enabled: true, fee: 4.95 }, digitalFee: 2.50 }
+    };
+  }
+
+  updateVoucherSaleConfig(config: VoucherSaleConfig): void {
+    this.cache = config;
+    localStorage.setItem(this.key, JSON.stringify(config)); // Local backup
+    window.dispatchEvent(new Event('storage-update'));
+    
+    if (db) {
+        setDoc(doc(db, 'settings', 'voucher_config'), config).catch(console.error);
+    }
+  }
+}
+
+// --- INSTANTIATE REPOSITORIES ---
+// All data now lives in Firestore collections with LocalStorage fallback
+
+export const showRepo = new FirestoreRepository<ShowDefinition>('shows', KEYS.SHOWS);
+export const calendarRepo = new FirestoreRepository<CalendarEvent>('events', KEYS.EVENTS);
+export const bookingRepo = new BookingFirestoreRepository('reservations', KEYS.RESERVATIONS);
+export const customerRepo = new FirestoreRepository<Customer>('customers', KEYS.CUSTOMERS);
+export const waitlistRepo = new FirestoreRepository<WaitlistEntry>('waitlist', KEYS.WAITLIST);
+export const voucherRepo = new FirestoreRepository<Voucher>('vouchers', KEYS.VOUCHERS);
+export const voucherOrderRepo = new FirestoreRepository<VoucherOrder>('voucher_orders', KEYS.VOUCHER_ORDERS);
+export const merchRepo = new FirestoreRepository<MerchandiseItem>('merchandise', KEYS.MERCHANDISE);
+export const requestRepo = new FirestoreRepository<ChangeRequest>('change_requests', KEYS.REQUESTS);
+export const subscriberRepo = new FirestoreRepository<Subscriber>('subscribers', KEYS.SUBSCRIBERS);
+export const auditRepo = new FirestoreRepository<AuditLogEntry>('audit_logs', KEYS.AUDIT_LOGS);
+export const emailTemplateRepo = new FirestoreRepository<EmailTemplate>('email_templates', KEYS.EMAIL_TEMPLATES);
+export const emailLogRepo = new FirestoreRepository<EmailLog>('email_logs', KEYS.EMAIL_LOGS);
+export const promoRepo = new FirestoreRepository<PromoCodeRule>('promos', KEYS.PROMOS);
+export const notesRepo = new FirestoreRepository<AdminNote>('admin_notes', KEYS.NOTES);
+export const invoiceRepo = new FirestoreRepository<Invoice>('invoices', KEYS.INVOICES);
+
+// Specialized
+export const notificationsRepo = new NotificationsFirestoreRepository('notifications', KEYS.NOTIFICATIONS);
+export const tasksRepo = new TasksFirestoreRepository('tasks', KEYS.TASKS);
+export const settingsRepo = new SettingsFirestoreRepository();
+
+// --- EXPORTED GETTERS (Compatibility Wrappers) ---
 export const getShowDefinitions = () => showRepo.getAll();
 export const getCalendarEvents = () => calendarRepo.getAll();
 export const getEvents = (): ShowEvent[] => calendarRepo.getAll().filter(e => e.type === 'SHOW') as ShowEvent[];
@@ -348,26 +411,23 @@ export const getPromoRules = () => promoRepo.getAll();
 export const getNotifications = () => notificationsRepo.getAll();
 export const getTasks = () => tasksRepo.getAll();
 export const getNotes = () => notesRepo.getAll();
-export const getInvoices = () => invoiceRepo.getAll(); // NEW
+export const getInvoices = () => invoiceRepo.getAll(); 
 export const getShows = getShowDefinitions;
 
-// --- Helpers ---
+// --- HELPERS ---
+
 export const isSeeded = () => showRepo.getAll().length > 0;
-export const setSeeded = (val: boolean) => {}; // No-op
+export const setSeeded = (val: boolean) => {}; 
+
 export const clearAllData = async () => {
   localStorage.clear();
   window.dispatchEvent(new Event('storage-update'));
 };
 
-/**
- * Calculates the next sequential table number for a given date.
- * Strictly strictly incremental (Max existing + 1).
- */
 export const getNextTableNumber = (date: string): number => {
     const all = bookingRepo.getAll();
     const forDate = all.filter(r => r.date === date && r.tableId && r.status !== 'CANCELLED');
     
-    // Extract numbers from "TAB-1", "TAB-10" etc.
     const numbers = forDate.map(r => {
         if (!r.tableId) return 0;
         const num = parseInt(r.tableId.replace('TAB-', ''));
@@ -378,7 +438,7 @@ export const getNextTableNumber = (date: string): number => {
     return Math.max(...numbers) + 1;
 };
 
-// Legacy Load/Save wrappers to maintain compatibility
+// UI State (Local Only)
 export const loadData = <T>(key: string, fallback: T): T => {
   try {
     const data = localStorage.getItem(key);
@@ -397,5 +457,4 @@ export const saveData = <T>(key: string, data: T) => {
   }
 };
 
-export const STORAGE_KEYS = KEYS;
 export const eventRepo = calendarRepo;

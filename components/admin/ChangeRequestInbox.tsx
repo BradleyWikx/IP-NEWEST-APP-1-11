@@ -15,6 +15,9 @@ export const ChangeRequestInbox = () => {
   const [associatedReservation, setAssociatedReservation] = useState<Reservation | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
+  
+  // New: Email Control
+  const [sendEmail, setSendEmail] = useState(true);
 
   useEffect(() => {
     setRequests(requestRepo.getAll().filter(r => r.status === 'NEW' || r.status === 'IN_REVIEW'));
@@ -24,6 +27,7 @@ export const ChangeRequestInbox = () => {
     if (selectedRequest) {
       const res = bookingRepo.getById(selectedRequest.reservationId);
       setAssociatedReservation(res || null);
+      setSendEmail(true); // Reset to default
     }
   }, [selectedRequest]);
 
@@ -34,8 +38,7 @@ export const ChangeRequestInbox = () => {
     // 1. Update Reservation Data
     let updatedReservation = { ...associatedReservation, ...selectedRequest.payload };
     
-    // 2. Recalculate Financials (Important if partySize or extras changed)
-    // This function also checks if 'isPaid' should remain true or revert to false if costs increase
+    // 2. Recalculate Financials
     const newFinancials = recalculateReservationFinancials(updatedReservation);
     updatedReservation.financials = newFinancials;
 
@@ -54,8 +57,10 @@ export const ChangeRequestInbox = () => {
       after: updatedReservation
     });
 
-    // 5. Email Trigger
-    triggerEmail('BOOKING_CHANGE_APPROVED', { type: 'RESERVATION', id: associatedReservation.id, data: updatedReservation });
+    // 5. Email Trigger (Conditional)
+    if (sendEmail) {
+        triggerEmail('BOOKING_CHANGE_APPROVED', { type: 'RESERVATION', id: associatedReservation.id, data: updatedReservation });
+    }
 
     setIsProcessing(false);
     setSelectedRequest(null);
@@ -70,7 +75,7 @@ export const ChangeRequestInbox = () => {
     saveData(STORAGE_KEYS.REQUESTS, allReqs.map(r => r.id === selectedRequest.id ? updatedReq : r));
     setRequests(requests.filter(r => r.id !== selectedRequest.id));
 
-    if (associatedReservation) {
+    if (associatedReservation && sendEmail) {
         triggerEmail('BOOKING_CHANGE_REJECTED', { type: 'RESERVATION', id: selectedRequest.reservationId, data: associatedReservation });
     }
 
@@ -133,7 +138,20 @@ export const ChangeRequestInbox = () => {
             
             <div className="p-3 bg-blue-900/20 border border-blue-900/50 rounded-lg text-xs text-blue-200 flex items-start">
                <CheckCircle2 size={16} className="mr-2 mt-0.5 shrink-0" />
-               <p>Bij goedkeuring wordt het totaalbedrag automatisch herberekend. Als het nieuwe bedrag hoger is dan het reeds betaalde bedrag, zal de status "Betaald" komen te vervallen.</p>
+               <p>Bij goedkeuring wordt het totaalbedrag automatisch herberekend.</p>
+            </div>
+
+            {/* Email Control */}
+            <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl">
+               <label className="flex items-center space-x-3 cursor-pointer">
+                   <input 
+                       type="checkbox" 
+                       checked={sendEmail} 
+                       onChange={(e) => setSendEmail(e.target.checked)}
+                       className="w-5 h-5 rounded bg-slate-800 border-slate-600 checked:bg-blue-600" 
+                   />
+                   <span className="text-sm text-white">Stuur update email naar klant</span>
+               </label>
             </div>
 
             <div className="flex gap-4 pt-4 border-t border-slate-800">

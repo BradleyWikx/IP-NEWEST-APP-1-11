@@ -5,6 +5,8 @@ import {
 } from '../types';
 import { emailTemplateRepo, emailLogRepo, showRepo, getEvents } from './storage';
 import { logAuditAction } from './auditLogger';
+import { db } from './firebaseConfig';
+import { collection, addDoc } from 'firebase/firestore';
 
 // --- Rendering Logic ---
 
@@ -38,7 +40,7 @@ const getBookingContext = (booking: Reservation) => {
   const show = shows.find(s => s.id === booking.showId);
 
   return {
-    salutation: booking.customer.salutation || 'Beste', // NEW
+    salutation: booking.customer.salutation || 'Beste',
     firstName: booking.customer.firstName,
     lastName: booking.customer.lastName,
     fullName: `${booking.customer.firstName} ${booking.customer.lastName}`,
@@ -48,8 +50,8 @@ const getBookingContext = (booking: Reservation) => {
     showName: show?.name || 'Inspiration Point Show',
     showDate: new Date(booking.date).toLocaleDateString('nl-NL'),
     showDateLong: new Date(booking.date).toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
-    showTime: event?.times.start || '19:30', // UPDATED
-    doorTime: event?.times.doorsOpen || '18:30', // UPDATED
+    showTime: event?.times.start || '19:30',
+    doorTime: event?.times.doorsOpen || '18:30',
     amountDue: (booking.financials.finalTotal || 0).toFixed(2),
     totalAmount: (booking.financials.total || 0).toFixed(2),
     packageName: booking.packageType === 'premium' ? 'Premium' : 'Standard',
@@ -95,9 +97,7 @@ const getInvoiceContext = (invoice: Invoice) => {
 // --- Public API ---
 
 /**
- * Creates an EmailLog entry based on a trigger.
- * Does NOT send immediately unless configured, but for this mock we just create the log.
- * The Admin UI or a background job would handle 'sending'.
+ * Creates an EmailLog entry and queues it for sending.
  */
 export const triggerEmail = (
   key: EmailTemplateKey, 
@@ -158,35 +158,77 @@ export const triggerEmail = (
 
   emailLogRepo.add(log);
   
-  // In a real system, this would be a background job.
-  // For demo: trigger simulation immediately
-  simulateSendEmail(log.id); 
+  // Trigger processing immediately
+  processEmailLog(log.id); 
   
-  console.log(`[EmailEngine] Created log ${log.id} for ${toEmail} (${key})`);
+  console.log(`[EmailEngine] Queued email ${log.id} for ${toEmail} (${key})`);
   return log;
 };
 
 /**
- * Simulates sending an email by updating the log status.
- * Now includes a random failure chance to demonstrate Dead Letter Queue.
+ * Handles the actual sending of the email.
+ * - If Firebase DB is active: Writes to 'mail' collection for Extension.
+ * - If Offline: Simulates network delay and random success/fail.
  */
-export const simulateSendEmail = (logId: string) => {
+export const processEmailLog = async (logId: string) => {
   const log = emailLogRepo.getById(logId);
   if (!log) return;
 
+  // 1. ONLINE MODE: Firebase Trigger Email Extension
+  if (db) {
+    try {
+      // Write to 'mail' collection (default for Trigger Email extension)
+      await addDoc(collection(db, 'mail'), {
+        to: [log.to],
+        message: {
+          subject: log.subject,
+          html: log.bodyHtml,
+          text: log.bodyText || log.bodyHtml.replace(/<[^>]*>?/gm, '') // Plaintext fallback
+        },
+        metadata: {
+          logId: log.id,
+          entityType: log.entityType,
+          entityId: log.entityId
+        }
+      });
+
+      // Optimistic update to SENT
+      // Real implementation would list to snapshot changes on the mail doc for 'delivery' status
+      emailLogRepo.update(logId, (prev) => ({
+        ...prev,
+        status: 'SENT',
+        sentAt: new Date().toISOString(),
+        error: undefined
+      }));
+      
+      logAuditAction('SEND_EMAIL_SMTP', 'SYSTEM', logId, { description: `Handed off to Firebase Mailer: ${log.to}` });
+
+    } catch (error: any) {
+      console.error("Firestore Mail Handoff Failed", error);
+      emailLogRepo.update(logId, (prev) => ({
+        ...prev,
+        status: 'FAILED',
+        error: `Firestore Error: ${error.message}`
+      }));
+      logAuditAction('EMAIL_FAILED', 'SYSTEM', logId, { description: `Firestore write failed: ${error.message}` });
+    }
+    return;
+  }
+
+  // 2. OFFLINE / SIMULATION MODE
   // Simulate network delay
   return new Promise<void>((resolve) => {
     setTimeout(() => {
-      // SIMULATE FAILURE: 10% chance of failure
+      // SIMULATE FAILURE: 10% chance of failure in demo mode
       const shouldFail = Math.random() < 0.10; 
 
       if (shouldFail) {
         emailLogRepo.update(logId, (prev) => ({
           ...prev,
           status: 'FAILED',
-          error: 'SMTP Timeout: Connection refused by remote host (Simulated)'
+          error: 'Simulated SMTP Timeout (Offline Mode)'
         }));
-        logAuditAction('EMAIL_FAILED', 'SYSTEM', logId, { description: `Delivery failed for ${log.to}` });
+        logAuditAction('EMAIL_FAILED', 'SYSTEM', logId, { description: `Simulated delivery failed for ${log.to}` });
       } else {
         emailLogRepo.update(logId, (prev) => ({
           ...prev,
@@ -194,12 +236,17 @@ export const simulateSendEmail = (logId: string) => {
           sentAt: new Date().toISOString(),
           error: undefined // Clear previous errors if retrying
         }));
-        logAuditAction('SEND_EMAIL', 'SYSTEM', logId, { description: `Email sent to ${log.to}` });
+        logAuditAction('SEND_EMAIL', 'SYSTEM', logId, { description: `Simulated sent to ${log.to}` });
       }
       resolve();
     }, 800);
   });
 };
+
+/**
+ * Alias for backward compatibility if needed, but we use processEmailLog now.
+ */
+export const simulateSendEmail = processEmailLog;
 
 /**
  * Get all emails for a specific entity ID

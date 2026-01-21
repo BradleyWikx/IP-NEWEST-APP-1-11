@@ -12,25 +12,15 @@ import { ReservationSchema } from '../utils/validation';
 import { Stepper, Button, Card, Input } from './UI';
 import { BookingSummary } from './BookingSummary';
 import { MerchandisePicker } from './MerchandisePicker';
+import { useTranslation } from '../utils/i18n'; 
 import { 
   ChevronRight, ChevronLeft, Calendar as CalendarIcon, Users, Utensils, 
   ShoppingBag, User, MessageSquare, CheckCircle2, AlertTriangle, 
-  AlertCircle, Wine, Star, Loader2, Minus, Plus, Building2, MapPin, Mail, Phone, PartyPopper, Wheat, Milk, Nut, Fish, Leaf, Baby, Carrot
+  AlertCircle, Wine, Star, Loader2, Minus, Plus, Building2, MapPin, Mail, Phone, PartyPopper, Wheat, Milk, Nut, Fish, Leaf, Baby, Carrot, Globe
 } from 'lucide-react';
 import { MOCK_ADDONS } from '../mock/data';
 
-const STEPS = [
-  'Datum', 
-  'Aantal',
-  'Arrangement', 
-  'Extra\'s', 
-  'Shop', 
-  'Gegevens', 
-  'Wensen',
-  'Overzicht'
-];
-
-// --- DIETARY CONFIG ---
+// DIETARY CONFIG
 const DIETARY_OPTIONS = [
   { id: 'Glutenvrij', label: 'Glutenvrij', icon: Wheat },
   { id: 'Lactosevrij', label: 'Lactosevrij', icon: Milk },
@@ -62,6 +52,18 @@ const ADDON_THRESHOLD = 25;
 export const BookingWizard = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t, language, setLanguage } = useTranslation();
+
+  const STEPS = [
+    t('step_date'), 
+    t('step_party'),
+    t('step_package'), 
+    t('step_extras'), 
+    t('step_shop'), 
+    t('step_details'), 
+    t('step_wishes'),
+    t('step_review')
+  ];
   
   // Initialize state with location state if available (from Calendar)
   const { wizardData, updateWizard, resetWizard } = useWizardPersistence({
@@ -138,13 +140,11 @@ export const BookingWizard = () => {
     if (event && show) {
       setEventData({ event, show });
       
-      // FIX: Use local date comparison to avoid timezone issues.
-      // Only block STRICTLY past dates. Allow today.
       const now = new Date();
       const localTodayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       
       if (wizardData.date < localTodayStr) {
-         setSubmitError("Deze datum ligt in het verleden.");
+         setSubmitError(t('err_date_past'));
          setIsWaitlistFull(true); 
          return; 
       } else {
@@ -172,13 +172,12 @@ export const BookingWizard = () => {
       );
       const currentBooked = activeRes.reduce((sum, r) => sum + (Number(r.partySize) || 0), 0);
 
-      // 3. Determine Status using DYNAMIC CAPACITY from event
       const dynamicCapacity = Number(event.capacity) || CAPACITY_TARGET;
       const calculatedStatus = calculateEventStatus(
           currentBooked, 
           dynamicCapacity, 
           wlCount,
-          event.status // Passed manual status ('WAITLIST', 'CLOSED' or 'OPEN')
+          event.status
       );
 
       if (calculatedStatus === 'WAITLIST') {
@@ -192,7 +191,7 @@ export const BookingWizard = () => {
           setIsWaitlistFull(false);
       }
     }
-  }, [wizardData]);
+  }, [wizardData, t]);
 
   // Duplicate Check
   useEffect(() => {
@@ -209,31 +208,31 @@ export const BookingWizard = () => {
     const c = wizardData.customer;
 
     if (step === 5) { // Details Step
-      if (!c.firstName) errors.firstName = "Voornaam is verplicht.";
-      if (!c.lastName) errors.lastName = "Achternaam is verplicht.";
-      if (!c.street) errors.street = "Straatnaam is verplicht.";
-      if (!c.city) errors.city = "Woonplaats is verplicht.";
+      if (!c.firstName) errors.firstName = t('err_firstname');
+      if (!c.lastName) errors.lastName = t('err_lastname');
+      if (!c.street) errors.street = t('err_street');
+      if (!c.city) errors.city = t('err_city');
       
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!c.email) {
-        errors.email = "E-mailadres is verplicht.";
+        errors.email = t('err_email_req');
       } else if (!emailRegex.test(c.email)) {
-        errors.email = "Ongeldig e-mailadres formaat.";
+        errors.email = t('err_email_inv');
       }
 
       const phoneDigits = c.phone.replace(/\D/g, '');
       if (!c.phone) {
-        errors.phone = "Telefoonnummer is verplicht.";
+        errors.phone = t('err_phone_req');
       } else if (phoneDigits.length < 8) {
-        errors.phone = "Telefoonnummer moet minimaal 8 cijfers bevatten.";
+        errors.phone = t('err_phone_inv');
       }
 
-      if (!c.zip) errors.zip = "Postcode is verplicht.";
-      if (!c.houseNumber) errors.houseNumber = "Huisnummer is verplicht.";
+      if (!c.zip) errors.zip = t('err_zip');
+      if (!c.houseNumber) errors.houseNumber = t('err_house_nr');
     }
 
     return errors;
-  }, [wizardData.customer, wizardData.useBillingAddress, step]);
+  }, [wizardData.customer, wizardData.useBillingAddress, step, t]);
 
   const getFieldError = (field: string): string | undefined => {
     return showValidationErrors ? validationErrors[field] : undefined;
@@ -278,7 +277,7 @@ export const BookingWizard = () => {
   };
 
   const prevStep = () => {
-    // WAITLIST FLOW: Back from Details (5) -> Party (1)
+    // WAITLIST FLOW
     if (isWaitlistMode && step === 5) {
       setStep(1);
       return;
@@ -297,7 +296,6 @@ export const BookingWizard = () => {
     const last = customers[customers.length - 1];
     
     if (last) {
-      // Smart Phone Splitter Logic
       let cleanPhone = last.phone || '';
       let cleanCode = last.phoneCode || '+31';
 
@@ -340,7 +338,6 @@ export const BookingWizard = () => {
     }
   };
 
-  // Helper to handle guest count changes AND sync addons
   const handleGuestChange = (newCount: number) => {
     const validCount = Math.max(1, Math.min(250, newCount));
     
@@ -355,7 +352,6 @@ export const BookingWizard = () => {
     });
   };
 
-  // Helper to handle dietary count changes - UPDATED to keep fields separate
   const handleDietaryChange = (type: string, delta: number) => {
     const currentCounts = wizardData.notes.structuredDietary || {};
     const currentQty = currentCounts[type] || 0;
@@ -364,7 +360,6 @@ export const BookingWizard = () => {
     const newCounts = { ...currentCounts, [type]: newQty };
     if (newQty === 0) delete newCounts[type];
 
-    // Only stringify the counts, do not append comments here
     const dietaryParts = Object.entries(newCounts).map(([k, v]) => `${k} (${v})`);
     const newDietaryString = dietaryParts.join(', ');
 
@@ -379,7 +374,7 @@ export const BookingWizard = () => {
 
   const submitBooking = async () => {
     if (isWaitlistFull) {
-        setSubmitError("Online reserveren is gesloten.");
+        setSubmitError(t('err_capacity'));
         return;
     }
 
@@ -389,10 +384,9 @@ export const BookingWizard = () => {
     await new Promise(resolve => setTimeout(resolve, 1500));
 
     try {
-        // --- ATOMIC CAPACITY CHECK ---
         if (!isWaitlistMode) {
             try {
-                const freshEvents = await calendarRepo.getAllAsync(); // Use Async
+                const freshEvents = await calendarRepo.getAllAsync(); 
                 const rawEvent = freshEvents.find(e => e.date === wizardData.date && e.type === 'SHOW');
                 const targetEvent = rawEvent as ShowEvent | undefined;
                 
@@ -400,7 +394,7 @@ export const BookingWizard = () => {
                    throw new Error("De status van dit event is gewijzigd. Probeer het opnieuw.");
                 }
 
-                const freshReservations = await bookingRepo.getAllAsync(); // Use Async
+                const freshReservations = await bookingRepo.getAllAsync(); 
                 const currentBookedCount = freshReservations
                     .filter(r => 
                     r.date === wizardData.date && 
@@ -417,7 +411,7 @@ export const BookingWizard = () => {
                 if (currentBookedCount + newGuests > maxCapacity) {
                     setSubmitError(`Helaas, capaciteit overschreden: ${currentBookedCount + newGuests}/${maxCapacity} bezet. Probeer een andere datum.`);
                     setIsSubmitting(false);
-                    return; // STOP
+                    return; 
                 }
             } catch (err: any) {
                 setSubmitError(err.message || "Er is een fout opgetreden bij de capaciteitscontrole.");
@@ -457,8 +451,6 @@ export const BookingWizard = () => {
         }
 
         const resId = `RES-${Date.now()}`;
-        
-        // --- ASSIGN TABLE NUMBER ---
         const nextTableNumber = getNextTableNumber(wizardData.date);
         const tableId = `TAB-${nextTableNumber}`;
 
@@ -497,7 +489,7 @@ export const BookingWizard = () => {
           notes: wizardData.notes,
           idempotencyKey: wizardData.idempotencyKey,
           startTime: eventData?.event?.times?.start || '19:30',
-          tableId: tableId // Automatic Assignment
+          tableId: tableId
         };
 
         const validationResult = ReservationSchema.safeParse(newRes);
@@ -534,12 +526,11 @@ export const BookingWizard = () => {
                 <div className="p-6 bg-red-900/20 rounded-full text-red-500 mb-6 border border-red-900/50">
                     <div className="w-12 h-12 flex items-center justify-center"><AlertTriangle size={32} /></div>
                 </div>
-                <h2 className="text-3xl font-serif text-white mb-2">Helaas, Volgeboekt</h2>
+                <h2 className="text-3xl font-serif text-white mb-2">{t('err_capacity')}</h2>
                 <p className="text-slate-400 max-w-md mx-auto mb-8">
-                    Zowel de zaal als de wachtlijst voor deze datum zitten vol. 
-                    We kunnen helaas geen nieuwe aanvragen meer aannemen voor deze dag.
+                    {t('alert_capacity')}
                 </p>
-                <Button onClick={() => navigate('/book')}>Kies een andere datum</Button>
+                <Button onClick={() => navigate('/book')}>{t('btn_change')}</Button>
             </div>
         );
     }
@@ -548,7 +539,6 @@ export const BookingWizard = () => {
       case 0: // DATE
         return (
           <div className="space-y-6">
-            <h2 className="text-3xl font-serif text-white">Wanneer wilt u komen?</h2>
             {wizardData.date ? (
               <Card className="p-6 bg-slate-900 border-amber-500/50 border flex justify-between items-center">
                 <div className="flex items-center space-x-4">
@@ -556,17 +546,17 @@ export const BookingWizard = () => {
                     <CalendarIcon size={32} />
                   </div>
                   <div>
-                    <p className="text-sm text-slate-400 uppercase font-bold tracking-widest mb-1">Geselecteerde Datum</p>
-                    <p className="text-2xl font-serif text-white">{new Date(wizardData.date).toLocaleDateString('nl-NL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                    <p className="text-sm text-slate-400 uppercase font-bold tracking-widest mb-1">{t('selected_date')}</p>
+                    <p className="text-2xl font-serif text-white">{new Date(wizardData.date).toLocaleDateString(language === 'nl' ? 'nl-NL' : 'en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
                     {eventData && <p className="text-emerald-500 text-sm font-bold mt-1">{eventData.show.name}</p>}
                   </div>
                 </div>
-                <Button variant="secondary" onClick={() => navigate('/book')}>Wijzig</Button>
+                <Button variant="secondary" onClick={() => navigate('/book')}>{t('btn_change')}</Button>
               </Card>
             ) : (
               <div className="text-center p-8 bg-slate-900 rounded-xl border border-slate-800">
-                <p className="text-slate-400 mb-4">Er is geen datum geselecteerd.</p>
-                <Button onClick={() => navigate('/book')}>Open Kalender</Button>
+                <p className="text-slate-400 mb-4">{t('no_date')}</p>
+                <Button onClick={() => navigate('/book')}>{t('btn_open_calendar')}</Button>
               </div>
             )}
           </div>
@@ -575,22 +565,20 @@ export const BookingWizard = () => {
       case 1: // AANTAL
         return (
           <div className="space-y-8">
-            <h2 className="text-3xl font-serif text-white">Met hoeveel personen?</h2>
+            <h2 className="text-3xl font-serif text-white">{t('header_how_many')}</h2>
             
             {/* Waitlist Banner */}
             {isWaitlistMode && (
-              <div className="p-6 bg-orange-900/20 border border-orange-500/50 rounded-2xl flex flex-col md:flex-row items-center text-center md:text-left space-y-4 md:space-y-0 md:space-x-6 animate-in slide-in-from-top-4 shadow-lg shadow-orange-900/10">
+              <div role="alert" className="p-6 bg-orange-900/20 border border-orange-500/50 rounded-2xl flex flex-col md:flex-row items-center text-center md:text-left space-y-4 md:space-y-0 md:space-x-6 animate-in slide-in-from-top-4 shadow-lg shadow-orange-900/10">
                  <div className="p-4 bg-orange-500/10 rounded-full text-orange-500 shrink-0">
                    <AlertCircle size={32} />
                  </div>
                  <div className="flex-grow">
-                   <h3 className="text-xl font-bold text-white mb-1">Deze datum is volgeboekt</h3>
+                   <h3 className="text-xl font-bold text-white mb-1">{t('alert_waitlist')}</h3>
                    <p className="text-orange-200 text-sm leading-relaxed">
-                     U schrijft zich nu in voor de <strong>wachtlijst</strong>. Dit is nog geen definitieve boeking. 
-                     Als er plek vrijkomt, ontvangt u direct bericht.
+                     {t('alert_capacity')}
                    </p>
                  </div>
-                 <div className="px-4 py-2 bg-orange-500 text-black text-xs font-bold uppercase tracking-widest rounded-full shadow-md">Wachtlijst Modus</div>
               </div>
             )}
 
@@ -599,6 +587,7 @@ export const BookingWizard = () => {
                  <button 
                    onClick={() => handleGuestChange(wizardData.totalGuests - 1)}
                    className="w-16 h-16 rounded-full bg-slate-800 hover:bg-amber-500 hover:text-black transition-colors flex items-center justify-center text-3xl font-bold text-white"
+                   aria-label="Decrease guests"
                  >
                    <Minus size={32}/>
                  </button>
@@ -608,22 +597,22 @@ export const BookingWizard = () => {
                      className="w-full bg-transparent text-6xl font-serif text-white text-center focus:outline-none"
                      value={wizardData.totalGuests}
                      onChange={(e) => handleGuestChange(parseInt(e.target.value) || 1)}
+                     aria-label="Guest count"
                    />
                  </div>
                  <button 
                    onClick={() => handleGuestChange(wizardData.totalGuests + 1)}
                    className="w-16 h-16 rounded-full bg-slate-800 hover:bg-amber-500 hover:text-black transition-colors flex items-center justify-center text-3xl font-bold text-white"
+                   aria-label="Increase guests"
                  >
                    <Plus size={32}/>
                  </button>
                </div>
                <p className="text-slate-400 text-sm max-w-md mx-auto">
-                 {isWaitlistMode ? (
-                   "U schrijft zich in voor de wachtlijst voor dit aantal personen."
-                 ) : wizardData.totalGuests > CAPACITY_TARGET ? (
+                 {wizardData.totalGuests > CAPACITY_TARGET ? (
                    <span className="text-amber-500 font-bold flex items-center justify-center">
                      <AlertTriangle size={16} className="mr-2" />
-                     Let op: Deze aanvraag overschrijdt de standaard capaciteit. We zullen de mogelijkheden voor u bekijken.
+                     {t('alert_capacity')}
                    </span>
                  ) : (
                    "Uw aanvraag is pas definitief na onze bevestiging."
@@ -636,41 +625,49 @@ export const BookingWizard = () => {
       case 2: // ARRANGEMENT
         return (
           <div className="space-y-6">
-            <h2 className="text-3xl font-serif text-white">Kies uw Arrangement</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <h2 className="text-3xl font-serif text-white">{t('header_package')}</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6" role="radiogroup" aria-label={t('header_package')}>
               {/* STANDARD */}
               <div 
+                role="radio"
+                aria-checked={wizardData.packageType === 'standard'}
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') updateWizard({ packageType: 'standard' }); }}
                 onClick={() => updateWizard({ packageType: 'standard' })}
-                className={`relative p-6 rounded-2xl border-2 cursor-pointer transition-all duration-300 flex flex-col ${wizardData.packageType === 'standard' ? 'bg-slate-900 border-white ring-1 ring-white/50' : 'bg-slate-900/40 border-slate-800 hover:border-slate-600'}`}
+                className={`relative p-6 rounded-2xl border-2 cursor-pointer transition-all duration-300 flex flex-col focus:ring-2 focus:ring-amber-500 focus:outline-none ${wizardData.packageType === 'standard' ? 'bg-slate-900 border-white ring-1 ring-white/50' : 'bg-slate-900/40 border-slate-800 hover:border-slate-600'}`}
               >
                 <div className="flex justify-between items-start mb-4">
-                  <h3 className="text-xl font-bold text-white">Standard</h3>
+                  <h3 className="text-xl font-bold text-white">{t('pkg_standard')}</h3>
                   {wizardData.packageType === 'standard' && <CheckCircle2 className="text-white" size={24} />}
                 </div>
-                <p className="text-3xl font-serif text-amber-500 mb-6">€{pricing?.standard?.toFixed(2)} <span className="text-sm text-slate-500 font-sans">p.p.</span></p>
+                <p className="text-3xl font-serif text-amber-500 mb-6">€{pricing?.standard?.toFixed(2)} <span className="text-sm text-slate-500 font-sans">{t('pp')}</span></p>
                 <ul className="space-y-3 text-sm text-slate-300 flex-grow">
-                  <li className="flex items-center"><CheckCircle2 size={16} className="mr-3 text-slate-500"/> Entree Ticket</li>
-                  <li className="flex items-center"><CheckCircle2 size={16} className="mr-3 text-slate-500"/> 3-gangen Diner</li>
-                  <li className="flex items-center"><CheckCircle2 size={16} className="mr-3 text-slate-500"/> Basis drankjes inbegrepen</li>
+                  <li className="flex items-center"><CheckCircle2 size={16} className="mr-3 text-slate-500"/> {t('pkg_feat_ticket')}</li>
+                  <li className="flex items-center"><CheckCircle2 size={16} className="mr-3 text-slate-500"/> {t('pkg_feat_dinner3')}</li>
+                  <li className="flex items-center"><CheckCircle2 size={16} className="mr-3 text-slate-500"/> {t('pkg_feat_drinks_basic')}</li>
                 </ul>
               </div>
 
               {/* PREMIUM */}
               <div 
+                role="radio"
+                aria-checked={wizardData.packageType === 'premium'}
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') updateWizard({ packageType: 'premium' }); }}
                 onClick={() => updateWizard({ packageType: 'premium' })}
-                className={`relative p-6 rounded-2xl border-2 cursor-pointer transition-all duration-300 overflow-hidden flex flex-col ${wizardData.packageType === 'premium' ? 'bg-gradient-to-br from-amber-900/20 to-black border-amber-500 shadow-[0_0_30px_rgba(245,158,11,0.2)]' : 'bg-slate-900/40 border-slate-800 hover:border-amber-500/50'}`}
+                className={`relative p-6 rounded-2xl border-2 cursor-pointer transition-all duration-300 overflow-hidden flex flex-col focus:ring-2 focus:ring-amber-500 focus:outline-none ${wizardData.packageType === 'premium' ? 'bg-gradient-to-br from-amber-900/20 to-black border-amber-500 shadow-[0_0_30px_rgba(245,158,11,0.2)]' : 'bg-slate-900/40 border-slate-800 hover:border-amber-500/50'}`}
               >
-                {wizardData.packageType === 'premium' && <div className="absolute top-0 right-0 bg-amber-500 text-black text-[10px] font-bold px-3 py-1 rounded-bl-lg uppercase tracking-widest">Geselecteerd</div>}
+                {wizardData.packageType === 'premium' && <div className="absolute top-0 right-0 bg-amber-500 text-black text-[10px] font-bold px-3 py-1 rounded-bl-lg uppercase tracking-widest">{t('selected')}</div>}
                 
                 <div className="flex justify-between items-start mb-4">
-                  <h3 className="text-xl font-bold text-white flex items-center"><Star size={20} className="mr-2 text-amber-500" fill="currentColor"/> Premium</h3>
+                  <h3 className="text-xl font-bold text-white flex items-center"><Star size={20} className="mr-2 text-amber-500" fill="currentColor"/> {t('pkg_premium')}</h3>
                 </div>
-                <p className="text-3xl font-serif text-amber-500 mb-6">€{pricing?.premium?.toFixed(2)} <span className="text-sm text-slate-500 font-sans">p.p.</span></p>
+                <p className="text-3xl font-serif text-amber-500 mb-6">€{pricing?.premium?.toFixed(2)} <span className="text-sm text-slate-500 font-sans">{t('pp')}</span></p>
                 <ul className="space-y-3 text-sm text-slate-300 flex-grow">
-                  <li className="flex items-center"><CheckCircle2 size={16} className="mr-3 text-amber-500"/> Beste plaatsen in de zaal</li>
-                  <li className="flex items-center"><CheckCircle2 size={16} className="mr-3 text-amber-500"/> 4-gangen Deluxe Diner</li>
-                  <li className="flex items-center"><CheckCircle2 size={16} className="mr-3 text-amber-500"/> Glas bubbels bij ontvangst</li>
-                  <li className="flex items-center"><CheckCircle2 size={16} className="mr-3 text-amber-500"/> Onbeperkt Premium dranken</li>
+                  <li className="flex items-center"><CheckCircle2 size={16} className="mr-3 text-amber-500"/> {t('pkg_feat_seats')}</li>
+                  <li className="flex items-center"><CheckCircle2 size={16} className="mr-3 text-amber-500"/> {t('pkg_feat_dinner4')}</li>
+                  <li className="flex items-center"><CheckCircle2 size={16} className="mr-3 text-amber-500"/> {t('pkg_feat_bubbly')}</li>
+                  <li className="flex items-center"><CheckCircle2 size={16} className="mr-3 text-amber-500"/> {t('pkg_feat_drinks_prem')}</li>
                 </ul>
               </div>
             </div>
@@ -680,7 +677,7 @@ export const BookingWizard = () => {
       case 3: // EXTRAS
         return (
           <div className="space-y-6">
-            <h2 className="text-3xl font-serif text-white">Maak uw avond compleet</h2>
+            <h2 className="text-3xl font-serif text-white">{t('header_extras')}</h2>
             <div className="space-y-3">
                {MOCK_ADDONS.map(addon => {
                  const isSelected = wizardData.addons.some((a: any) => a.id === addon.id);
@@ -697,7 +694,7 @@ export const BookingWizard = () => {
                          <div>
                             <h4 className="font-bold text-white">{addon.name}</h4>
                             <p className="text-xs text-slate-400 max-w-sm">{addon.description}</p>
-                            <p className="text-sm font-bold text-amber-500 mt-1">€{price.toFixed(2)} p.p.</p>
+                            <p className="text-sm font-bold text-amber-500 mt-1">€{price.toFixed(2)} {t('pp')}</p>
                          </div>
                       </div>
                       <button 
@@ -709,7 +706,7 @@ export const BookingWizard = () => {
                         }}
                         className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border ${isSelected ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-600 text-slate-400 hover:text-white'}`}
                       >
-                        {isSelected ? 'Toegevoegd' : 'Toevoegen'}
+                        {isSelected ? t('added') : t('add')}
                       </button>
                    </div>
                  );
@@ -744,14 +741,13 @@ export const BookingWizard = () => {
       case 5: // GEGEVENS
         return (
           <div className="space-y-6">
-             <h2 className="text-2xl font-serif text-white">Uw Gegevens</h2>
+             <h2 className="text-2xl font-serif text-white">{t('header_details')}</h2>
              
              {duplicateWarning && (
-              <div className="p-4 bg-amber-900/20 border border-amber-500/50 rounded-xl flex items-start text-amber-200 animate-in slide-in-from-top-2">
+              <div className="p-4 bg-amber-900/20 border border-amber-500/50 rounded-xl flex items-start text-amber-200 animate-in slide-in-from-top-2" role="alert">
                 <AlertTriangle size={20} className="mr-3 shrink-0 mt-0.5" />
                 <p className="text-sm">
-                  Let op: Er bestaat al een recente reservering met dit e-mailadres voor deze datum. 
-                  Controleer of u geen dubbele boeking maakt.
+                  {t('alert_dupe')}
                 </p>
               </div>
             )}
@@ -766,7 +762,7 @@ export const BookingWizard = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                    <div className="space-y-2">
                       <Input 
-                        label="Voornaam" 
+                        label={t('lbl_firstname')} 
                         value={wizardData.customer.firstName}
                         onChange={(e: any) => handleCapitalize(e, 'firstName')}
                         error={getFieldError('firstName')}
@@ -775,7 +771,7 @@ export const BookingWizard = () => {
                    </div>
                    <div className="space-y-2">
                       <Input 
-                        label="Achternaam" 
+                        label={t('lbl_lastname')} 
                         value={wizardData.customer.lastName}
                         onChange={(e: any) => handleCapitalize(e, 'lastName')}
                         error={getFieldError('lastName')}
@@ -784,7 +780,7 @@ export const BookingWizard = () => {
                    </div>
                    <div className="space-y-2 md:col-span-2">
                       <Input 
-                        label="E-mailadres" 
+                        label={t('lbl_email')} 
                         type="email"
                         value={wizardData.customer.email}
                         onChange={(e: any) => updateWizard({ customer: { ...wizardData.customer, email: e.target.value } })}
@@ -795,7 +791,7 @@ export const BookingWizard = () => {
                    <div className="space-y-2 md:col-span-2">
                       <div className="flex gap-2">
                          <div className="w-1/3">
-                            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 block">Code</label>
+                            <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 block">{t('lbl_code')}</label>
                             <select 
                                className="w-full px-2 py-3 bg-black/40 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500"
                                value={wizardData.customer.phoneCode}
@@ -806,7 +802,7 @@ export const BookingWizard = () => {
                          </div>
                          <div className="flex-grow">
                             <Input 
-                              label="Telefoonnummer" 
+                              label={t('lbl_phone')}
                               type="tel"
                               value={wizardData.customer.phone}
                               onChange={(e: any) => updateWizard({ customer: { ...wizardData.customer, phone: e.target.value } })}
@@ -829,19 +825,19 @@ export const BookingWizard = () => {
                        checked={!!wizardData.customer.companyName}
                        onChange={(e) => updateWizard({ customer: { ...wizardData.customer, companyName: e.target.checked ? 'Bedrijf' : '' } })}
                      />
-                     <span className="font-bold text-white text-sm flex items-center"><Building2 size={16} className="mr-2 text-blue-500"/> Zakelijke boeking?</span>
+                     <span className="font-bold text-white text-sm flex items-center"><Building2 size={16} className="mr-2 text-blue-500"/> {t('is_business')}</span>
                   </label>
 
                   {wizardData.customer.companyName && (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 animate-in slide-in-from-top-2">
                           <Input 
-                             label="Bedrijfsnaam" 
+                             label={t('lbl_company')} 
                              value={wizardData.customer.companyName === 'Bedrijf' ? '' : wizardData.customer.companyName} 
                              onChange={(e: any) => updateWizard({ customer: { ...wizardData.customer, companyName: e.target.value } })}
                              placeholder="Bedrijfsnaam BV"
                           />
                           <Input 
-                             label="Opmerkingen Factuur" 
+                             label={t('lbl_billing_note')}
                              value={wizardData.customer.billingInstructions || ''} 
                              onChange={(e: any) => updateWizard({ customer: { ...wizardData.customer, billingInstructions: e.target.value } })}
                              placeholder="Kostenplaats, PO-nummer, etc."
@@ -856,7 +852,7 @@ export const BookingWizard = () => {
                    </h4>
                    <div className="grid grid-cols-4 gap-4">
                       <div className="col-span-4 md:col-span-2">
-                        <label className="text-xs font-bold text-amber-500/80 uppercase tracking-widest block mb-2">Land</label>
+                        <label className="text-xs font-bold text-amber-500/80 uppercase tracking-widest block mb-2">{t('lbl_country')}</label>
                         <select 
                             className="w-full px-4 py-3 bg-black/40 border border-slate-800 rounded-xl text-white outline-none focus:border-amber-500 appearance-none"
                             value={wizardData.customer.country || 'NL'}
@@ -866,16 +862,16 @@ export const BookingWizard = () => {
                         </select>
                       </div>
                       <div className="col-span-3">
-                         <Input label="Straat" value={wizardData.customer.street} onChange={(e: any) => handleCapitalize(e, 'street')} error={getFieldError('street')} />
+                         <Input label={t('lbl_street')} value={wizardData.customer.street} onChange={(e: any) => handleCapitalize(e, 'street')} error={getFieldError('street')} />
                       </div>
                       <div className="col-span-1">
-                         <Input label="Nr" value={wizardData.customer.houseNumber} onChange={(e: any) => updateWizard({ customer: { ...wizardData.customer, houseNumber: e.target.value } })} error={getFieldError('houseNumber')} />
+                         <Input label={t('lbl_house_nr')} value={wizardData.customer.houseNumber} onChange={(e: any) => updateWizard({ customer: { ...wizardData.customer, houseNumber: e.target.value } })} error={getFieldError('houseNumber')} />
                       </div>
                       <div className="col-span-1">
-                         <Input label="Postcode" value={wizardData.customer.zip} onChange={(e: any) => updateWizard({ customer: { ...wizardData.customer, zip: e.target.value.toUpperCase() } })} error={getFieldError('zip')} />
+                         <Input label={t('lbl_zip')} value={wizardData.customer.zip} onChange={(e: any) => updateWizard({ customer: { ...wizardData.customer, zip: e.target.value.toUpperCase() } })} error={getFieldError('zip')} />
                       </div>
                       <div className="col-span-3">
-                         <Input label="Woonplaats" value={wizardData.customer.city} onChange={(e: any) => handleCapitalize(e, 'city')} error={getFieldError('city')} />
+                         <Input label={t('lbl_city')} value={wizardData.customer.city} onChange={(e: any) => handleCapitalize(e, 'city')} error={getFieldError('city')} />
                       </div>
                    </div>
                 </div>
@@ -886,7 +882,7 @@ export const BookingWizard = () => {
       case 6: // WENSEN
         return (
           <div className="space-y-6">
-             <h2 className="text-2xl font-serif text-white">Wensen & Opmerkingen</h2>
+             <h2 className="text-2xl font-serif text-white">{t('header_wishes')}</h2>
              <Card className="p-6 bg-slate-900 border-slate-800 space-y-8">
                 
                 {/* Celebration Toggle */}
@@ -901,11 +897,11 @@ export const BookingWizard = () => {
                        checked={wizardData.notes.isCelebrating}
                        onChange={(e) => updateWizard({ notes: { ...wizardData.notes, isCelebrating: e.target.checked } })}
                      />
-                     <span className="font-bold text-white text-sm flex items-center"><PartyPopper size={16} className="mr-2 text-purple-500"/> Iets te vieren?</span>
+                     <span className="font-bold text-white text-sm flex items-center"><PartyPopper size={16} className="mr-2 text-purple-500"/> {t('celebration_check')}</span>
                    </label>
                    {wizardData.notes.isCelebrating && (
                      <Input 
-                       placeholder="Wat vieren we? (bijv. Verjaardag Sarah)" 
+                       placeholder={t('celebration_placeholder')} 
                        value={wizardData.notes.celebrationText || ''} 
                        onChange={(e: any) => updateWizard({ notes: { ...wizardData.notes, celebrationText: e.target.value } })}
                        className="h-10 text-sm bg-black/40 border-slate-700"
@@ -914,7 +910,7 @@ export const BookingWizard = () => {
                 </div>
 
                 <div>
-                   <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4 block">Dieetwensen & Allergieën</label>
+                   <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4 block">{t('lbl_dietary')}</label>
                    
                    {/* VISUAL TILES GRID */}
                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -926,9 +922,13 @@ export const BookingWizard = () => {
                         return (
                           <div 
                             key={opt.id} 
+                            role="button"
+                            tabIndex={0}
+                            aria-pressed={isSelected}
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); !isSelected && handleDietaryChange(opt.id, 1); }}}
                             onClick={() => !isSelected && handleDietaryChange(opt.id, 1)}
                             className={`
-                                relative flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all cursor-pointer group
+                                relative flex flex-col items-center justify-center p-4 rounded-2xl border-2 transition-all cursor-pointer group focus:outline-none focus:ring-2 focus:ring-amber-500
                                 ${isSelected 
                                     ? 'bg-amber-900/20 border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.2)]' 
                                     : 'bg-slate-950 border-slate-800 hover:border-slate-600 hover:bg-slate-900'}
@@ -945,6 +945,7 @@ export const BookingWizard = () => {
                                     <button 
                                         onClick={() => handleDietaryChange(opt.id, -1)}
                                         className="w-8 h-8 flex items-center justify-center rounded bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                                        aria-label={`Decrease ${opt.label}`}
                                     >
                                         <Minus size={14} />
                                     </button>
@@ -952,6 +953,7 @@ export const BookingWizard = () => {
                                     <button 
                                         onClick={() => handleDietaryChange(opt.id, 1)}
                                         className="w-8 h-8 flex items-center justify-center rounded bg-slate-800 text-amber-500 hover:bg-slate-700 transition-colors"
+                                        aria-label={`Increase ${opt.label}`}
                                     >
                                         <Plus size={14} />
                                     </button>
@@ -962,16 +964,12 @@ export const BookingWizard = () => {
                       })}
                    </div>
 
-                   {/* Manual Dietary Text - SEPARATE from Comments */}
-                   <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 block">Toelichting Dieet (Optioneel)</label>
+                   {/* Manual Dietary Text */}
+                   <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 block">{t('dietary_comments_lbl')}</label>
                    <textarea 
                       className="w-full h-24 bg-black/40 border border-slate-800 rounded-xl p-3 text-white text-sm focus:border-amber-500 outline-none resize-none mb-6"
-                      placeholder="Bijv. Kruisbesmetting is fataal..."
-                      value={wizardData.notes.dietary ? wizardData.notes.dietary.split('| Overig:')[0].replace(/.*\(.*?\),?\s*/g, '') : ''} // This logic is tricky with structured data, better to use a separate field in state if possible, or just append. For this fix, let's assume we append to dietary string but keep comments separate.
-                      // Actually, let's simplify: The structured data generates the string. This text area adds to it.
-                      // But for the prompt requirement "strikt gescheiden", we should really store this in a separate 'dietaryDetails' field or just append to 'dietary' string while keeping 'comments' completely separate.
-                      // The prompt asks to separate "Dieetwensen" and "Overige opmerkingen". 
-                      // So this text area edits `dietary` string (alongside tiles), and the next one edits `comments`.
+                      placeholder={t('dietary_placeholder')}
+                      value={wizardData.notes.dietary ? wizardData.notes.dietary.split('| Overig:')[0].replace(/.*\(.*?\),?\s*/g, '') : ''} 
                       onChange={(e) => {
                           const val = e.target.value;
                           const counts = wizardData.notes.structuredDietary || {};
@@ -982,14 +980,14 @@ export const BookingWizard = () => {
                    />
                 </div>
                 
-                {/* General Comments - SEPARATE FIELD */}
+                {/* General Comments */}
                 <div>
                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 flex items-center">
-                      <MessageSquare size={14} className="mr-2"/> Overige Opmerkingen
+                      <MessageSquare size={14} className="mr-2"/> {t('lbl_comments')}
                    </label>
                    <textarea 
                       className="w-full h-24 bg-black/40 border border-slate-800 rounded-xl p-3 text-white text-sm focus:border-amber-500 outline-none resize-none"
-                      placeholder="Speciale verzoeken die niets met eten te maken hebben (bijv. rolstoel, tafelkeuze)..."
+                      placeholder={t('comments_placeholder')}
                       value={wizardData.notes.comments}
                       onChange={(e) => updateWizard({ notes: { ...wizardData.notes, comments: e.target.value } })}
                    />
@@ -1001,13 +999,13 @@ export const BookingWizard = () => {
       case 7: // OVERZICHT
         return (
           <div className="space-y-6">
-             <h2 className="text-2xl font-serif text-white">Controleer uw Boeking</h2>
+             <h2 className="text-2xl font-serif text-white">{t('header_review')}</h2>
              
              {submitError && (
-               <div className="p-4 bg-red-900/20 border border-red-900/50 rounded-xl flex items-center text-red-400">
+               <div className="p-4 bg-red-900/20 border border-red-900/50 rounded-xl flex items-center text-red-400" role="alert">
                   <AlertCircle size={20} className="mr-3 shrink-0" />
                   <span className="text-sm">{submitError}</span>
-                  <button onClick={dismissError} className="ml-auto hover:text-white"><AlertCircle size={16}/></button>
+                  <button onClick={dismissError} className="ml-auto hover:text-white" aria-label="Dismiss error"><AlertCircle size={16}/></button>
                </div>
              )}
 
@@ -1023,14 +1021,14 @@ export const BookingWizard = () => {
                   </div>
                   <input type="checkbox" className="hidden" checked={agreedToTerms} onChange={(e) => setAgreedToTerms(e.target.checked)} />
                   <span className="text-sm text-slate-300">
-                      Ik ga akkoord met de <a href="#" className="text-amber-500 hover:underline">algemene voorwaarden</a> en het privacybeleid van Inspiration Point.
+                      {t('terms_agree')} <a href="#" className="text-amber-500 hover:underline">{t('terms_link')}</a> {t('terms_suffix')}
                   </span>
                 </label>
              </div>
              
              {isWaitlistMode && (
                 <div className="p-4 bg-amber-900/20 border border-amber-900/50 rounded-xl text-center text-amber-200 text-sm">
-                   U schrijft zich in voor de <strong>Wachtlijst</strong>. U betaalt nu nog niets.
+                   {t('alert_waitlist')}
                 </div>
              )}
           </div>
@@ -1043,6 +1041,18 @@ export const BookingWizard = () => {
   return (
     <div className="min-h-screen bg-black text-slate-200 pb-20">
        <div className="max-w-4xl mx-auto p-4 md:p-8">
+          
+          {/* HEADER AREA with Language Toggle */}
+          <div className="flex justify-end mb-4">
+             <button
+                 onClick={() => setLanguage(language === 'nl' ? 'en' : 'nl')}
+                 className="flex items-center text-xs text-slate-500 hover:text-white uppercase font-bold transition-colors bg-slate-900/50 px-3 py-1.5 rounded-full border border-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                 aria-label={language === 'nl' ? 'Switch to English' : 'Wissel naar Nederlands'}
+             >
+                 <Globe size={14} className="mr-2"/> {language === 'nl' ? 'EN' : 'NL'}
+             </button>
+          </div>
+
           <Stepper steps={STEPS} current={step} />
           
           <div className="mt-8 mb-12">
@@ -1051,8 +1061,8 @@ export const BookingWizard = () => {
 
           <div className="fixed bottom-0 left-0 w-full bg-slate-950/90 backdrop-blur-md border-t border-slate-900 p-4 z-40">
              <div className="max-w-4xl mx-auto flex justify-between items-center">
-                <Button variant="ghost" onClick={prevStep} disabled={step === 0}>
-                   <ChevronLeft size={16} className="mr-2" /> Vorige
+                <Button variant="ghost" onClick={prevStep} disabled={step === 0} aria-label={t('btn_prev')}>
+                   <ChevronLeft size={16} className="mr-2" /> {t('btn_prev')}
                 </Button>
                 
                 {step === STEPS.length - 1 ? (
@@ -1060,12 +1070,13 @@ export const BookingWizard = () => {
                      onClick={submitBooking} 
                      disabled={isSubmitting || (step === 7 && !agreedToTerms)} 
                      className="bg-emerald-600 hover:bg-emerald-700 min-w-[160px]"
+                     aria-label="Submit booking"
                    >
-                     {isSubmitting ? <Loader2 className="animate-spin" /> : (isWaitlistMode ? 'Inschrijven Wachtlijst' : 'Bevestig Boeking')}
+                     {isSubmitting ? <Loader2 className="animate-spin" /> : (isWaitlistMode ? t('btn_waitlist') : t('btn_confirm'))}
                    </Button>
                 ) : (
-                   <Button onClick={nextStep} disabled={!canProceed}>
-                      Volgende <ChevronRight size={16} className="ml-2" />
+                   <Button onClick={nextStep} disabled={!canProceed} aria-label={t('btn_next')}>
+                      {t('btn_next')} <ChevronRight size={16} className="ml-2" />
                    </Button>
                 )}
              </div>

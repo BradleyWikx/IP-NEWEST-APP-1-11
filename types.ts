@@ -161,6 +161,8 @@ export interface Customer {
   isBusiness?: boolean;
   notes?: string; // NEW: Internal CRM notes
   noShowCount?: number; // NEW: Risk tracking
+  birthday?: string; // YYYY-MM-DD
+  tags?: string[]; // e.g. ['VIP', 'VEGETARIAN', 'PRESS']
 }
 
 export interface LineItem {

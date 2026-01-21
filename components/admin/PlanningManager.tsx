@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Calendar as CalendarIcon, Printer, ChevronLeft, ChevronRight, 
@@ -9,7 +8,7 @@ import {
 } from 'lucide-react';
 import { Button, Card, Input, Badge } from '../UI';
 import { bookingRepo, calendarRepo, waitlistRepo, getShowDefinitions, getMerchandise } from '../../utils/storage';
-import { Reservation, BookingStatus, CalendarEvent, ShowDefinition, MerchandiseItem } from '../../types';
+import { Reservation, BookingStatus, CalendarEvent, ShowDefinition, MerchandiseItem, ShowEvent } from '../../types';
 import { formatCurrency, formatGuestName } from '../../utils/formatters';
 import { getEffectivePricing } from '../../utils/pricing';
 import { toLocalISOString } from '../../utils/dateHelpers';
@@ -69,7 +68,7 @@ export const PlanningManager = () => {
   const dateStr = toLocalISOString(selectedDate);
   const dailyEvent = events.find(e => e.date === dateStr);
   const showDef = dailyEvent && dailyEvent.type === 'SHOW' ? shows.find(s => s.id === (dailyEvent as any).showId) : null;
-  const dailyPricing = (dailyEvent && showDef) ? getEffectivePricing(dailyEvent, showDef) : null;
+  const dailyPricing = (dailyEvent && showDef && dailyEvent.type === 'SHOW') ? getEffectivePricing(dailyEvent as ShowEvent, showDef) : null;
 
   const dailyList = useMemo(() => {
     const raw = reservations.filter(r => r.date === dateStr && isOperational(r.status));
@@ -215,3 +214,4 @@ export const PlanningManager = () => {
       )}
     </div>
   );
+};

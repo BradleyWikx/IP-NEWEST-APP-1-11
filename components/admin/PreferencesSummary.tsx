@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { PrivateEventPreferences } from '../../types';
 import { 
@@ -20,10 +19,26 @@ export const PreferencesSummary: React.FC<PreferencesSummaryProps> = ({ data, va
   if (variant === 'compact') {
     return (
       <div className={`flex gap-2 text-slate-400 ${className}`}>
-        {data.dietary && <Utensils size={12} className="text-amber-500" title="Dietary Requirements" />}
-        {data.barType === 'PREMIUM' && <Wine size={12} className="text-purple-500" title="Premium Bar" />}
-        {hasTech && <Zap size={12} className="text-blue-500" title="Tech Requirements" />}
-        {data.scheduleNotes && <Clock size={12} title="Schedule Notes" />}
+        {data.dietary && (
+          <span title="Dietary Requirements">
+            <Utensils size={12} className="text-amber-500" />
+          </span>
+        )}
+        {data.barType === 'PREMIUM' && (
+          <span title="Premium Bar">
+            <Wine size={12} className="text-purple-500" />
+          </span>
+        )}
+        {hasTech && (
+          <span title="Tech Requirements">
+            <Zap size={12} className="text-blue-500" />
+          </span>
+        )}
+        {data.scheduleNotes && (
+          <span title="Schedule Notes">
+            <Clock size={12} />
+          </span>
+        )}
       </div>
     );
   }

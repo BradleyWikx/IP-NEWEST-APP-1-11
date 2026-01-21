@@ -19,7 +19,10 @@
     "vite": "5.1.4",
     "firebase": "10.8.1",
     "zod": "3.22.4",
-    "recharts": "2.12.2"
+    "recharts": "2.12.2",
+    "jspdf": "2.5.1",
+    "jspdf-autotable": "3.8.2",
+    "html5-qrcode": "2.3.8"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

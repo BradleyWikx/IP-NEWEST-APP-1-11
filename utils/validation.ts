@@ -30,6 +30,8 @@ export const CustomerSchema = z.object({
   }).optional(),
   isBusiness: z.boolean().optional(),
   notes: z.string().optional(),
+  birthday: z.string().optional(), // YYYY-MM-DD
+  tags: z.array(z.string()).optional()
 });
 
 // --- Reservation Schema ---

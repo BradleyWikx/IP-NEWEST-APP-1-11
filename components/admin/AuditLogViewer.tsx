@@ -2,10 +2,61 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   ShieldAlert, Search, Filter, Clock, User, 
-  FileJson, ChevronRight, Download, Activity, Calendar, X 
+  FileJson, ChevronRight, Download, Activity, Calendar, X,
+  ArrowRight, CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { Button, Card, Badge } from '../UI';
 import { getAuditLogs, AuditLogEntry } from '../../utils/auditLogger';
+import { formatCurrency } from '../../utils/formatters';
+
+// Helper to generate a friendly diff array
+const generateChangeList = (before: any, after: any) => {
+  if (!before || !after) return [];
+  const changes: { field: string; from: string; to: string }[] = [];
+
+  // 1. Status
+  if (before.status !== after.status) {
+    changes.push({ field: 'Status', from: before.status, to: after.status });
+  }
+  // 2. Date
+  if (before.date !== after.date) {
+    changes.push({ field: 'Datum', from: new Date(before.date).toLocaleDateString(), to: new Date(after.date).toLocaleDateString() });
+  }
+  // 3. Time
+  if (before.startTime !== after.startTime) {
+    changes.push({ field: 'Tijd', from: before.startTime || '?', to: after.startTime || '?' });
+  }
+  // 4. Guests
+  if (before.partySize !== after.partySize) {
+    changes.push({ field: 'Personen', from: String(before.partySize), to: String(after.partySize) });
+  }
+  // 5. Total
+  if (before.financials?.finalTotal !== after.financials?.finalTotal) {
+    changes.push({ 
+        field: 'Totaalbedrag', 
+        from: formatCurrency(before.financials?.finalTotal || 0), 
+        to: formatCurrency(after.financials?.finalTotal || 0) 
+    });
+  }
+  // 6. Paid
+  if (before.financials?.paid !== after.financials?.paid) {
+    changes.push({ 
+        field: 'Betaald', 
+        from: formatCurrency(before.financials?.paid || 0), 
+        to: formatCurrency(after.financials?.paid || 0) 
+    });
+  }
+  // 7. Table
+  if (before.tableId !== after.tableId) {
+    changes.push({ field: 'Tafel', from: before.tableId || '-', to: after.tableId || '-' });
+  }
+  // 8. Package
+  if (before.packageType !== after.packageType) {
+    changes.push({ field: 'Arrangement', from: before.packageType, to: after.packageType });
+  }
+
+  return changes;
+};
 
 export const AuditLogViewer = () => {
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
@@ -21,8 +72,10 @@ export const AuditLogViewer = () => {
 
   useEffect(() => {
     const data = getAuditLogs();
-    setLogs(data);
-    setFilteredLogs(data);
+    // Sort desc by timestamp
+    const sorted = data.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    setLogs(sorted);
+    setFilteredLogs(sorted);
   }, []);
 
   // Compute unique options for dropdowns based on actual data
@@ -303,6 +356,30 @@ export const AuditLogViewer = () => {
                  </div>
               )}
 
+              {/* Visual Diff View */}
+              {selectedLog.changes?.before && selectedLog.changes?.after && (
+                <div className="bg-slate-950 border border-slate-800 rounded-xl overflow-hidden">
+                   <div className="p-3 bg-slate-900 border-b border-slate-800 text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Wijzigingen
+                   </div>
+                   <div className="p-4 space-y-2">
+                      {generateChangeList(selectedLog.changes.before, selectedLog.changes.after).length > 0 ? (
+                          generateChangeList(selectedLog.changes.before, selectedLog.changes.after).map((diff, idx) => (
+                              <div key={idx} className="flex items-center text-sm p-2 hover:bg-slate-900/50 rounded">
+                                  <span className="w-32 text-slate-500 font-bold">{diff.field}</span>
+                                  <span className="text-red-400 line-through mr-3">{diff.from}</span>
+                                  <ArrowRight size={14} className="text-slate-600 mr-3" />
+                                  <span className="text-emerald-400 font-bold">{diff.to}</span>
+                              </div>
+                          ))
+                      ) : (
+                          <p className="text-slate-500 text-sm italic">Geen specifieke veldwijzigingen gedetecteerd of JSON structuur te complex.</p>
+                      )}
+                   </div>
+                </div>
+              )}
+
+              {/* Raw JSON View */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                  <div className="space-y-2">
                    <p className="text-xs font-bold text-red-500 uppercase tracking-widest flex items-center"><FileJson size={14} className="mr-2"/> Voor Wijziging</p>

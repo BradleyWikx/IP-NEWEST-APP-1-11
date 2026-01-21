@@ -20,6 +20,7 @@ export const WaitlistModal = ({ date, onClose }: { date: string, onClose: () => 
     partySize: 2 
   });
   
+  const [sendConfirmationEmail, setSendConfirmationEmail] = useState(true);
   const [submittedId, setSubmittedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -75,7 +76,9 @@ export const WaitlistModal = ({ date, onClose }: { date: string, onClose: () => 
         waitlistRepo.add(newEntry);
 
         // --- EMAIL TRIGGER ---
-        triggerEmail('WAITLIST_JOINED', { type: 'WAITLIST', id: waitlistId, data: newEntry });
+        if (sendConfirmationEmail) {
+            triggerEmail('WAITLIST_JOINED', { type: 'WAITLIST', id: waitlistId, data: newEntry });
+        }
         
         // --- NOTIFICATION TRIGGER ---
         notificationsRepo.createFromEvent('NEW_WAITLIST', newEntry);
@@ -93,7 +96,7 @@ export const WaitlistModal = ({ date, onClose }: { date: string, onClose: () => 
     return (
       <Card className="p-8 text-center bg-slate-900 border-slate-800 rounded-xl max-w-md mx-auto animate-in fade-in zoom-in">
         <h3 className="text-xl text-white font-bold mb-2">Ingeschreven!</h3>
-        <p className="text-slate-400 mb-6">We hebben je op de wachtlijst geplaatst. We nemen contact op als er een plek vrijkomt.</p>
+        <p className="text-slate-400 mb-6">We hebben je op de wachtlijst geplaatst.</p>
         <Button onClick={onClose} className="w-full">Sluiten</Button>
       </Card>
     );
@@ -169,6 +172,18 @@ export const WaitlistModal = ({ date, onClose }: { date: string, onClose: () => 
                 onChange={(e: any) => setFormData({...formData, partySize: Math.max(1, parseInt(e.target.value) || 1)})} 
                 disabled={isSubmitting}
             />
+        </div>
+
+        <div className="pt-2">
+            <label className="flex items-center space-x-3 cursor-pointer">
+                <input 
+                    type="checkbox" 
+                    checked={sendConfirmationEmail} 
+                    onChange={(e) => setSendConfirmationEmail(e.target.checked)}
+                    className="w-5 h-5 rounded bg-slate-800 border-slate-600 checked:bg-amber-600" 
+                />
+                <span className="text-sm text-slate-300">Stuur bevestiging per e-mail</span>
+            </label>
         </div>
 
         <Button onClick={handleSubmit} disabled={isSubmitting} className="w-full bg-amber-600 hover:bg-amber-700 text-black border-none mt-4">

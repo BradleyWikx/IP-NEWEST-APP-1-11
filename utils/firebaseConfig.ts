@@ -1,24 +1,40 @@
 
-// Firebase Configuration
-// NOTE: Currently disabled/mocked because no Firebase project is set up yet.
-// To enable: Uncomment lines below and add keys to .env file.
-
-/*
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 
+// Configuration provided by user
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
+  apiKey: "AIzaSyCaH8VZJZhuJtMKSjC44VX6QWmPfAdlJ80",
+  authDomain: "dinner-theater-booking.firebaseapp.com",
+  projectId: "dinner-theater-booking",
+  storageBucket: "dinner-theater-booking.firebasestorage.app",
+  messagingSenderId: "802367293541",
+  appId: "1:802367293541:web:5d2928c0cb6fa2c8bbde8c",
+  measurementId: "G-83WTWDTX7V"
 };
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
-*/
+let app;
+let db: any = null;
 
-// Export dummy db to prevent import errors in other files if they still reference it
-export const db = null;
+try {
+  // Check if Firebase is already initialized to prevent errors in HMR/Strict Mode
+  if (getApps().length === 0) {
+    app = initializeApp(firebaseConfig);
+  } else {
+    app = getApp();
+  }
+
+  // Initialize Firestore
+  // We wrap this specifically because getFirestore can throw if the SDK isn't compatible
+  try {
+    db = getFirestore(app);
+    console.log("🔥 Firestore successfully initialized");
+  } catch (firestoreError) {
+    console.warn("⚠️ Firestore failed to initialize. Running in offline/fallback mode.", firestoreError);
+  }
+
+} catch (e) {
+  console.error("❌ Firebase critical initialization error:", e);
+}
+
+export { app, db };

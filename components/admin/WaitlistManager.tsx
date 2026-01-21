@@ -42,6 +42,7 @@ export const WaitlistManager = () => {
   
   // Confirmation Modal State
   const [conversionTarget, setConversionTarget] = useState<{ entry: WaitlistEntry, group: DateGroup } | null>(null);
+  const [sendEmail, setSendEmail] = useState(true);
 
   // --- DATA LOADING & GROUPING ---
 
@@ -113,6 +114,7 @@ export const WaitlistManager = () => {
 
   const initiateConvert = (entry: WaitlistEntry, group: DateGroup) => {
       setConversionTarget({ entry, group });
+      setSendEmail(true); // Reset to default checked
   };
 
   const executeConvert = () => {
@@ -181,9 +183,11 @@ export const WaitlistManager = () => {
         description: `Converted waitlist entry to reservation. Matched against cancellations.`
     });
 
-    triggerEmail('BOOKING_CONFIRMED', { type: 'RESERVATION', id: newReservation.id, data: newReservation });
+    if (sendEmail) {
+        triggerEmail('BOOKING_CONFIRMED', { type: 'RESERVATION', id: newReservation.id, data: newReservation });
+    }
 
-    undoManager.showSuccess(`Wachtende geplaatst! Bevestiging verstuurd.`);
+    undoManager.showSuccess(`Wachtende geplaatst! ${sendEmail ? 'Bevestiging verstuurd.' : 'Geen mail verstuurd.'}`);
     refreshData();
     setIsProcessing(false);
     setConversionTarget(null);
@@ -226,7 +230,7 @@ export const WaitlistManager = () => {
 
   // --- ACTIONS: RESTORE CANCELLATION ---
   const handleRestore = (reservation: Reservation) => {
-    if (!confirm("Weet je zeker dat je deze annulering wilt herstellen naar BEVESTIGD?")) return;
+    if (!confirm("Weet je zeker dat je deze annulering wilt herstellen naar BEVESTIGD? Er wordt een e-mail verstuurd.")) return;
     
     bookingRepo.update(reservation.id, (r) => ({ ...r, status: BookingStatus.CONFIRMED }));
     
@@ -472,28 +476,46 @@ export const WaitlistManager = () => {
          </div>
       </ResponsiveDrawer>
 
-      {/* CONFIRMATION MODAL */}
-      <DestructiveActionModal
-        isOpen={!!conversionTarget}
-        onClose={() => setConversionTarget(null)}
-        onConfirm={executeConvert}
-        title="Bevestig Plaatsing"
-        description={
-            <div className="space-y-2">
-                <p>Weet je zeker dat je <strong>{conversionTarget?.entry.contactName}</strong> wilt omzetten naar een definitieve boeking?</p>
-                <div className="p-3 bg-emerald-900/20 border border-emerald-900/50 rounded-lg text-sm text-emerald-200">
-                    <ul className="list-disc pl-4 space-y-1">
-                        <li>Status wordt <strong>BEVESTIGD</strong></li>
-                        <li>Bevestigingsmail wordt verstuurd</li>
-                        <li>Wachtlijst item wordt verwijderd</li>
-                    </ul>
-                </div>
-            </div>
-        }
-        verificationText="PLAATSEN"
-        confirmButtonText="Definitief Boeken"
-        requireVerification={false}
-      />
+      {/* CONFIRMATION MODAL WITH EMAIL CHECKBOX */}
+      {conversionTarget && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+           <Card className="w-full max-w-sm bg-slate-900 border-slate-800 shadow-2xl">
+              <div className="p-6">
+                 <h3 className="text-xl font-bold text-white mb-2">Bevestig Plaatsing</h3>
+                 <div className="space-y-2 mb-6">
+                    <p className="text-sm text-slate-300">
+                        Weet je zeker dat je <strong>{conversionTarget.entry.contactName}</strong> wilt omzetten naar een definitieve boeking?
+                    </p>
+                    <div className="p-3 bg-emerald-900/20 border border-emerald-900/50 rounded-lg text-sm text-emerald-200">
+                        <ul className="list-disc pl-4 space-y-1">
+                            <li>Status wordt <strong>BEVESTIGD</strong></li>
+                            <li>Wachtlijst item wordt verwijderd</li>
+                        </ul>
+                    </div>
+                 </div>
+                 
+                 <div className="mb-6 p-3 bg-slate-950 border border-slate-800 rounded-xl">
+                    <label className="flex items-center space-x-3 cursor-pointer">
+                        <input 
+                            type="checkbox" 
+                            checked={sendEmail} 
+                            onChange={(e) => setSendEmail(e.target.checked)}
+                            className="w-5 h-5 rounded bg-slate-800 border-slate-600 checked:bg-blue-600" 
+                        />
+                        <span className="text-sm text-white">Stuur bevestiging per e-mail</span>
+                    </label>
+                 </div>
+
+                 <div className="flex gap-3">
+                    <Button variant="ghost" onClick={() => setConversionTarget(null)} className="flex-1">Annuleren</Button>
+                    <Button onClick={executeConvert} className="flex-1 bg-emerald-600 hover:bg-emerald-700 border-none">
+                        PLAATSEN
+                    </Button>
+                 </div>
+              </div>
+           </Card>
+        </div>
+      )}
     </div>
   );
 };

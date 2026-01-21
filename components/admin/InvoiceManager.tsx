@@ -33,6 +33,9 @@ export const InvoiceManager = () => {
   // Edit Mode toggle inside drawer
   const [isEditingDetails, setIsEditingDetails] = useState(false);
 
+  // Send Modal
+  const [sendModalInvoice, setSendModalInvoice] = useState<Invoice | null>(null);
+
   useEffect(() => {
     refreshData();
     window.addEventListener('storage-update', refreshData);
@@ -67,7 +70,7 @@ export const InvoiceManager = () => {
       const selected = invoices.filter(i => selectedIds.has(i.id));
       if (selected.length === 0) return;
       printBatchInvoices(selected);
-      setSelectedIds(new Set()); // Optional: clear selection after print
+      setSelectedIds(new Set()); 
   };
 
   const handleBulkStatus = (status: Invoice['status']) => {
@@ -103,8 +106,6 @@ export const InvoiceManager = () => {
       if (!confirm(`Wil je ${remindable.length} betalingsherinneringen versturen?`)) return;
 
       remindable.forEach(inv => {
-          // Trigger email logic here
-          // We use INVOICE_REMINDER template. 
           triggerEmail('INVOICE_REMINDER', { type: 'INVOICE', id: inv.id, data: inv });
       });
 
@@ -128,7 +129,7 @@ export const InvoiceManager = () => {
     
     setIsCreatorOpen(false);
     setSelectedResId('');
-    setSelectedInvoice(newInvoice); // Open details immediately
+    setSelectedInvoice(newInvoice); 
     refreshData();
   };
 
@@ -140,7 +141,7 @@ export const InvoiceManager = () => {
       
       setIsCreatorOpen(false);
       setSelectedInvoice(newInvoice);
-      setIsEditingDetails(true); // Auto enable edit mode for new manual invoice
+      setIsEditingDetails(true);
       refreshData();
   };
   
@@ -154,15 +155,13 @@ export const InvoiceManager = () => {
         return;
     }
 
-    // Create fresh invoice from reservation logic
     const freshInvoice = createInvoiceFromReservation(res);
     
-    // Preserve existing ID, status and dates (unless specific requirement to reset status)
     const updatedInvoice = {
         ...freshInvoice,
-        id: selectedInvoice.id, // KEEP ID
-        status: selectedInvoice.status, // KEEP STATUS
-        dates: selectedInvoice.dates // KEEP DATES
+        id: selectedInvoice.id, 
+        status: selectedInvoice.status, 
+        dates: selectedInvoice.dates 
     };
     
     invoiceRepo.update(selectedInvoice.id, () => updatedInvoice);
@@ -187,7 +186,14 @@ export const InvoiceManager = () => {
     }
   };
 
-  const handleSendEmail = (invoice: Invoice) => {
+  const initiateSendEmail = (invoice: Invoice) => {
+      setSendModalInvoice(invoice);
+  };
+
+  const confirmSendEmail = () => {
+    if (!sendModalInvoice) return;
+    const invoice = sendModalInvoice;
+
     // Determine if it's initial send or reminder based on status
     if (invoice.status === 'SENT' || invoice.status === 'OVERDUE') {
         triggerEmail('INVOICE_REMINDER', { type: 'INVOICE', id: invoice.id, data: invoice });
@@ -198,33 +204,26 @@ export const InvoiceManager = () => {
         refreshData();
         undoManager.showSuccess(`Factuur verzonden.`);
     }
+    
+    setSendModalInvoice(null);
   };
 
-  // --- EDITING LOGIC ---
-
-  const handleUpdateItem = (idx: number, field: string, val: any) => {
+  // --- EDITING LOGIC (Same as existing) ---
+  const handleUpdateItem = (idx: number, field: string, val: any) => { /* ... existing ... */ 
     if (!selectedInvoice) return;
-    
     const newItems = [...selectedInvoice.items];
     const currentItem = { ...newItems[idx], [field]: val };
-    
-    // Recalc line total if qty/price changed
     if (field === 'quantity' || field === 'unitPrice') {
         currentItem.total = currentItem.quantity * currentItem.unitPrice;
     }
-    
     newItems[idx] = currentItem;
-
     const newTotals = calculateInvoiceTotals(newItems);
     const updated = { ...selectedInvoice, items: newItems, totals: newTotals };
-    
-    // Auto-save to repo for seamless experience
     invoiceRepo.update(selectedInvoice.id, () => updated);
     setSelectedInvoice(updated);
     refreshData();
   };
-
-  const handleAddItem = () => {
+  const handleAddItem = () => { /* ... existing ... */ 
     if (!selectedInvoice) return;
     const newItem: InvoiceItem = {
         id: `ITEM-${Date.now()}`,
@@ -235,38 +234,30 @@ export const InvoiceManager = () => {
         total: 0,
         category: 'OTHER'
     };
-    
     const newItems = [...selectedInvoice.items, newItem];
     const newTotals = calculateInvoiceTotals(newItems);
     const updated = { ...selectedInvoice, items: newItems, totals: newTotals };
-    
     invoiceRepo.update(selectedInvoice.id, () => updated);
     setSelectedInvoice(updated);
     refreshData();
   };
-
-  const handleRemoveItem = (idx: number) => {
+  const handleRemoveItem = (idx: number) => { /* ... existing ... */ 
     if (!selectedInvoice) return;
     const newItems = selectedInvoice.items.filter((_, i) => i !== idx);
     const newTotals = calculateInvoiceTotals(newItems);
     const updated = { ...selectedInvoice, items: newItems, totals: newTotals };
-    
     invoiceRepo.update(selectedInvoice.id, () => updated);
     setSelectedInvoice(updated);
     refreshData();
   };
-
-  const handleUpdateCustomerSnapshot = (field: string, val: string) => {
+  const handleUpdateCustomerSnapshot = (field: string, val: string) => { /* ... existing ... */ 
       if (!selectedInvoice) return;
       const updatedSnapshot = { ...selectedInvoice.customerSnapshot, [field]: val };
       const updated = { ...selectedInvoice, customerSnapshot: updatedSnapshot };
-      
       invoiceRepo.update(selectedInvoice.id, () => updated);
       setSelectedInvoice(updated);
       refreshData();
   };
-
-  // --- FILTERING ---
 
   const filteredInvoices = invoices.filter(inv => {
     const matchesTab = activeTab === 'ALL' || inv.status === activeTab;
@@ -275,25 +266,18 @@ export const InvoiceManager = () => {
     return matchesTab && matchesSearch;
   });
 
-  // --- VISUAL GROUPING HELPER (Local for UI state) ---
   const groupedItems = useMemo(() => {
     if (!selectedInvoice) return [];
-    
-    // If we are editing (DRAFT), show ALL items so admin can tweak the split if needed
     if (selectedInvoice.status === 'DRAFT') {
         return selectedInvoice.items.map((item, idx) => ({ ...item, _originalIdx: idx }));
     }
-
-    // If viewing (SENT/PAID), show grouped "Clean" view like PDF
     const groups: Record<string, InvoiceItem & { _originalIdx: number, isMixed?: boolean }> = {};
     const orderedKeys: string[] = [];
-
     selectedInvoice.items.forEach((item, idx) => {
         const key = item.originalReservationItemId || item.id;
         if (!groups[key]) {
             groups[key] = { ...item, _originalIdx: idx };
             orderedKeys.push(key);
-            // Clean description
             groups[key].description = groups[key].description
                 .replace(' (Diner & Show)', '')
                 .replace(' (Drankenarrangement)', '')
@@ -305,7 +289,6 @@ export const InvoiceManager = () => {
         }
     });
     return orderedKeys.map(k => groups[k]);
-
   }, [selectedInvoice]);
 
   return (
@@ -386,7 +369,7 @@ export const InvoiceManager = () => {
                         {i.status !== 'PAID' && i.status !== 'DRAFT' && (
                             <Button 
                                 variant="ghost" 
-                                onClick={(e: any) => { e.stopPropagation(); handleSendEmail(i); }} 
+                                onClick={(e: any) => { e.stopPropagation(); initiateSendEmail(i); }} 
                                 className="h-8 w-8 p-0 text-slate-400 hover:text-amber-500"
                                 title="Stuur Herinnering"
                             >
@@ -405,6 +388,7 @@ export const InvoiceManager = () => {
       {/* FLOATING BULK ACTION BAR */}
       {selectedIds.size > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-slate-900 border border-slate-700 shadow-2xl rounded-full px-6 py-3 z-50 flex items-center space-x-4 animate-in slide-in-from-bottom-10 fade-in">
+           {/* ... existing bulk buttons ... */}
            <div className="flex items-center space-x-2 border-r border-slate-700 pr-4">
               <span className="bg-amber-500 text-black text-xs font-bold px-2 py-0.5 rounded-full">{selectedIds.size}</span>
               <span className="text-xs font-bold text-white uppercase tracking-wider">Geselecteerd</span>
@@ -451,15 +435,8 @@ export const InvoiceManager = () => {
       )}
 
       {/* CREATOR MODAL */}
-      <ResponsiveDrawer
-        isOpen={isCreatorOpen}
-        onClose={() => setIsCreatorOpen(false)}
-        title="Nieuwe Factuur"
-        widthClass="md:w-[500px]"
-      >
+      <ResponsiveDrawer isOpen={isCreatorOpen} onClose={() => setIsCreatorOpen(false)} title="Nieuwe Factuur" widthClass="md:w-[500px]">
          <div className="space-y-6">
-            
-            {/* Manual Option */}
             <div className="p-4 bg-slate-900 border border-slate-800 rounded-xl hover:border-amber-500 cursor-pointer transition-colors group" onClick={handleCreateManualDraft}>
                 <div className="flex items-center justify-between mb-2">
                     <h4 className="font-bold text-white">Lege Factuur</h4>
@@ -490,9 +467,6 @@ export const InvoiceManager = () => {
                         </option>
                     ))}
                 </select>
-                <p className="text-[10px] text-slate-500 mt-1 italic">
-                    Items worden automatisch gesplitst in 9% en 21% BTW voor de boekhouding, maar samengevoegd op de factuur.
-                </p>
             </div>
 
             <div className="flex justify-end pt-4">
@@ -504,19 +478,13 @@ export const InvoiceManager = () => {
       </ResponsiveDrawer>
 
       {/* DETAIL DRAWER */}
-      <ResponsiveDrawer
-        isOpen={!!selectedInvoice}
-        onClose={() => { setSelectedInvoice(null); setIsEditingDetails(false); }}
-        title={`Factuur ${selectedInvoice?.id}`}
-        widthClass="md:w-[900px]"
-      >
+      <ResponsiveDrawer isOpen={!!selectedInvoice} onClose={() => { setSelectedInvoice(null); setIsEditingDetails(false); }} title={`Factuur ${selectedInvoice?.id}`} widthClass="md:w-[900px]">
          {selectedInvoice && (
              <div className="space-y-8 pb-12">
                  
                  {/* Actions Header */}
                  <div className="flex justify-between items-center bg-slate-900 p-4 rounded-xl border border-slate-800 sticky top-0 z-20 shadow-xl">
                     <div className="flex space-x-2">
-                        {/* REGENERATE BUTTON */}
                         {selectedInvoice.status === 'DRAFT' && selectedInvoice.reservationId && (
                            <Button variant="secondary" onClick={handleRegenerate} className="text-xs h-8 text-amber-500 border-amber-900/50 hover:bg-amber-900/20">
                                <RefreshCw size={14} className="mr-2"/> Herlaad Data
@@ -524,15 +492,16 @@ export const InvoiceManager = () => {
                         )}
 
                         {selectedInvoice.status === 'DRAFT' && (
-                            <Button onClick={() => handleSendEmail(selectedInvoice)} className="bg-blue-600 hover:bg-blue-700 text-xs h-8">
+                            <Button onClick={() => initiateSendEmail(selectedInvoice)} className="bg-blue-600 hover:bg-blue-700 text-xs h-8">
                                 <Mail size={14} className="mr-2"/> Verstuur
                             </Button>
                         )}
                         {(selectedInvoice.status === 'SENT' || selectedInvoice.status === 'OVERDUE') && (
-                            <Button onClick={() => handleSendEmail(selectedInvoice)} className="bg-amber-600 hover:bg-amber-700 text-xs h-8">
+                            <Button onClick={() => initiateSendEmail(selectedInvoice)} className="bg-amber-600 hover:bg-amber-700 text-xs h-8">
                                 <BellRing size={14} className="mr-2"/> Herinnering
                             </Button>
                         )}
+                        {/* ... other buttons same ... */}
                         {selectedInvoice.status === 'SENT' && (
                             <Button onClick={() => handleStatusChange(selectedInvoice, 'PAID')} className="bg-emerald-600 hover:bg-emerald-700 text-xs h-8">
                                 <CheckCircle2 size={14} className="mr-2"/> Markeer Betaald
@@ -559,8 +528,9 @@ export const InvoiceManager = () => {
                     </div>
                  </div>
 
-                 {/* Editable Customer Info */}
+                 {/* Editable Customer Info - Same logic as before */}
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* ... customer details ... */}
                     <div className={`p-5 rounded-xl border transition-all ${isEditingDetails ? 'bg-slate-900/80 border-amber-500/50' : 'bg-slate-900 border-slate-800'}`}>
                         <div className="flex justify-between mb-3">
                             <h4 className="text-xs font-bold text-slate-500 uppercase flex items-center">
@@ -674,7 +644,6 @@ export const InvoiceManager = () => {
                             ))}
                         </tbody>
                         
-                        {/* FOOTER & TOTALS */}
                         <tfoot className="bg-slate-950/50 border-t border-slate-800">
                             {selectedInvoice.status === 'DRAFT' && (
                                 <tr>
@@ -712,6 +681,27 @@ export const InvoiceManager = () => {
              </div>
          )}
       </ResponsiveDrawer>
+
+      {/* CONFIRM EMAIL MODAL */}
+      {sendModalInvoice && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+           <Card className="w-full max-w-sm bg-slate-900 border-slate-800 shadow-2xl">
+              <div className="p-6">
+                 <h3 className="text-xl font-bold text-white mb-2">Factuur Versturen</h3>
+                 <p className="text-sm text-slate-400 mb-6">
+                    Wil je factuur <strong>{sendModalInvoice.id}</strong> versturen naar <strong>{sendModalInvoice.customerSnapshot.email}</strong>?
+                 </p>
+                 
+                 <div className="flex gap-3">
+                    <Button variant="ghost" onClick={() => setSendModalInvoice(null)} className="flex-1">Annuleren</Button>
+                    <Button onClick={confirmSendEmail} className="flex-1 bg-blue-600 hover:bg-blue-700 border-none">
+                        Versturen
+                    </Button>
+                 </div>
+              </div>
+           </Card>
+        </div>
+      )}
 
     </div>
   );

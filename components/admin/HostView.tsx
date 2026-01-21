@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
@@ -152,7 +151,12 @@ export const HostView = () => {
       time: res.startTime || '19:30',
       status: res.status,
       isPremium: res.packageType === 'premium',
-      notes: res.notes,
+      notes: {
+        dietary: res.notes.dietary || '',
+        isCelebrating: !!res.notes.isCelebrating,
+        celebrationText: res.notes.celebrationText,
+        comments: res.notes.comments
+      },
       hasVoucher: !!res.financials.voucherCode,
       outstandingBalance: res.financials.finalTotal - (res.financials.paid || 0),
       arrived: res.status === BookingStatus.ARRIVED

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   DollarSign, AlertCircle, CheckCircle2, Clock, 
@@ -7,8 +6,8 @@ import {
 } from 'lucide-react';
 import { Button, Card, Badge, Input, ResponsiveDrawer } from '../UI';
 import { DestructiveActionModal } from '../UI/DestructiveActionModal';
-import { Reservation, BookingStatus, PaymentRecord } from '../../types';
-import { bookingRepo, saveData, STORAGE_KEYS } from '../../utils/storage';
+import { Reservation, BookingStatus, PaymentRecord, Invoice } from '../../types';
+import { bookingRepo, saveData, STORAGE_KEYS, invoiceRepo } from '../../utils/storage';
 import { ResponsiveTable } from '../ResponsiveTable';
 import { getPaymentStatus, getPaymentColor } from '../../utils/paymentHelpers';
 import { undoManager } from '../../utils/undoManager';
@@ -17,6 +16,7 @@ import { triggerEmail } from '../../utils/emailEngine';
 import { toCSV, downloadCSV } from '../../utils/csvExport';
 import { formatGuestName, formatCurrency } from '../../utils/formatters';
 import { printInvoice, printBatchInvoices } from '../../utils/invoiceGenerator';
+import { createInvoiceFromReservation } from '../../utils/invoiceLogic';
 
 const ITEMS_PER_PAGE = 20;
 
@@ -37,6 +37,9 @@ export const PaymentsManager = () => {
   // Batch Invoice State
   const [showBatchConfirm, setShowBatchConfirm] = useState(false);
   const [batchList, setBatchList] = useState<Reservation[]>([]);
+  
+  // Added: need invoices state for checking if invoice exists
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
 
   useEffect(() => {
     refreshData();
@@ -64,6 +67,7 @@ export const PaymentsManager = () => {
         r.status !== BookingStatus.INVITED
     );
     setReservations(all.sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
+    setInvoices(invoiceRepo.getAll());
   };
 
   // --- STATS ---
@@ -179,7 +183,9 @@ export const PaymentsManager = () => {
   };
 
   const executeBatchInvoice = () => {
-    printBatchInvoices(batchList);
+    // Convert reservations to temporary invoices for printing
+    const invoicesToPrint = batchList.map(r => createInvoiceFromReservation(r));
+    printBatchInvoices(invoicesToPrint);
     setShowBatchConfirm(false);
   };
 
@@ -424,7 +430,7 @@ export const PaymentsManager = () => {
                         )}
                     </div>
 
-                    <Button onClick={() => printInvoice(selectedRes)} variant="secondary" className="w-full text-xs">
+                    <Button onClick={() => printInvoice(createInvoiceFromReservation(selectedRes))} variant="secondary" className="w-full text-xs">
                         <Printer size={14} className="mr-2"/> Download Factuur PDF
                     </Button>
                 </div>

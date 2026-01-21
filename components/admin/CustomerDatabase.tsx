@@ -5,7 +5,8 @@ import {
   Users, Search, Mail, Phone, Calendar, 
   ChevronRight, Star, Ticket, Edit3, MapPin, 
   Merge, AlertTriangle, CheckCircle2, Trash2,
-  Clock, Euro, StickyNote, ArrowUpRight
+  Clock, Euro, StickyNote, ArrowUpRight, Cake, Tag,
+  X, Plus // Added
 } from 'lucide-react';
 import { Button, Input, Card, Badge, ResponsiveDrawer } from '../UI';
 import { Customer, Reservation, BookingStatus } from '../../types';
@@ -100,6 +101,49 @@ const CustomerTimeline = ({ customerId, emails, history }: { customerId: string,
     );
 };
 
+// --- TAG EDITOR COMPONENT ---
+const TagEditor = ({ tags, onChange }: { tags: string[], onChange: (tags: string[]) => void }) => {
+    const [input, setInput] = useState('');
+    
+    const addTag = () => {
+        if (!input.trim()) return;
+        const newTag = input.trim().toUpperCase();
+        if (!tags.includes(newTag)) {
+            onChange([...tags, newTag]);
+        }
+        setInput('');
+    };
+
+    const removeTag = (tag: string) => {
+        onChange(tags.filter(t => t !== tag));
+    };
+
+    return (
+        <div className="space-y-2">
+            <div className="flex flex-wrap gap-2 mb-2">
+                {tags.map(tag => (
+                    <span key={tag} className="flex items-center px-2 py-1 bg-amber-900/20 text-amber-500 text-xs font-bold rounded border border-amber-900/50">
+                        {tag}
+                        <button onClick={() => removeTag(tag)} className="ml-1 hover:text-white"><X size={12}/></button>
+                    </span>
+                ))}
+            </div>
+            <div className="flex gap-2">
+                <input 
+                    className="flex-grow bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                    placeholder="Nieuwe tag..."
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addTag())}
+                />
+                <Button variant="secondary" onClick={addTag} className="h-auto py-1 px-3 text-xs">
+                    <Plus size={14}/>
+                </Button>
+            </div>
+        </div>
+    );
+};
+
 // --- MAIN COMPONENT ---
 
 export const CustomerDatabase = () => {
@@ -135,7 +179,7 @@ export const CustomerDatabase = () => {
         lastBookingDate: null,
         history: [],
         segments: [],
-        rawTags: []
+        rawTags: c.tags || [] // Load existing tags
       });
     });
 
@@ -146,7 +190,6 @@ export const CustomerDatabase = () => {
       
       // If customer exists but only in reservation (legacy data), create transient entry
       if (!profile && res.customer) {
-        // Try finding by email match first to avoid dupes in this transient map
         const existingByEmail = Array.from(profileMap.values()).find(
           p => p.email.toLowerCase() === res.customer.email.toLowerCase()
         );
@@ -183,8 +226,8 @@ export const CustomerDatabase = () => {
 
       if (profile) {
         profile.history.push(res);
-        // Basic Tag aggregation (dietary etc)
-        if (res.notes?.dietary && !profile.rawTags.includes('DIETARY')) profile.rawTags.push('DIETARY');
+        // Do NOT auto-add DIETARY tag to rawTags to avoid cluttering manual tags
+        // Metrics logic handles dietary segments
       }
     });
 
@@ -200,10 +243,9 @@ export const CustomerDatabase = () => {
       p.averageSpend = metrics.averageSpend;
       p.lastBookingDate = metrics.lastBookingDate ? metrics.lastBookingDate.toISOString() : null;
       
-      // Assign Segments
-      // Check legacy notes for VIP override
-      const manualTags = p.notes?.includes('VIP') ? ['VIP'] : [];
-      p.segments = getCustomerSegments(metrics, manualTags);
+      // Assign Segments (mix of auto-calculated and manual tags)
+      // We pass p.rawTags so user-defined tags like VIP are respected by logic if needed
+      p.segments = getCustomerSegments(metrics, p.rawTags);
 
       return p;
     });
@@ -246,7 +288,13 @@ export const CustomerDatabase = () => {
 
     setIsEditing(false);
     refreshData();
-    const updatedProfile = { ...selectedCustomer, ...editForm };
+    // Update local selection to reflect changes immediately
+    // Need to re-merge with profile props that aren't in 'editForm' (like history)
+    const updatedProfile = { 
+        ...selectedCustomer, 
+        ...editForm,
+        rawTags: editForm.tags || [] // Ensure tags propagate
+    };
     setSelectedCustomer(updatedProfile);
     undoManager.showSuccess("Klantgegevens bijgewerkt.");
   };
@@ -270,11 +318,9 @@ export const CustomerDatabase = () => {
   const startNewBooking = () => {
       if (!selectedCustomer) return;
       navigate('/admin/reservations/new');
-      // In a real app, we'd pass the customer ID to pre-fill the wizard
-      // Currently the wizard supports prefill via state if we implement it there
   };
 
-  // --- DUPLICATE LOGIC ---
+  // --- DUPLICATE LOGIC (Unchanged) ---
   const potentialDuplicates = useMemo(() => {
     const grouped = new Map<string, CustomerProfile[]>();
     customers.forEach(c => {
@@ -323,7 +369,8 @@ export const CustomerDatabase = () => {
   const filteredCustomers = customers.filter(c => 
     c.lastName.toLowerCase().includes(searchTerm.toLowerCase()) || 
     c.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    c.companyName?.toLowerCase().includes(searchTerm.toLowerCase())
+    c.companyName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    c.rawTags.some(t => t.toLowerCase().includes(searchTerm.toLowerCase())) // Search by tags too
   );
 
   return (
@@ -357,7 +404,7 @@ export const CustomerDatabase = () => {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
                 <input 
                     className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500 transition-colors"
-                    placeholder="Zoek op naam, email of bedrijf..."
+                    placeholder="Zoek op naam, email, bedrijf of tag..."
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
                 />
@@ -373,7 +420,7 @@ export const CustomerDatabase = () => {
                         <th className="p-4">Contact</th>
                         <th className="p-4 text-center">Boekingen</th>
                         <th className="p-4 text-right">LTV (Spend)</th>
-                        <th className="p-4">Status</th>
+                        <th className="p-4">Status & Tags</th>
                         <th className="p-4 text-right">Actie</th>
                     </tr>
                     </thead>
@@ -382,7 +429,14 @@ export const CustomerDatabase = () => {
                     filteredCustomers.map(c => (
                         <tr key={c.id} className="hover:bg-slate-800/50 cursor-pointer group transition-colors" onClick={() => { setSelectedCustomer(c); setIsEditing(false); }}>
                         <td className="p-4">
-                            <div className="font-bold text-white text-base">{formatGuestName(c.firstName, c.lastName)}</div>
+                            <div className="font-bold text-white text-base flex items-center">
+                                {formatGuestName(c.firstName, c.lastName)}
+                                {c.birthday && new Date(c.birthday).getDate() === new Date().getDate() && new Date(c.birthday).getMonth() === new Date().getMonth() && (
+                                    <span title="Jarig Vandaag!" className="inline-flex ml-2">
+                                        <Cake size={14} className="text-pink-500 animate-pulse" />
+                                    </span>
+                                )}
+                            </div>
                             {c.companyName && (
                                 <div className="text-xs text-blue-400 font-bold flex items-center mt-0.5">
                                     <ArrowUpRight size={10} className="mr-1"/> {c.companyName}
@@ -407,7 +461,11 @@ export const CustomerDatabase = () => {
                                     {getSegmentLabel(seg)}
                                 </span>
                             ))}
-                            {c.rawTags.includes('DIETARY') && <span className="w-2 h-2 rounded-full bg-red-500 mt-1.5" title="Heeft Dieetwensen"/>}
+                            {c.rawTags.map(tag => (
+                                <span key={tag} className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[9px] font-bold uppercase text-slate-400">
+                                    {tag}
+                                </span>
+                            ))}
                             </div>
                         </td>
                         <td className="p-4 text-right">
@@ -425,8 +483,9 @@ export const CustomerDatabase = () => {
         </>
       )}
 
-      {/* ... Maintenance Tab ... */}
+      {/* ... Maintenance Tab (Unchanged) ... */}
       {activeTab === 'MAINTENANCE' && (
+          // ... existing code ...
           <div className="space-y-6 animate-in fade-in">
               <div className="flex items-center space-x-4 p-4 bg-slate-900 border border-slate-800 rounded-xl">
                   <div className="p-3 bg-blue-900/20 text-blue-500 rounded-full">
@@ -458,8 +517,6 @@ export const CustomerDatabase = () => {
                                               <p className="text-sm font-bold text-slate-200">{formatGuestName(cust.firstName, cust.lastName)}</p>
                                               <p className="text-xs text-slate-500 font-mono">{cust.id} • {cust.totalBookings} boekingen</p>
                                           </div>
-                                          
-                                          {/* Merge Action: Merge INTO this customer */}
                                           <div className="flex space-x-2">
                                               {group.group.filter(c => c.id !== cust.id).map(source => (
                                                   <Button 
@@ -504,10 +561,15 @@ export const CustomerDatabase = () => {
                                 </span>
                             )}
                         </div>
-                        <div className="flex gap-2 mt-3">
+                        <div className="flex gap-2 mt-3 flex-wrap">
                             {selectedCustomer.segments.map(seg => (
                                 <span key={seg} className={`px-2 py-0.5 rounded border text-[9px] font-bold uppercase ${getSegmentStyle(seg)}`}>
                                     {getSegmentLabel(seg)}
+                                </span>
+                            ))}
+                            {selectedCustomer.rawTags.map(tag => (
+                                <span key={tag} className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[9px] font-bold uppercase text-slate-400">
+                                    {tag}
                                 </span>
                             ))}
                         </div>
@@ -533,16 +595,31 @@ export const CustomerDatabase = () => {
                        <Input label="Achternaam" value={editForm.lastName} onChange={(e: any) => setEditForm({...editForm, lastName: e.target.value})} />
                        <Input label="Email" value={editForm.email} onChange={(e: any) => setEditForm({...editForm, email: e.target.value})} className="col-span-2" />
                        <Input label="Telefoon" value={editForm.phone} onChange={(e: any) => setEditForm({...editForm, phone: e.target.value})} className="col-span-2" />
-                       <Input label="Bedrijfsnaam" value={editForm.companyName} onChange={(e: any) => setEditForm({...editForm, companyName: e.target.value})} className="col-span-2" />
+                       <Input label="Bedrijfsnaam" value={editForm.companyName || ''} onChange={(e: any) => setEditForm({...editForm, companyName: e.target.value})} className="col-span-2" />
+                       
+                       <Input 
+                         label="Geboortedatum" 
+                         type="date" 
+                         value={editForm.birthday || ''} 
+                         onChange={(e: any) => setEditForm({...editForm, birthday: e.target.value})} 
+                       />
                     </div>
                     
                     <div className="pt-4 border-t border-slate-900">
+                      <label className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 block">Tags & Labels</label>
+                      <TagEditor 
+                        tags={editForm.tags || []} 
+                        onChange={(tags) => setEditForm({...editForm, tags})}
+                      />
+                    </div>
+
+                    <div className="pt-4 border-t border-slate-900">
                       <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-4">Adresgegevens</h4>
                       <div className="grid grid-cols-4 gap-4">
-                         <div className="col-span-3"><Input label="Straat" value={editForm.street} onChange={(e: any) => setEditForm({...editForm, street: e.target.value})} /></div>
-                         <div className="col-span-1"><Input label="Huisnummer" value={editForm.houseNumber} onChange={(e: any) => setEditForm({...editForm, houseNumber: e.target.value})} /></div>
-                         <div className="col-span-1"><Input label="Postcode" value={editForm.zip} onChange={(e: any) => setEditForm({...editForm, zip: e.target.value})} /></div>
-                         <div className="col-span-3"><Input label="Stad" value={editForm.city} onChange={(e: any) => setEditForm({...editForm, city: e.target.value})} /></div>
+                         <div className="col-span-3"><Input label="Straat" value={editForm.street || ''} onChange={(e: any) => setEditForm({...editForm, street: e.target.value})} /></div>
+                         <div className="col-span-1"><Input label="Huisnummer" value={editForm.houseNumber || ''} onChange={(e: any) => setEditForm({...editForm, houseNumber: e.target.value})} /></div>
+                         <div className="col-span-1"><Input label="Postcode" value={editForm.zip || ''} onChange={(e: any) => setEditForm({...editForm, zip: e.target.value})} /></div>
+                         <div className="col-span-3"><Input label="Stad" value={editForm.city || ''} onChange={(e: any) => setEditForm({...editForm, city: e.target.value})} /></div>
                       </div>
                     </div>
 
@@ -597,6 +674,12 @@ export const CustomerDatabase = () => {
                                 <MapPin size={16} className="text-slate-500 shrink-0" /> 
                                 <span>{selectedCustomer.street} {selectedCustomer.houseNumber}, {selectedCustomer.city}</span>
                            </div>
+                           {selectedCustomer.birthday && (
+                                <div className="flex items-center space-x-3 text-slate-300">
+                                    <Cake size={16} className="text-slate-500 shrink-0" /> 
+                                    <span>{new Date(selectedCustomer.birthday).toLocaleDateString()}</span>
+                                </div>
+                           )}
                        </div>
 
                        {selectedCustomer.notes && (

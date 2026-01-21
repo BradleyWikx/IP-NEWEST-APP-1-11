@@ -15,6 +15,10 @@ export const OptionManager = () => {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [filterDate, setFilterDate] = useState('');
   const [showAllDates, setShowAllDates] = useState(true);
+  
+  // Confirmation Modal State
+  const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean, type: 'CONFIRM' | 'CANCEL', id: string } | null>(null);
+  const [sendEmail, setSendEmail] = useState(true);
 
   React.useEffect(() => {
     refreshData();
@@ -26,31 +30,38 @@ export const OptionManager = () => {
     setReservations(bookingRepo.getAll().filter(r => r.status === BookingStatus.OPTION));
   };
 
-  // --- ACTIONS ---
+  // --- UI TRIGGERS ---
 
-  const confirmOption = (id: string) => {
-    const r = reservations.find(res => res.id === id);
-    const updated = bookingRepo.getAll().map(r => r.id === id ? { ...r, status: BookingStatus.CONFIRMED } : r);
-    saveData(STORAGE_KEYS.RESERVATIONS, updated);
-    logAuditAction('CONFIRM_OPTION', 'RESERVATION', id, { description: 'Confirmed from Option Manager' });
-    
-    if(r) triggerEmail('BOOKING_CONFIRMED', { type: 'RESERVATION', id, data: { ...r, status: BookingStatus.CONFIRMED } });
-    
-    undoManager.showSuccess('Optie bevestigd');
-    refreshData();
+  const initiateAction = (type: 'CONFIRM' | 'CANCEL', id: string) => {
+      setConfirmModal({ isOpen: true, type, id });
+      setSendEmail(true); // Default checked
   };
 
-  const cancelOption = (id: string) => {
-    // Basic cancel, no reason required for options usually as they just expire, 
-    // but consistent with system we could add it. For now, simple cancel.
-    const r = reservations.find(res => res.id === id);
-    const updated = bookingRepo.getAll().map(r => r.id === id ? { ...r, status: BookingStatus.CANCELLED, cancellationReason: 'Optie verlopen/geannuleerd via beheer' } : r);
-    saveData(STORAGE_KEYS.RESERVATIONS, updated);
-    logAuditAction('CANCEL_OPTION', 'RESERVATION', id, { description: 'Cancelled from Option Manager' });
-    
-    if(r) triggerEmail('BOOKING_CANCELLED', { type: 'RESERVATION', id, data: { ...r, status: BookingStatus.CANCELLED } });
-    
-    undoManager.showSuccess('Optie geannuleerd');
+  const handleExecute = () => {
+    if (!confirmModal) return;
+    const { type, id } = confirmModal;
+
+    if (type === 'CONFIRM') {
+        const r = reservations.find(res => res.id === id);
+        const updated = bookingRepo.getAll().map(r => r.id === id ? { ...r, status: BookingStatus.CONFIRMED } : r);
+        saveData(STORAGE_KEYS.RESERVATIONS, updated);
+        logAuditAction('CONFIRM_OPTION', 'RESERVATION', id, { description: 'Confirmed from Option Manager' });
+        
+        if(r && sendEmail) triggerEmail('BOOKING_CONFIRMED', { type: 'RESERVATION', id, data: { ...r, status: BookingStatus.CONFIRMED } });
+        
+        undoManager.showSuccess('Optie bevestigd');
+    } else {
+        const r = reservations.find(res => res.id === id);
+        const updated = bookingRepo.getAll().map(r => r.id === id ? { ...r, status: BookingStatus.CANCELLED, cancellationReason: 'Optie verlopen/geannuleerd via beheer' } : r);
+        saveData(STORAGE_KEYS.RESERVATIONS, updated);
+        logAuditAction('CANCEL_OPTION', 'RESERVATION', id, { description: 'Cancelled from Option Manager' });
+        
+        if(r && sendEmail) triggerEmail('BOOKING_CANCELLED', { type: 'RESERVATION', id, data: { ...r, status: BookingStatus.CANCELLED } });
+        
+        undoManager.showSuccess('Optie geannuleerd');
+    }
+
+    setConfirmModal(null);
     refreshData();
   };
 
@@ -153,10 +164,10 @@ export const OptionManager = () => {
                                       <a href={`mailto:${res.customer.email}`} className="p-1.5 bg-slate-800 rounded text-slate-400 hover:text-white"><Mail size={14}/></a>
                                   </div>
                                   <div className="flex space-x-2">
-                                      <Button onClick={() => cancelOption(res.id)} className="h-7 text-[10px] bg-red-900/20 text-red-400 hover:bg-red-900/40 border-none">
+                                      <Button onClick={() => initiateAction('CANCEL', res.id)} className="h-7 text-[10px] bg-red-900/20 text-red-400 hover:bg-red-900/40 border-none">
                                           Annuleren
                                       </Button>
-                                      <Button onClick={() => confirmOption(res.id)} className="h-7 text-[10px] bg-emerald-600 hover:bg-emerald-700 border-none">
+                                      <Button onClick={() => initiateAction('CONFIRM', res.id)} className="h-7 text-[10px] bg-emerald-600 hover:bg-emerald-700 border-none">
                                           Toch Bevestigen
                                       </Button>
                                   </div>
@@ -201,8 +212,8 @@ export const OptionManager = () => {
                                       </Button>
                                   </div>
                                   <div className="flex space-x-2">
-                                      <button onClick={() => cancelOption(res.id)} className="p-1.5 hover:bg-red-900/20 rounded text-slate-500 hover:text-red-500 transition-colors"><X size={14}/></button>
-                                      <Button onClick={() => confirmOption(res.id)} variant="secondary" className="h-7 text-[10px]">
+                                      <button onClick={() => initiateAction('CANCEL', res.id)} className="p-1.5 hover:bg-red-900/20 rounded text-slate-500 hover:text-red-500 transition-colors"><X size={14}/></button>
+                                      <Button onClick={() => initiateAction('CONFIRM', res.id)} variant="secondary" className="h-7 text-[10px]">
                                           <CheckCircle2 size={12} className="mr-1"/> Bevestig
                                       </Button>
                                   </div>
@@ -215,6 +226,39 @@ export const OptionManager = () => {
           </div>
 
       </div>
+
+      {/* CONFIRMATION MODAL */}
+      {confirmModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+           <Card className="w-full max-w-sm bg-slate-900 border-slate-800 shadow-2xl">
+              <div className="p-6">
+                 <h3 className="text-xl font-bold text-white mb-2">Weet je het zeker?</h3>
+                 <p className="text-sm text-slate-400 mb-6">
+                    Je staat op het punt om de optie te <strong className="text-white uppercase">{confirmModal.type === 'CONFIRM' ? 'bevestigen' : 'annuleren'}</strong>.
+                 </p>
+                 
+                 <div className="mb-6 p-3 bg-slate-950 border border-slate-800 rounded-xl">
+                    <label className="flex items-center space-x-3 cursor-pointer">
+                        <input 
+                            type="checkbox" 
+                            checked={sendEmail} 
+                            onChange={(e) => setSendEmail(e.target.checked)}
+                            className="w-5 h-5 rounded bg-slate-800 border-slate-600 checked:bg-blue-600" 
+                        />
+                        <span className="text-sm text-white">Stuur bevestiging per e-mail</span>
+                    </label>
+                 </div>
+
+                 <div className="flex gap-3">
+                    <Button variant="ghost" onClick={() => setConfirmModal(null)} className="flex-1">Annuleren</Button>
+                    <Button onClick={handleExecute} className={`flex-1 border-none ${confirmModal.type === 'CONFIRM' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-600 hover:bg-red-700'}`}>
+                        {confirmModal.type === 'CONFIRM' ? 'Bevestigen' : 'Annuleren'}
+                    </Button>
+                 </div>
+              </div>
+           </Card>
+        </div>
+      )}
     </div>
   );
 };
